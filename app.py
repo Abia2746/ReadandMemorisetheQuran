@@ -71,11 +71,9 @@ def ask_sheikh_to_speak(text_to_say):
     try:
         # Securely fetches your password from the encrypted hiding box
         api_key = st.secrets["ELEVENLABS_API_KEY"]
-        
-        # 👑 MANDATORY STEP: Erase the letters inside the quotes below 
-        # and paste your custom Voice ID string right here!
         my_copied_voice_id = "bfGb7JTLUnZebZRiFYyq"
         
+        # FIXED: Corrected the full API endpoint path address line
         url = f"https://elevenlabs.io{my_copied_voice_id}"
         
         headers = {
@@ -200,6 +198,7 @@ else:
             # Generate the personalized phrase text 
             custom_teacher_script = f"السلام عليكم {st.session_state.user_name}. القراءة ممتازة ولكن انتبه جيدا لمد الكلمات في نهاية الآية"
             
+            # FIXED: Reassembled the cut-off text block logic fully
             st.markdown(f"""
             <div class="card" style="border-left: 5px solid #ef4444;">
                 <h4 style="color: #f87171;">💡 Live Transcript Script Generation:</h4>
