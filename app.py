@@ -1,255 +1,251 @@
-import base64
-import json
-
+import base64, json, re
 import requests
 import streamlit as st
+import streamlit.components.v1 as components
 from streamlit_mic_recorder import mic_recorder
 
-# --- CONFIG ---
-GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
+GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent"
 VOICE_ID = "pNInz6obpgDQGcFmaJgB"
-QARI_EDITION = "ar.alafasy"  # Mishary Alafasy
 
-st.set_page_config(layout="wide", page_title="Al-Mu'allim: Premium Tajweed AI", page_icon="🕌")
+st.set_page_config(layout="wide", page_title="Al-Mu'allim", page_icon="🕌")
 st.markdown("""
-    <style>
-    .stApp { background: linear-gradient(135deg, #0d1310 0%, #111615 100%); }
-    h1, h2, h3, p, label, .stMarkdown, .stMetric { color: #f4f6f5 !important; }
-    .arabic-container { font-family: 'Amiri', 'Scheherazade New', serif; font-size: 2.9rem !important; color: #e5c158 !important; text-align: right; direction: rtl; line-height: 2.3; padding: 24px; background: rgba(20, 28, 24, 0.65); border-radius: 12px; border-right: 6px solid #c5a85c; margin-bottom: 25px; }
-    div.stButton > button { background: linear-gradient(135deg, #c5a85c 0%, #b39243 100%) !important; color: #0b0f0d !important; font-weight: 700 !important; border-radius: 8px !important; border: none !important; padding: 12px 28px !important; box-shadow: 0 4px 14px rgba(179, 146, 67, 0.25); }
-    .card { background-color: #121a16; border: 1px solid #1e2924; border-radius: 10px; padding: 20px; margin-bottom: 15px; }
-    </style>
-""", unsafe_allow_html=True)
+<style>
+.stApp { background: linear-gradient(160deg,#fbf8f1 0%,#f1ede2 60%,#e9efe9 100%); }
+h1,h2,h3,h4,p,label,li,.stMarkdown { color:#2b2a26 !important; font-family:Georgia,'Times New Roman',serif; }
+.glass { background:rgba(255,255,255,.55); backdrop-filter:blur(10px); border:1px solid rgba(197,168,92,.35);
+  border-radius:16px; padding:20px 24px; margin:12px 0; box-shadow:0 6px 24px rgba(120,100,50,.08); }
+.ar-big { font-family:'Amiri','Scheherazade New',serif; font-size:2.6rem; direction:rtl; text-align:center; line-height:2.2; color:#7a5c12; }
+div.stButton > button { background:linear-gradient(135deg,#c5a85c,#b39243)!important; color:#fff!important; border:none!important; border-radius:10px!important; font-weight:600!important; }
+</style>""", unsafe_allow_html=True)
 
-# --- SESSION ---
-if "user_name" not in st.session_state: st.session_state.user_name = ""
-if "app_phase" not in st.session_state: st.session_state.app_phase = "onboarding"
-if "current_surah" not in st.session_state: st.session_state.current_surah = 1
-if "current_ayah" not in st.session_state: st.session_state.current_ayah = 2
+for k, v in {"user_name": "", "app_phase": "onboarding", "current_surah": 2, "current_ayah": 57,
+             "listens": {}, "chat": [], "tafsir_text": {}}.items():
+    st.session_state.setdefault(k, v)
 
-
-# --- GEMINI ---
-def audio_part(audio_bytes, mime):
-    return {"inline_data": {"mime_type": mime, "data": base64.b64encode(audio_bytes).decode()}}
-
+# ---------- helpers ----------
+def audio_part(b, mime):
+    return {"inline_data": {"mime_type": mime, "data": base64.b64encode(b).decode()}}
 
 def call_gemini(parts, expect_json=False):
-    """Returns text (or parsed JSON). Raises with a readable message on failure."""
-    api_key = st.secrets["GEMINI_API_KEY"]
-    headers = {"x-goog-api-key": api_key, "Content-Type": "application/json"}
-    payload = {"contents": [{"parts": parts}]}
-    if expect_json:
-        payload["generationConfig"] = {"responseMimeType": "application/json"}
-    r = requests.post(GEMINI_URL, json=payload, headers=headers, timeout=120)
-    if r.status_code != 200:
-        raise RuntimeError(f"Gemini error {r.status_code}: {r.text[:300]}")
-    text = r.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
-    return json.loads(text) if expect_json else text
+    h = {"x-goog-api-key": st.secrets["GEMINI_API_KEY"], "Content-Type": "application/json"}
+    p = {"contents": [{"parts": parts}]}
+    if expect_json: p["generationConfig"] = {"responseMimeType": "application/json"}
+    r = requests.post(GEMINI_URL, json=p, headers=h, timeout=120)
+    if r.status_code != 200: raise RuntimeError(f"Gemini {r.status_code}: {r.text[:250]}")
+    t = r.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+    return json.loads(t) if expect_json else t
 
-
-# --- ELEVENLABS ---
 def speak(text):
     try:
-        api_key = st.secrets["ELEVENLABS_API_KEY"]
-        url = f"https://api.elevenlabs.io/v1/text-to-speech/{VOICE_ID}"
-        headers = {"Accept": "audio/mpeg", "Content-Type": "application/json", "xi-api-key": api_key}
-        data = {
-            "text": text,
-            "model_id": "eleven_multilingual_v2",
-            "voice_settings": {"stability": 0.6, "similarity_boost": 0.8},
-        }
-        resp = requests.post(url, json=data, headers=headers, timeout=60)
-        if resp.status_code == 200:
-            return resp.content
-        st.sidebar.error(f"ElevenLabs Error {resp.status_code}: {resp.text[:300]}")
+        r = requests.post(f"https://api.elevenlabs.io/v1/text-to-speech/{VOICE_ID}",
+            headers={"Accept": "audio/mpeg", "Content-Type": "application/json", "xi-api-key": st.secrets["ELEVENLABS_API_KEY"]},
+            json={"text": text[:1500], "model_id": "eleven_multilingual_v2", "voice_settings": {"stability": .6, "similarity_boost": .8}}, timeout=60)
+        if r.status_code == 200: return r.content
+        st.sidebar.error(f"ElevenLabs {r.status_code}: {r.text[:200]}")
     except Exception as e:
-        st.sidebar.error(f"Voice Connection Error: {e}")
-    return None
-
-
-# --- CONTENT ---
-@st.cache_data(show_spinner=False)
-def fetch_verse_data(surah, ayah):
-    try:
-        u = requests.get(f"https://api.alquran.cloud/v1/ayah/{surah}:{ayah}/quran-uthmani", timeout=15).json()
-        t = requests.get(f"https://api.alquran.cloud/v1/ayah/{surah}:{ayah}/ar.muyassar", timeout=15).json()
-        return {"uthmani": u["data"]["text"], "tafsir": t["data"]["text"]}
-    except Exception:
-        return {"uthmani": "الْحَمْدُ لِلَّهِ رَبِّ الْعَالَمِينَ", "tafsir": "(could not load tafsir)"}
-
+        st.sidebar.error(f"Voice error: {e}")
 
 @st.cache_data(show_spinner=False)
-def fetch_qari_audio(surah, ayah):
-    """Downloads the reference recitation (mp3 bytes) for this ayah."""
+def fetch_verse(s, a):
     try:
-        meta = requests.get(f"https://api.alquran.cloud/v1/ayah/{surah}:{ayah}/{QARI_EDITION}", timeout=15).json()
-        audio_url = meta["data"]["audio"]
-        return requests.get(audio_url, timeout=30).content
+        r = requests.get(f"https://api.alquran.cloud/v1/ayah/{s}:{a}/quran-uthmani", timeout=15).json()
+        return r["data"]["text"]
     except Exception:
-        return None
+        return ""
 
+@st.cache_data(show_spinner=False)
+def fetch_words(s, a):
+    try:
+        r = requests.get(f"https://api.quran.com/api/v4/verses/by_key/{s}:{a}",
+            params={"words": "true", "word_fields": "text_uthmani", "language": "en"}, timeout=20).json()
+        return [{"ar": w["text_uthmani"], "en": (w.get("translation") or {}).get("text", ""),
+                 "tr": (w.get("transliteration") or {}).get("text") or ""}
+                for w in r["verse"]["words"] if w.get("char_type_name") == "word"]
+    except Exception:
+        return []
 
-# --- TEACHER LOGIC ---
-def analyse_recitation(student_name, surah, ayah, verse_text, student_wav, qari_mp3):
-    prompt = f"""You are a patient, expert Tajweed teacher. The student, {student_name}, was asked to recite Surah {surah}, Ayah {ayah}:
-{verse_text}
+@st.cache_data(show_spinner=False)
+def fetch_reciter(s, a):
+    """Sheikh Yasser Al-Dosari (everyayah.com); falls back to Alafasy if unavailable."""
+    url = f"https://everyayah.com/data/Yasser_Ad-Dussary_128kbps/{s:03d}{a:03d}.mp3"
+    try:
+        r = requests.get(url, timeout=30)
+        if r.status_code == 200 and len(r.content) > 2000:
+            return url, r.content, "Sheikh Yasser Al-Dosari"
+    except Exception:
+        pass
+    try:
+        meta = requests.get(f"https://api.alquran.cloud/v1/ayah/{s}:{a}/ar.alafasy", timeout=15).json()["data"]["audio"]
+        return meta, requests.get(meta, timeout=30).content, "Mishary Alafasy (Dosari unavailable)"
+    except Exception:
+        return None, None, None
 
-You are given two audio clips. Clip 1 is the reference recitation by a qari. Clip 2 is the student's recitation.
-Listen to both and compare the student against the reference, word by word, covering: harakat (fatha/kasra/damma), sukoon, madd lengths (in counts), ghunnah, idgham/ikhfa/iqlab/izhar, qalqalah, makharij (letter articulation), heavy/light letters, and waqf at the end.
+@st.cache_data(show_spinner=False)
+def fetch_ibn_kathir(s, a):
+    try:
+        r = requests.get(f"https://api.quran.com/api/v4/tafsirs/169/by_ayah/{s}:{a}", timeout=20).json()
+        t = re.sub(r"<[^>]+>", " ", r["tafsir"]["text"])
+        return re.sub(r"\s+", " ", t).strip()[:7000]
+    except Exception:
+        return ""
 
-Rules:
-- Write everything in English. Quote Arabic words in Arabic script followed by a transliteration in brackets.
-- Only report issues you can actually hear. If you are unsure, say so rather than guessing. Do not invent mistakes.
-- If the student's clip is silent, too short, or not the requested ayah, say that plainly.
-- Be kind and encouraging but specific.
+# ---------- highlighting player ----------
+def player_html(words, audio_url):
+    tpl = """
+<style>
+body{margin:0;font-family:Georgia,serif;background:transparent}
+#w{display:flex;flex-wrap:wrap;gap:12px;justify-content:center;direction:rtl}
+.c{padding:10px 14px;border-radius:14px;text-align:center;background:rgba(255,255,255,.6);border:1px solid rgba(197,168,92,.3);transition:all .15s}
+.ar{font-family:Amiri,'Scheherazade New',serif;font-size:2.1rem;color:#7a5c12;line-height:1.8}
+.tr{font-size:.8rem;color:#8a8574;font-style:italic}.en{font-size:1rem;color:#2b2a26}
+.on{background:rgba(229,193,88,.45);transform:scale(1.07);box-shadow:0 0 18px rgba(197,168,92,.6)}
+audio{width:100%;margin-top:18px}
+</style>
+<div id="w"></div><audio id="a" controls src="__URL__"></audio>
+<script>
+const W=__WORDS__,a=document.getElementById('a'),box=document.getElementById('w');
+const els=W.map(w=>{const d=document.createElement('div');d.className='c';
+d.innerHTML='<div class="ar">'+w.ar+'</div><div class="tr">'+w.tr+'</div><div class="en">'+w.en+'</div>';box.appendChild(d);return d;});
+let cum=[];
+function build(){const d=a.duration||1,l=d*.05,sp=d*.88,tot=W.reduce((s,w)=>s+w.ar.length,0);let t=l;
+cum=W.map(w=>{t+=sp*w.ar.length/tot;return t;});}
+a.onloadedmetadata=build;
+a.ontimeupdate=()=>{if(!cum.length)build();const t=a.currentTime;let i=cum.findIndex(c=>t<c);if(a.ended)i=-1;
+els.forEach((e,k)=>e.classList.toggle('on',k===i));};
+a.onended=()=>els.forEach(e=>e.classList.remove('on'));
+</script>"""
+    return tpl.replace("__URL__", audio_url).replace("__WORDS__", json.dumps(words, ensure_ascii=False))
 
-Return JSON only, in exactly this shape:
-{{
-  "overall_score": <integer 0-100, honest estimate>,
-  "spoken_summary": "<max 60 words, warm, spoken-style English summary and the single most important thing to fix>",
-  "words": [
-    {{"word": "<Arabic word> (<transliteration>)", "status": "good" or "needs_work", "student_did": "<what you heard>", "correction": "<what the qari does / how to fix it>"}}
-  ],
-  "practice_tip": "<one concrete exercise>"
-}}
-Include every word of the ayah in "words", in order."""
-    parts = [
-        {"text": prompt},
-        {"text": "Clip 1 (reference qari):"},
-        audio_part(qari_mp3, "audio/mpeg"),
-        {"text": "Clip 2 (student):"},
-        audio_part(student_wav, "audio/wav"),
-    ]
-    return call_gemini(parts, expect_json=True)
+# ---------- AI teachers ----------
+def explain_tafsir(verse_ref, verse, source):
+    prompt = f"""You are a warm, learned Quran teacher. Explain {verse_ref} ({verse}) to a student in beautiful, clear English (about 250 words).
+Base your explanation ONLY on the tafsir source text below, and say it comes from Ibn Kathir (abridged). Structure: context of the verse, meaning, lessons to take to heart.
+If the source is empty or unrelated, say the source could not be loaded and keep to well-established basics only. Do not invent narrations or attribute sayings you can't see in the source.
 
+SOURCE:
+{source or '(unavailable)'}"""
+    return call_gemini([{"text": prompt}])
 
-def answer_question(student_name, surah, ayah, verse_text, question_text=None, question_wav=None):
-    system = (
-        f"You are a kind, knowledgeable Quran and Tajweed teacher speaking to your student {student_name}. "
-        f"They are currently studying Surah {surah}, Ayah {ayah}: {verse_text}. "
-        "Answer in English, in under 120 words, conversationally, with no markdown symbols. "
-        "Write Arabic terms in transliteration. If you are not sure about something, say so honestly."
-    )
-    parts = [{"text": system}]
-    if question_wav:
-        parts.append({"text": "The student's spoken question is in this audio:"})
-        parts.append(audio_part(question_wav, "audio/wav"))
-    else:
-        parts.append({"text": f"Student's question: {question_text}"})
-    return call_gemini(parts)
+def scholar_reply(verse_ref, verse, source, history, question):
+    convo = "\n".join(f"{m['role']}: {m['text']}" for m in history[-6:])
+    prompt = f"""You are a gentle, knowledgeable Quran teacher chatting with {st.session_state.user_name} about {verse_ref}: {verse}
+Answer in English, under 150 words, no markdown symbols. Ground answers in the tafsir source below and say when you are drawing on it (Ibn Kathir).
+If the source doesn't cover the question, say so plainly and give only what is widely agreed, never inventing hadith, narrations or scholar names.
+You are an AI study aid, not a mufti: for fiqh rulings or personal religious questions, advise asking a qualified scholar.
 
+TAFSIR SOURCE:
+{source or '(unavailable)'}
 
-# --- UI ---
+CONVERSATION:
+{convo}
+student: {question}"""
+    return call_gemini([{"text": prompt}])
+
+def analyse(verse, ref_mp3, student_wav, reciter):
+    prompt = f"""You are an expert Tajweed teacher. The student recited this ayah from memory: {verse}
+Clip 1 is the reference by {reciter}. Clip 2 is the student.
+Compare word by word: harakat, sukoon, madd length, ghunnah, idgham/ikhfa/iqlab/izhar, qalqalah, makharij, waqf. Also say if any words were skipped or wrong (memorisation errors).
+Write in English; Arabic words in script plus transliteration. Report only what you can actually hear; admit uncertainty; never invent mistakes. If the clip is silent or the wrong ayah, say so.
+Return JSON only: {{"overall_score":int,"spoken_summary":"max 60 words, warm","words":[{{"word":"","status":"good|needs_work","student_did":"","correction":""}}],"practice_tip":""}}"""
+    return call_gemini([{"text": prompt}, {"text": "Clip 1 (reference):"}, audio_part(ref_mp3, "audio/mpeg"),
+                        {"text": "Clip 2 (student):"}, audio_part(student_wav, "audio/wav")], True)
+
+def plan_sessions(goal, s, a):
+    prompt = f"""Create a realistic 7-day Quran memorisation plan for {st.session_state.user_name}, currently at Surah {s}, Ayah {a}. Their goal: {goal}.
+Use the Sabaq (new), Sabqi (recent review), Manzil (old review) structure, with the 5-listen method, tafsir reading and recitation check each day. Plain English, short, one line per day, no markdown symbols."""
+    return call_gemini([{"text": prompt}])
+
+# ---------- UI ----------
 if st.session_state.app_phase == "onboarding":
-    st.title("🕌 Welcome to Al-Mu'allim AI Studio")
-    name_entry = st.text_input("What is your name?", placeholder="e.g., Abia")
-    if st.button("Begin Session"):
-        if name_entry.strip():
-            st.session_state.user_name = name_entry.strip()
-            st.session_state.app_phase = "classroom"
-            st.rerun()
+    st.title("🕌 Al-Mu'allim")
+    n = st.text_input("What is your name?", placeholder="e.g., Abia")
+    if st.button("Begin Session") and n.strip():
+        st.session_state.user_name, st.session_state.app_phase = n.strip(), "classroom"
+        st.rerun()
 else:
-    st.sidebar.markdown(f"### 🧑‍🎓 Student: **{st.session_state.user_name}**")
-    s_input = st.sidebar.number_input("Surah", min_value=1, max_value=114, value=st.session_state.current_surah)
-    a_input = st.sidebar.number_input("Ayah", min_value=1, max_value=286, value=st.session_state.current_ayah)
-    if st.sidebar.button("Update Target Location"):
-        st.session_state.current_surah = s_input
-        st.session_state.current_ayah = a_input
+    sb = st.sidebar
+    sb.markdown(f"### 🧑‍🎓 {st.session_state.user_name}")
+    si = sb.number_input("Surah", 1, 114, st.session_state.current_surah)
+    ai = sb.number_input("Ayah", 1, 286, st.session_state.current_ayah)
+    if sb.button("Go to this ayah"):
+        st.session_state.current_surah, st.session_state.current_ayah = si, ai
+        st.session_state.chat = []
         st.rerun()
 
-    surah, ayah = st.session_state.current_surah, st.session_state.current_ayah
-    verse = fetch_verse_data(surah, ayah)
+    s, a = st.session_state.current_surah, st.session_state.current_ayah
+    key, ref = f"{s}:{a}", f"Surah {s}, Ayah {a}"
+    verse, words = fetch_verse(s, a), fetch_words(s, a)
+    audio_url, ref_mp3, reciter = fetch_reciter(s, a)
+    listens = st.session_state.listens.get(key, 0)
 
-    tab_study, tab_recite, tab_ask, tab_progress = st.tabs(
-        ["📖 Study & Tafsir", "🎙️ Recite & Get Corrections", "💬 Ask the Teacher", "📊 Progress"]
-    )
+    t1, t2, t3, t4 = st.tabs(["1 · Listen ×5", "2 · Tafsir & Teacher", "3 · Recite from memory", "4 · Plan"])
 
-    with tab_study:
-        st.markdown(f'<div class="arabic-container">{verse["uthmani"]}</div>', unsafe_allow_html=True)
-        st.markdown(f'<div class="card"><h4>📘 Tafsir al-Muyassar</h4><p>{verse["tafsir"]}</p></div>', unsafe_allow_html=True)
-
-    with tab_recite:
-        st.subheader("Interactive Tajweed Classroom")
-        st.markdown(f'<div class="arabic-container">{verse["uthmani"]}</div>', unsafe_allow_html=True)
-
-        qari_audio = fetch_qari_audio(surah, ayah)
-        if qari_audio:
-            st.markdown("**1. Listen to the reference qari (Mishary Alafasy):**")
-            st.audio(qari_audio, format="audio/mp3")
+    with t1:
+        st.markdown(f'<div class="glass"><div class="ar-big">{verse}</div></div>', unsafe_allow_html=True)
+        if audio_url and words:
+            st.caption(f"Reciter: {reciter}. Words light up as they are recited (timing is estimated from word length).")
+            components.html(player_html(words, audio_url), height=420 + 40 * (len(words) // 6), scrolling=True)
         else:
-            st.warning("Could not load the reference recitation, so I can't compare yet. Try again in a moment.")
+            st.warning("Could not load audio or word-by-word data. Check your connection and reload.")
+        st.progress(min(listens, 5) / 5, text=f"Listens completed: {min(listens, 5)} / 5")
+        if st.button("✅ I listened once more"):
+            st.session_state.listens[key] = listens + 1
+            st.rerun()
+        if listens >= 5: st.success("Five listens done. Read the tafsir, then try reciting from memory.")
 
-        st.markdown("**2. Now recite the same ayah:**")
-        mic_input = mic_recorder(
-            start_prompt="🎙️ Start Recitation Recording",
-            stop_prompt="⏹️ Stop Recording & Analyze",
-            key="muallim_mic",
-            just_once=True,
-        )
-
-        if mic_input and qari_audio:
-            st.audio(mic_input["bytes"], format="audio/wav")
+    with t2:
+        src = fetch_ibn_kathir(s, a)
+        if st.button("📖 Explain this ayah to me"):
             try:
-                with st.spinner("🧠 Comparing your recitation to the qari, word by word..."):
-                    result = analyse_recitation(
-                        st.session_state.user_name, surah, ayah,
-                        verse["uthmani"], mic_input["bytes"], qari_audio,
-                    )
-
-                st.metric("Estimated accuracy", f"{result.get('overall_score', '?')}%")
-                st.caption("This is an AI estimate, not a certified assessment. Please confirm with a qualified teacher.")
-                st.markdown(f'<div class="card" style="border-left: 5px solid #c5a85c;"><h4 style="color:#c5a85c;">📝 Teacher says</h4><p>{result.get("spoken_summary", "")}</p></div>', unsafe_allow_html=True)
-
-                st.markdown("### Word-by-word feedback")
-                for w in result.get("words", []):
-                    icon = "✅" if w.get("status") == "good" else "⚠️"
-                    with st.expander(f"{icon} {w.get('word', '')}", expanded=(w.get("status") != "good")):
-                        st.markdown(f"**What I heard:** {w.get('student_did', '')}")
-                        st.markdown(f"**Correction:** {w.get('correction', '')}")
-
-                if result.get("practice_tip"):
-                    st.info(f"💡 Practice tip: {result['practice_tip']}")
-
-                with st.spinner("🔊 Preparing spoken feedback..."):
-                    speech = speak(result.get("spoken_summary", ""))
-                if speech:
-                    st.markdown("### 🔊 Spoken feedback")
-                    st.audio(speech, format="audio/mp3")
+                with st.spinner("Preparing tafsir..."):
+                    st.session_state.tafsir_text[key] = explain_tafsir(ref, verse, src)
             except Exception as e:
-                st.error(f"Analysis failed: {e}")
-
-    with tab_ask:
-        st.subheader("Ask your teacher anything")
-        st.caption("Type a question or record it. Your teacher answers in English.")
-        typed_q = st.text_input("Type your question", key="typed_q", placeholder="e.g., How long should I hold the madd in 'ar-Rahman'?")
-        ask_clicked = st.button("Ask", key="ask_btn")
-        st.markdown("**Or ask by voice:**")
-        q_mic = mic_recorder(start_prompt="🎙️ Record question", stop_prompt="⏹️ Stop & Ask", key="ask_mic", just_once=True)
-
-        question_text, question_wav = None, None
-        if q_mic:
-            question_wav = q_mic["bytes"]
-        elif ask_clicked and typed_q.strip():
-            question_text = typed_q.strip()
-
-        if question_text or question_wav:
+                st.error(e)
+        if key in st.session_state.tafsir_text:
+            st.markdown(f'<div class="glass">{st.session_state.tafsir_text[key]}</div>', unsafe_allow_html=True)
+            st.caption("Based on Ibn Kathir (abridged) via quran.com. AI-written explanation: verify important points with a qualified teacher.")
+        st.markdown("#### 💬 Ask your teacher")
+        for m in st.session_state.chat:
+            with st.chat_message("user" if m["role"] == "student" else "assistant"):
+                st.write(m["text"])
+        q = st.chat_input("Ask about this ayah...")
+        if q:
             try:
-                with st.spinner("🧠 Thinking..."):
-                    answer = answer_question(
-                        st.session_state.user_name, surah, ayah, verse["uthmani"],
-                        question_text=question_text, question_wav=question_wav,
-                    )
-                st.markdown(f'<div class="card" style="border-left: 5px solid #c5a85c;"><h4 style="color:#c5a85c;">🧑‍🏫 Teacher</h4><p>{answer}</p></div>', unsafe_allow_html=True)
-                speech = speak(answer)
-                if speech:
-                    st.audio(speech, format="audio/mp3")
+                ans = scholar_reply(ref, verse, src, st.session_state.chat, q)
+                st.session_state.chat += [{"role": "student", "text": q}, {"role": "teacher", "text": ans}]
+                st.rerun()
             except Exception as e:
-                st.error(f"Could not get an answer: {e}")
+                st.error(e)
 
-    with tab_progress:
-        st.subheader("Hifdh Progress Management Dashboard")
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Sabaq (Current Target)", f"Ayah {ayah}")
-        c2.metric("Sabqi (Recent Review)", "Not tracked yet")
-        c3.metric("Manzil (Long-Distance Review)", "Not tracked yet")
-        st.caption("Progress tracking is placeholder for now: nothing is saved between sessions.")
+    with t3:
+        if listens < 5:
+            st.info(f"Complete 5 listens first ({listens}/5). Then recite without looking.")
+        else:
+            st.write("Recite the ayah from memory:")
+            mic = mic_recorder(start_prompt="🎙️ Start", stop_prompt="⏹️ Stop & get feedback", key="rec", just_once=True)
+            if mic and ref_mp3:
+                st.audio(mic["bytes"], format="audio/wav")
+                try:
+                    with st.spinner("Comparing with the reference recitation..."):
+                        res = analyse(verse, ref_mp3, mic["bytes"], reciter)
+                    st.metric("Estimated accuracy", f"{res.get('overall_score','?')}%")
+                    st.caption("AI estimate, not a certified assessment.")
+                    st.markdown(f'<div class="glass">{res.get("spoken_summary","")}</div>', unsafe_allow_html=True)
+                    for w in res.get("words", []):
+                        ok = w.get("status") == "good"
+                        with st.expander(f"{'✅' if ok else '⚠️'} {w.get('word','')}", expanded=not ok):
+                            st.write(f"Heard: {w.get('student_did','')}")
+                            st.write(f"Fix: {w.get('correction','')}")
+                    st.info(f"💡 {res.get('practice_tip','')}")
+                    audio = speak(res.get("spoken_summary", ""))
+                    if audio: st.audio(audio, format="audio/mp3")
+                except Exception as e:
+                    st.error(f"Analysis failed: {e}")
+
+    with t4:
+        goal = st.text_input("Your goal", placeholder="e.g., memorise 5 ayat a week, 20 minutes a day")
+        if st.button("🗓️ Plan my sessions") and goal.strip():
+            try:
+                st.markdown(f'<div class="glass">{plan_sessions(goal, s, a)}</div>'.replace("\n", "<br>"), unsafe_allow_html=True)
+            except Exception as e:
+                st.error(e)
