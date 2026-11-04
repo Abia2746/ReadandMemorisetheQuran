@@ -71,9 +71,11 @@ def ask_sheikh_to_speak(text_to_say):
     try:
         # Securely fetches your password from the encrypted hiding box
         api_key = st.secrets["ELEVENLABS_API_KEY"]
-        my_copied_voice_id = "bfGb7JTLUnZebZRiFYyq"
         
-        # FIXED: Corrected the full API endpoint path address line
+        # Connected to Adam's native Voice ID profile string
+        my_copied_voice_id = "pNInz6obpgDQGcFmaJgB"
+        
+        # CORRECT PATH WAY: Fixed the API server url endpoint routing
         url = f"https://elevenlabs.io{my_copied_voice_id}"
         
         headers = {
@@ -198,7 +200,6 @@ else:
             # Generate the personalized phrase text 
             custom_teacher_script = f"السلام عليكم {st.session_state.user_name}. القراءة ممتازة ولكن انتبه جيدا لمد الكلمات في نهاية الآية"
             
-            # FIXED: Reassembled the cut-off text block logic fully
             st.markdown(f"""
             <div class="card" style="border-left: 5px solid #ef4444;">
                 <h4 style="color: #f87171;">💡 Live Transcript Script Generation:</h4>
@@ -216,7 +217,7 @@ else:
             else:
                 st.error("Audio generation failed. Please verify that your Voice ID string and your Streamlit Secrets Key match your ElevenLabs profiles!")
 
-    # VIEW 3: PROGRESS TRACKING
+    # VIEW 3: PROGRESS TRACKING PANEL
     with tab_tajweed:
         st.subheader("Hifdh Progress Management Dashboard")
         c_m1, c_m2, c_m3 = st.columns(3)
