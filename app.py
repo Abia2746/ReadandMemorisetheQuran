@@ -2,6 +2,8 @@ import streamlit as st
 from streamlit_mic_recorder import mic_recorder
 import requests
 import time
+import json
+import base64
 
 # --- STYLING & PREMIUM ACCENTS ---
 st.set_page_config(
@@ -69,13 +71,8 @@ if "current_ayah" not in st.session_state:
 # --- GLOBAL LIVE VOICE ENGINE ---
 def ask_sheikh_to_speak(text_to_say):
     try:
-        # Securely fetches your password from the encrypted hiding box
         api_key = st.secrets["ELEVENLABS_API_KEY"]
-        
-        # Connected to Adam's native Voice ID profile string
         my_copied_voice_id = "pNInz6obpgDQGcFmaJgB"
-        
-        # CORRECT PATH WAY: Fixed the API server url endpoint routing
         url = f"https://elevenlabs.io{my_copied_voice_id}"
         
         headers = {
@@ -99,6 +96,65 @@ def ask_sheikh_to_speak(text_to_say):
         return None
     except Exception:
         return None
+
+# --- REAL GEMINI TAJWEED EVALUATION ENGINE ---
+def analyze_recitation_with_gemini(audio_bytes, correct_text):
+    try:
+        gemini_key = st.secrets["GEMINI_API_KEY"]
+        
+        # Uses Gemini 2.0 Flash via standard REST endpoint for fast multimodal audio decoding
+        url = f"https://googleapis.com{gemini_key}"
+        headers = {"Content-Type": "application/json"}
+        
+        audio_b64 = base64.b64encode(audio_bytes).decode("utf-8")
+        
+        prompt_text = f"""
+        You are a strict, expert traditional Quran and Tajweed teacher. Listen to the user's audio recitation and compare it directly to the perfect expected Uthmani text provided below.
+        
+        Expected perfect text: "{correct_text}"
+        
+        Analyze the audio closely for:
+        1. Vowel & Diacritic Accuracy (Harakat / Fathah, Kasrah, Dammah).
+        2. Articulation Points (Makhraj matching).
+        3. Elongations and Rules (Madd, Ghunnah, etc.).
+        
+        You must return a raw JSON object containing exactly these fields, with no markdown backticks, no code blocks, and no extra text outside the JSON object:
+        {{
+            "harakat_score": "e.g., 90%",
+            "harakat_feedback": "Short feedback note about short vowels",
+            "makhraj_score": "e.g., 85%",
+            "makhraj_feedback": "Short feedback note about pronunciation letters",
+            "madd_score": "e.g., 75%",
+            "madd_feedback": "Short feedback note about elongation rules",
+            "teacher_voice_script_arabic": "Write a 1-2 sentence gentle, encouraging, and specific spoken correction entirely in Arabic. Start by greeting them by their name if possible. Tell them exactly where they did well and what specific word or letter rule to fix next time."
+        }}
+        """
+        
+        data = {
+            "contents": [{
+                "parts": [
+                    {"text": prompt_text},
+                    {
+                        "inlineData": {
+                            "mimeType": "audio/wav",
+                            "data": audio_b64
+                        }
+                    }
+                ]
+            }],
+            "generationConfig": {
+                "responseMimeType": "application/json"
+            }
+        }
+        
+        response = requests.post(url, json=data, headers=headers)
+        if response.status_code == 200:
+            res_json = response.json()
+            text_output = res_json["candidates"][0]["content"]["parts"][0]["text"]
+            return json.loads(text_output)
+    except Exception as e:
+        st.sidebar.error(f"Gemini Processing Error: {str(e)}")
+    return None
 
 # --- GLOBAL CONTENT FETCHERS ---
 def fetch_verse_data(surah, ayah):
@@ -133,7 +189,6 @@ if st.session_state.app_phase == "onboarding":
 
 # --- APPMONITOR PHASE 2: ADVANCED TEACHER CLASSROOM ---
 else:
-    # Sidebar control interface
     st.sidebar.markdown(f"### 🧑‍🎓 Student: **{st.session_state.user_name}**")
     st.sidebar.markdown(f"📖 Verse Profile: **{st.session_state.current_surah}:{st.session_state.current_ayah}**")
     st.sidebar.markdown("🎙️ Voice Output System: **Active API Stream**")
@@ -151,16 +206,12 @@ else:
         st.session_state.app_phase = "onboarding"
         st.rerun()
 
-    # Core Application Tabs matching traditional notebook workflows
     tab_study, tab_recite, tab_tajweed = st.tabs(["📖 Study & Tafsir", "🎙️ AI Vowel Voice Teacher", "📊 Long-Term Progress"])
-    
     verse_payload = fetch_verse_data(st.session_state.current_surah, st.session_state.current_ayah)
 
-    # VIEW 1: TEXT STUDY & ARABIC CONTENT HOOKS
     with tab_study:
         st.subheader("Text Verification & Study Panel")
         st.markdown(f'<div class="arabic-container">{verse_payload["uthmani"]}</div>', unsafe_allow_html=True)
-        
         st.markdown(f"""
         <div class="card">
             <h4 style="color: #c5a85c;">📘 Tafsir al-Muyassar (King Fahd Complex)</h4>
@@ -168,7 +219,6 @@ else:
         </div>
         """, unsafe_allow_html=True)
 
-    # VIEW 2: FULLY OPERATIONAL MIC RECORDER & ADVANCED TEACHER LOGIC
     with tab_recite:
         st.subheader("Interactive Tajweed Classroom")
         st.write(f"Assalamu Alaykum, {st.session_state.user_name}. Click the button below, recite the verse clearly, and click stop to submit your audio.")
@@ -183,39 +233,13 @@ else:
         if mic_input:
             st.success("🏁 Audio buffer saved successfully without streaming interruptions.")
             audio_bytes = mic_input['bytes']
-            
-            # Secure native playback element
             st.audio(audio_bytes, format="audio/wav")
             
-            with st.spinner("Processing speech matrices, calculating alignment frames..."):
-                time.sleep(1.5)
+            with st.spinner("Gemini is listening to your audio waveform, aligning phonemes, and cross-referencing Tajweed matrices..."):
+                analysis_results = analyze_recitation_with_gemini(audio_bytes, verse_payload["uthmani"])
                 
-            st.markdown("### 📊 AI Phoneme Vowel Alignment Evaluation")
-            
-            col_v1, col_v2, col_v3 = st.columns(3)
-            col_v1.metric(label="Initial Phrase Harakat", value="98% Match", delta="Perfect Fathah")
-            col_v2.metric(label="Internal Vowel Sustenance", value="100% Match", delta="Correct Kasrah Profile")
-            col_v3.metric(label="Terminal Elongation (Madd)", value="58% Deviation", delta="-42% Duration Gap", delta_color="inverse")
-            
-            # Generate the personalized phrase text 
-            custom_teacher_script = f"السلام عليكم {st.session_state.user_name}. القراءة ممتازة ولكن انتبه جيدا لمد الكلمات في نهاية الآية"
-            
-            st.markdown(f"""
-            <div class="card" style="border-left: 5px solid #c5a85c;">
-                <h4 style="color: #c5a85c;">💡 Teacher Guidance Transcript:</h4>
-                <p style="color: #e2e8f0; font-size: 1.1rem; font-style: italic;">"{custom_teacher_script}"</p>
-            </div>
-            """, unsafe_allow_html=True)
-
-            with st.spinner("Streaming audio response from ElevenLabs Teacher Engine..."):
-                teacher_audio = ask_sheikh_to_speak(custom_teacher_script)
-                if teacher_audio:
-                    st.audio(teacher_audio, format="audio/mp3")
-                else:
-                    st.error("Audio generation failed. Please verify that your Streamlit Secrets Key matches your ElevenLabs profile!")
-
-    # VIEW 3: SIMULATED PROGRESS LOGS
-    with tab_tajweed:
-        st.subheader("Your Progress Tracker")
-        st.write("Tracking vowel pronunciation metrics over time.")
-        st.info("Keep practicing consistently to improve your Terminal Elongation metrics.")
+            if analysis_results:
+                st.markdown("### 📊 Live AI Phoneme Vowel Alignment Evaluation")
+                
+                col_v1, col_v2, col_v3 = st.columns(3)
+                col_v1.metric(label="Vowels & Harakat", value=analysis_results.get("harakat_score", "N/A"), delta=analysis_results.get("harakat_feedback", ""))
