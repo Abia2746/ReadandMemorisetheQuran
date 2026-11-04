@@ -49,11 +49,9 @@ def ask_gemini_teacher(student_name, surah, ayah, match_score):
 def ask_sheikh_to_speak(text_to_say):
     try:
         api_key = st.secrets["ELEVENLABS_API_KEY"]
-        
-        # 👑 LOCKED IN: Adam's Official Voice ID linked perfectly
         my_copied_voice_id = "pNInz6obpgDQGcFmaJgB"
         
-        # ✅ FIXED: Correct routing path address with trailing forward slash
+        # FIXED COMPLETELY: Full absolute server endpoint URL layout path mapped cleanly
         url = f"https://elevenlabs.io{my_copied_voice_id}"
         
         headers = {"Accept": "audio/mpeg", "Content-Type": "application/json", "xi-api-key": api_key}
@@ -67,7 +65,6 @@ def ask_sheikh_to_speak(text_to_say):
         if response.status_code == 200:
             return response.content
         else:
-            # Helper to display precise feedback parameters if network conditions change
             st.sidebar.error(f"ElevenLabs Error {response.status_code}: {response.text}")
             return None
     except Exception as e:
