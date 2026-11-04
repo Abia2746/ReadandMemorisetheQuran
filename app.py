@@ -201,27 +201,21 @@ else:
             custom_teacher_script = f"السلام عليكم {st.session_state.user_name}. القراءة ممتازة ولكن انتبه جيدا لمد الكلمات في نهاية الآية"
             
             st.markdown(f"""
-            <div class="card" style="border-left: 5px solid #ef4444;">
-                <h4 style="color: #f87171;">💡 Live Transcript Script Generation:</h4>
+            <div class="card" style="border-left: 5px solid #c5a85c;">
+                <h4 style="color: #c5a85c;">💡 Teacher Guidance Transcript:</h4>
                 <p style="color: #e2e8f0; font-size: 1.1rem; font-style: italic;">"{custom_teacher_script}"</p>
             </div>
             """, unsafe_allow_html=True)
-            
-            # Call the live voice pipeline streaming response bytes
-            with st.spinner("🔊 Generating custom spoken Arabic teacher audio corrections..."):
-                live_speech_bytes = ask_sheikh_to_speak(custom_teacher_script)
-                
-            if live_speech_bytes:
-                st.markdown("### 🔊 Live Spoken Feedback from Your Teacher")
-                st.audio(live_speech_bytes, format="audio/mp3")
-            else:
-                st.error("Audio generation failed. Please verify that your Voice ID string and your Streamlit Secrets Key match your ElevenLabs profiles!")
 
-    # VIEW 3: PROGRESS TRACKING PANEL
+            with st.spinner("Streaming audio response from ElevenLabs Teacher Engine..."):
+                teacher_audio = ask_sheikh_to_speak(custom_teacher_script)
+                if teacher_audio:
+                    st.audio(teacher_audio, format="audio/mp3")
+                else:
+                    st.error("Audio generation failed. Please verify that your Streamlit Secrets Key matches your ElevenLabs profile!")
+
+    # VIEW 3: SIMULATED PROGRESS LOGS
     with tab_tajweed:
-        st.subheader("Hifdh Progress Management Dashboard")
-        c_m1, c_m2, c_m3 = st.columns(3)
-        c_m1.metric(label="Sabaq (Current Target Task)", value=f"Ayah {st.session_state.current_ayah}", delta="Due Active")
-        c_m2.metric(label="Sabqi (Recent Review Retention)", value="Completed", delta="Verified")
-        c_m3.metric(label="Manzil (Long-Distance Back-Review)", value="Steady Pacing", delta="0 Overdue Tasks")
-        st.progress(0.08, text="Calculated Session Target Memorization Completion Rate: 8%")
+        st.subheader("Your Progress Tracker")
+        st.write("Tracking vowel pronunciation metrics over time.")
+        st.info("Keep practicing consistently to improve your Terminal Elongation metrics.")
