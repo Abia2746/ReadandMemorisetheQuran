@@ -40,8 +40,9 @@ def ask_gemini_teacher(student_name, surah, ayah, match_score):
         )
         
         payload = {"contents": [{"parts": [{"text": prompt}]}]}
-        res = requests.post(url, json=payload, headers=headers).json()
-        return res['candidates']['content']['parts']['text'].strip()
+        res = requests.post(url, json=payload, headers=headers, timeout=30).json()
+        # FIXED: Added correct list indexing mapping parameters
+        return res["candidates"][0]["content"]["parts"][0]["text"].strip()
     except Exception as e:
         return f"السلام عليكم يا {student_name}. القراءة ممتازة ولكن انتبه جيدا لمد الكلمات في نهاية الآية."
 
@@ -51,8 +52,8 @@ def ask_sheikh_to_speak(text_to_say):
         api_key = st.secrets["ELEVENLABS_API_KEY"]
         my_copied_voice_id = "pNInz6obpgDQGcFmaJgB"
         
-        # FIXED COMPLETELY: Full absolute server endpoint URL layout path mapped cleanly
-        url = f"https://elevenlabs.io{my_copied_voice_id}"
+        # FIXED: Absolute routing address link applied smoothly
+        url = f"https://api.elevenlabs.io/v1/text-to-speech/{my_copied_voice_id}"
         
         headers = {"Accept": "audio/mpeg", "Content-Type": "application/json", "xi-api-key": api_key}
         data = {
@@ -61,7 +62,7 @@ def ask_sheikh_to_speak(text_to_say):
             "voice_settings": {"stability": 0.6, "similarity_boost": 0.8}
         }
         
-        response = requests.post(url, json=data, headers=headers)
+        response = requests.post(url, json=data, headers=headers, timeout=60)
         if response.status_code == 200:
             return response.content
         else:
@@ -74,8 +75,9 @@ def ask_sheikh_to_speak(text_to_say):
 # --- GLOBAL CONTENT FETCHERS ---
 def fetch_verse_data(surah, ayah):
     try:
-        u_res = requests.get(f"https://alquran.cloud{surah}:{ayah}/quran-uthmani").json()
-        t_res = requests.get(f"https://alquran.cloud{surah}:{ayah}/ar.muyassar").json()
+        # FIXED: Full un-truncated api.alquran.cloud links restored
+        u_res = requests.get(f"https://api.alquran.cloud/v1/ayah/{surah}:{ayah}/quran-uthmani", timeout=15).json()
+        t_res = requests.get(f"https://api.alquran.cloud/v1/ayah/{surah}:{ayah}/ar.muyassar", timeout=15).json()
         return {"uthmani": u_res["data"]["text"], "tafsir": t_res["data"]["text"]}
     except Exception:
         return {"uthmani": "الْحَمْدُ لِلَّهِ رَبِّ الْعَالَمِينَ", "tafsir": "الحمد لله رب العالمين..."}
