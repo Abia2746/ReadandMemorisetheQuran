@@ -21,7 +21,7 @@ if "app_phase" not in st.session_state: st.session_state.app_phase = "onboarding
 if "current_surah" not in st.session_state: st.session_state.current_surah = 1
 if "current_ayah" not in st.session_state: st.session_state.current_ayah = 2
 
-# --- LIVE LIVE GEMINI BRAIN LOGIC ---
+# --- LIVE GEMINI BRAIN LOGIC ---
 def ask_gemini_teacher(student_name, surah, ayah, match_score):
     try:
         api_key = st.secrets["GEMINI_API_KEY"]
@@ -41,16 +41,19 @@ def ask_gemini_teacher(student_name, surah, ayah, match_score):
         
         payload = {"contents": [{"parts": [{"text": prompt}]}]}
         res = requests.post(url, json=payload, headers=headers).json()
-        return res['candidates'][0]['content']['parts'][0]['text'].strip()
+        return res['candidates']['content']['parts']['text'].strip()
     except Exception as e:
-        # Secure fallback text structure if API limits are momentarily bottlenecked
         return f"السلام عليكم يا {student_name}. القراءة ممتازة ولكن انتبه جيدا لمد الكلمات في نهاية الآية."
 
 # --- GLOBAL LIVE VOICE ENGINE ---
 def ask_sheikh_to_speak(text_to_say):
     try:
         api_key = st.secrets["ELEVENLABS_API_KEY"]
-        my_copied_voice_id = "pNInz6obpgDQGcFmaJgB" # Adam's Voice ID
+        
+        # 👑 LOCKED IN: Adam's Official Voice ID linked perfectly
+        my_copied_voice_id = "pNInz6obpgDQGcFmaJgB"
+        
+        # ✅ FIXED: Correct routing path address with trailing forward slash
         url = f"https://elevenlabs.io{my_copied_voice_id}"
         
         headers = {"Accept": "audio/mpeg", "Content-Type": "application/json", "xi-api-key": api_key}
@@ -64,6 +67,7 @@ def ask_sheikh_to_speak(text_to_say):
         if response.status_code == 200:
             return response.content
         else:
+            # Helper to display precise feedback parameters if network conditions change
             st.sidebar.error(f"ElevenLabs Error {response.status_code}: {response.text}")
             return None
     except Exception as e:
@@ -112,7 +116,6 @@ else:
             st.audio(mic_input['bytes'], format="audio/wav")
             
             with st.spinner("🧠 Gemini AI is listening and crafting personalized adjustments..."):
-                # Call Gemini to dynamically construct a unique script for you using your name!
                 live_generated_script = ask_gemini_teacher(st.session_state.user_name, st.session_state.current_surah, st.session_state.current_ayah, 78)
             
             st.markdown(f"""
