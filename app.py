@@ -1,10 +1,10 @@
-import base64, json, re
+import base64, json, re, time
 import requests
 import streamlit as st
 import streamlit.components.v1 as components
 from streamlit_mic_recorder import mic_recorder
 
-GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent"
+API = "https://generativelanguage.googleapis.com/v1beta/models"
 VOICE_ID = "pNInz6obpgDQGcFmaJgB"
 
 st.set_page_config(layout="wide", page_title="Al-Mu'allim", page_icon="🕌")
@@ -26,14 +26,44 @@ for k, v in {"user_name": "", "app_phase": "onboarding", "current_surah": 2, "cu
 def audio_part(b, mime):
     return {"inline_data": {"mime_type": mime, "data": base64.b64encode(b).decode()}}
 
-def call_gemini(parts, expect_json=False):
+@st.cache_data(ttl=3600, show_spinner=False)
+def list_models():
+    try:
+        r = requests.get(API, headers={"x-goog-api-key": st.secrets["GEMINI_API_KEY"]}, params={"pageSize": 200}, timeout=20).json()
+        bad = ("image", "tts", "live", "embed", "audio", "robotics", "computer")
+        return [m["name"].split("/")[-1] for m in r.get("models", [])
+                if "generateContent" in m.get("supportedGenerationMethods", []) and not any(x in m["name"] for x in bad)]
+    except Exception:
+        return []
+
+def pick_models(pro):
+    ms = list_models()
+    def ver(n):
+        v = re.findall(r"\d+(?:\.\d+)?", n); return float(v[0]) if v else 0
+    P = sorted([m for m in ms if "pro" in m], key=ver, reverse=True)
+    F = sorted([m for m in ms if "flash" in m and "lite" not in m], key=ver, reverse=True)
+    L = sorted([m for m in ms if "lite" in m], key=ver, reverse=True)
+    return ((P[:2] + F[:2] + L[:1]) if pro else (F[:2] + P[:1] + L[:1])) or ["gemini-3.8-flash"]
+
+def call_gemini(parts, expect_json=False, pro=False):
+    """Retries busy errors, then falls back through other models (best Pro first when pro=True)."""
     h = {"x-goog-api-key": st.secrets["GEMINI_API_KEY"], "Content-Type": "application/json"}
     p = {"contents": [{"parts": parts}]}
     if expect_json: p["generationConfig"] = {"responseMimeType": "application/json"}
-    r = requests.post(GEMINI_URL, json=p, headers=h, timeout=120)
-    if r.status_code != 200: raise RuntimeError(f"Gemini {r.status_code}: {r.text[:250]}")
-    t = r.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
-    return json.loads(t) if expect_json else t
+    last = ""
+    for model in pick_models(pro):
+        for attempt in range(3):
+            r = requests.post(f"{API}/{model}:generateContent", json=p, headers=h, timeout=150)
+            if r.status_code == 200:
+                ps = r.json()["candidates"][0]["content"]["parts"]
+                t = "".join(x.get("text", "") for x in ps if not x.get("thought")).strip()
+                if expect_json:
+                    return json.loads(re.sub(r"^```(?:json)?|```$", "", t).strip())
+                return t
+            last = f"{model} {r.status_code}: {r.text[:150]}"
+            if r.status_code in (429, 500, 503): time.sleep(2 ** attempt); continue
+            break
+    raise RuntimeError("Gemini is busy or unavailable right now. Try again shortly. " + last)
 
 def speak(text):
     try:
@@ -101,7 +131,7 @@ body{margin:0;font-family:Georgia,serif;background:transparent}
 .on{background:rgba(229,193,88,.45);transform:scale(1.07);box-shadow:0 0 18px rgba(197,168,92,.6)}
 audio{width:100%;margin-top:18px}
 </style>
-<div id="w"></div><audio id="a" controls src="__URL__"></audio>
+<div id="w"></div><audio id="a" controls src="__URL__"></audio><div id="n" style="text-align:center;margin-top:10px;color:#7a5c12;font-weight:600"></div>
 <script>
 const W=__WORDS__,a=document.getElementById('a'),box=document.getElementById('w');
 const els=W.map(w=>{const d=document.createElement('div');d.className='c';
@@ -112,11 +142,16 @@ cum=W.map(w=>{t+=sp*w.ar.length/tot;return t;});}
 a.onloadedmetadata=build;
 a.ontimeupdate=()=>{if(!cum.length)build();const t=a.currentTime;let i=cum.findIndex(c=>t<c);if(a.ended)i=-1;
 els.forEach((e,k)=>e.classList.toggle('on',k===i));};
-a.onended=()=>els.forEach(e=>e.classList.remove('on'));
+let n=1,done=false;const cn=document.getElementById('n');
+function upd(){cn.textContent=done?'✅ All 5 listens complete':'Listen '+n+' of 5';}
+a.onplay=()=>{if(done){n=1;done=false;}upd();};
+a.onended=()=>{els.forEach(e=>e.classList.remove('on'));if(n<5){n++;upd();setTimeout(()=>a.play(),1500);}else{done=true;upd();}};
+upd();
 </script>"""
     return tpl.replace("__URL__", audio_url).replace("__WORDS__", json.dumps(words, ensure_ascii=False))
 
 # ---------- AI teachers ----------
+@st.cache_data(show_spinner=False)
 def explain_tafsir(verse_ref, verse, source):
     prompt = f"""You are a warm, learned Quran teacher. Explain {verse_ref} ({verse}) to a student in beautiful, clear English (about 250 words).
 Base your explanation ONLY on the tafsir source text below, and say it comes from Ibn Kathir (abridged). Structure: context of the verse, meaning, lessons to take to heart.
@@ -141,14 +176,21 @@ CONVERSATION:
 student: {question}"""
     return call_gemini([{"text": prompt}])
 
+@st.cache_data(show_spinner=False)
+def tajweed_rules(verse):
+    return call_gemini([{"text": "List every tajweed rule that truly applies in this ayah, word by word in order, one short line each: word (Arabic + transliteration) - rule - what to do (counts for madd, etc). Cover madd types and counts, ghunnah, idgham/ikhfa/iqlab/izhar, qalqalah, tafkhim/tarqiq, lam/ra rules, silat, and waqf at the end. No invention, no markdown symbols.\n\n" + verse}], pro=True)
+
 def analyse(verse, ref_mp3, student_wav, reciter):
     prompt = f"""You are an expert Tajweed teacher. The student recited this ayah from memory: {verse}
 Clip 1 is the reference by {reciter}. Clip 2 is the student.
 Compare word by word: harakat, sukoon, madd length, ghunnah, idgham/ikhfa/iqlab/izhar, qalqalah, makharij, waqf. Also say if any words were skipped or wrong (memorisation errors).
 Write in English; Arabic words in script plus transliteration. Report only what you can actually hear; admit uncertainty; never invent mistakes. If the clip is silent or the wrong ayah, say so.
-Return JSON only: {{"overall_score":int,"spoken_summary":"max 60 words, warm","words":[{{"word":"","status":"good|needs_work","student_did":"","correction":""}}],"practice_tip":""}}"""
+Checklist of tajweed rules in this ayah:
+{tajweed_rules(verse)}
+Judge each checklist rule separately, citing roughly where (seconds) you heard it in each clip, with a confidence level.
+Return JSON only: {{"overall_score":int,"rules_check":[{{"rule":"","word":"","verdict":"correct|partly|missed|unclear","evidence":"","confidence":"high|medium|low"}}],"spoken_summary":"max 60 words, warm","words":[{{"word":"","status":"good|needs_work","student_did":"","correction":""}}],"practice_tip":""}}"""
     return call_gemini([{"text": prompt}, {"text": "Clip 1 (reference):"}, audio_part(ref_mp3, "audio/mpeg"),
-                        {"text": "Clip 2 (student):"}, audio_part(student_wav, "audio/wav")], True)
+                        {"text": "Clip 2 (student):"}, audio_part(student_wav, "audio/wav")], True, pro=True)
 
 def plan_sessions(goal, s, a):
     prompt = f"""Create a realistic 7-day Quran memorisation plan for {st.session_state.user_name}, currently at Surah {s}, Ayah {a}. Their goal: {goal}.
@@ -219,8 +261,8 @@ else:
 
     with t3:
         if listens < 5:
-            st.info(f"Complete 5 listens first ({listens}/5). Then recite without looking.")
-        else:
+            st.caption("Tip: play the ayah on tab 1 first (it repeats 5 times automatically).")
+        if True:
             st.write("Recite the ayah from memory:")
             mic = mic_recorder(start_prompt="🎙️ Start", stop_prompt="⏹️ Stop & get feedback", key="rec", just_once=True)
             if mic and ref_mp3:
@@ -231,6 +273,10 @@ else:
                     st.metric("Estimated accuracy", f"{res.get('overall_score','?')}%")
                     st.caption("AI estimate, not a certified assessment.")
                     st.markdown(f'<div class="glass">{res.get("spoken_summary","")}</div>', unsafe_allow_html=True)
+                    st.markdown("#### Tajweed rule check")
+                    for r_ in res.get("rules_check", []):
+                        ic = {"correct": "✅", "partly": "🟡", "missed": "❌"}.get(r_.get("verdict"), "❔")
+                        st.markdown(f"{ic} **{r_.get('rule','')}** ({r_.get('word','')}), {r_.get('confidence','')} confidence  \n{r_.get('evidence','')}")
                     for w in res.get("words", []):
                         ok = w.get("status") == "good"
                         with st.expander(f"{'✅' if ok else '⚠️'} {w.get('word','')}", expanded=not ok):
