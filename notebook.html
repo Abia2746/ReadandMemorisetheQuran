@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>The Notebook</title>
+<link href="https://fonts.googleapis.com/css2?family=Amiri+Quran&family=EB+Garamond:ital@0;1&display=swap" rel="stylesheet">
+<style>
+:root{--p:#F6EFE3;--p2:#EFE6D6;--i:#1C1A17;--i2:#5A5348;--r:#8C2F24;--g:#A8873F;--h:rgba(28,26,23,.12)}
+@media(prefers-color-scheme:dark){:root{--p:#14120F;--p2:#1c1914;--i:#E8DFCE;--i2:#a89f90;--r:#C4675A;--h:rgba(232,223,206,.14)}}
+*{box-sizing:border-box;margin:0}
+body{background:var(--p);color:var(--i);font:17px/1.65 "EB Garamond",Georgia,serif;font-variant-numeric:oldstyle-nums}
+nav{display:flex;flex-wrap:wrap;gap:0 18px;padding:10px 16px;border-bottom:.5px solid var(--h)}
+nav button{background:none;border:0;font:inherit;color:var(--i2);cursor:pointer;padding:4px 0}
+nav button.on{color:var(--r);border-bottom:1px solid var(--g)}
+main{max-width:980px;margin:0 auto;padding:18px 16px 60px}
+button.b{font:inherit;background:none;color:var(--i);border:0;border-bottom:.5px solid var(--i);padding:2px 4px;margin:0 10px 0 0;cursor:pointer}
+input,select,textarea{font:inherit;background:var(--p2);color:var(--i);border:0;border-bottom:.5px solid var(--i);padding:4px}
+.ar{font-family:"Amiri Quran","Scheherazade New",serif;font-size:38px;line-height:2.15;letter-spacing:0}
+.page{display:grid;grid-template-columns:60fr 40fr;gap:0}
+.page>.txt{padding-right:24px;border-right:.5px solid var(--h)}
+.page>.mar{padding-left:24px;font-size:15px;color:var(--i2)}
+@media(max-width:640px){.page{grid-template-columns:1fr}.page>.txt{border:0;padding:0}.page>.mar{padding:0;border-top:.5px solid var(--h);margin-top:12px}}
+.rule{height:1px;background:var(--g);margin:10px 0}
+h2{font-weight:400;color:var(--r);font-size:20px;margin:14px 0 4px}
+.src{font-size:14px;color:var(--i2)} .err{color:var(--r)}
+.ok{color:var(--i)} .mis{color:#b7791f} .omit{color:var(--r);text-decoration:underline} .ext{color:#888;text-decoration:line-through}
+.bar{height:3px;background:var(--r);margin:2px 0}
+.dis{border-top:.5px solid var(--h);margin-top:30px;padding-top:6px;font-size:14px;color:var(--i2)}
+.cand{border-bottom:.5px solid var(--h);padding:6px 0;cursor:pointer}
+sup{color:var(--r)}
+</style></head><body>
+<nav id="nav"></nav><main id="m"></main>
+<script>
+const API='https://api.alquran.cloud/v1', QC='https://api.quran.com/api/v4';
+const $=s=>document.querySelector(s), m=$('#m');
+// ---------- storage (IndexedDB) ----------
+const db=new Promise((res,rej)=>{const r=indexedDB.open('notebook',1);r.onupgradeneeded=()=>r.result.createObjectStore('kv');r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)});
+const kv=async(mode,k,v)=>{const d=await db;return new Promise((res,rej)=>{const s=d.transaction('kv',mode==='get'?'readonly':'readwrite').objectStore('kv');const q=mode==='get'?s.get(k):s.put(v,k);q.onsuccess=()=>res(q.result);q.onerror=()=>rej(q.error)})};
+const getJ=async(k,d)=>{try{return (await kv('get',k))??d}catch{return d}};
+const setJ=(k,v)=>kv('put',k,v);
+let S={notes:{},cards:{},added:{},acc:[]}; // notes[key], cards[id], added[key]=dayNumber, acc=[0..1]
+const save=()=>setJ('state',S);
+// ---------- arabic normalisation & matching ----------
+const norm=t=>t.replace(/[\u064B-\u065F\u0670\u06D6-\u06ED\u0640]/g,'').replace(/[إأآٱ]/g,'ا').replace(/ى/g,'ي').replace(/ة/g,'ه').replace(/\s+/g,' ').trim();
+const lev=(a,b)=>{const d=Array.from({length:a.length+1},(_,i)=>[i,...Array(b.length).fill(0)]);for(let j=1;j<=b.length;j++)d[0][j]=j;for(let i=1;i<=a.length;i++)for(let j=1;j<=b.length;j++)d[i][j]=Math.min(d[i-1][j]+1,d[i][j-1]+1,d[i-1][j-1]+(a[i-1]===b[j-1]?0:1));return d[a.length][b.length]};
+const sim=(a,b)=>{const L=Math.max(a.length,b.length);return L?1-lev(a,b)/L:1};
+// ---------- sources ----------
+async function corpus(){let c=await getJ('corpus');if(c)return c;
+ const r=await fetch(API+'/quran/quran-simple');if(!r.ok)throw new Error('alquran.cloud returned '+r.status);
+ const j=await r.json();c=j.data.surahs.flatMap(s=>s.ayahs.map(a=>({s:s.number,a:a.numberInSurah,g:a.number,n:norm(a.text)})));await setJ('corpus',c);return c}
+async function loadAyah(s,a){const key=s+':'+a;let c=await getJ('ayah:'+key);
+ if(!c){c={key,s,a,words:[],uth:'',g:0,tafsir:{}};
+  const r=await fetch(`${API}/ayah/${key}/quran-uthmani`);if(!r.ok)throw new Error('Uthmani text unavailable ('+r.status+')');
+  const j=(await r.json()).data;c.uth=j.text;c.g=j.number;
+  try{const w=await fetch(`${QC}/verses/by_key/${key}?words=true&word_fields=text_uthmani&language=en`);if(!w.ok)throw 0;
+   c.words=(await w.json()).verse.words.filter(x=>x.char_type_name==='word').map(x=>({text:x.text_uthmani,tr:x.translation?.text||''}))}
+  catch{c.words=c.uth.split(' ').map(t=>({text:t,tr:''}));c.wbwMissing=true}
+  for(const [ed,label] of [['ar.muyassar','Tafsir al-Muyassar (King Fahd Complex), classical Sunni, Arabic'],['ar.jalalayn','Tafsir al-Jalalayn (al-Mahalli & al-Suyuti), classical Sunni, Arabic']]){
+   try{const t=await fetch(`${API}/ayah/${key}/${ed}`);if(t.ok)c.tafsir[label]=(await t.json()).data.text}catch{}}
+  await setJ('ayah:'+key,c)}
+ return c}
+let cur=null;
+// ---------- views ----------
+const views={identify,loop,page,recite,tajweed,assistant,plan};
+const names={identify:'Identify',loop:'Loop',page:'Page',recite:'Recite',tajweed:'Tajweed',assistant:'Assistant',plan:'Plan'};
+function nav(v){$('#nav').innerHTML=Object.keys(names).map(k=>`<button class="${k===v?'on':''}" onclick="go('${k}')">${names[k]}</button>`).join('')+'<button onclick="exp()">Export</button><button onclick="document.getElementById(\'imp\').click()">Import</button><input id="imp" type="file" hidden onchange="imp(this)">'}
+const go=v=>{nav(v);views[v]()};
+const srcLink='<div class="dis">Sources: Qur\'an text — api.alquran.cloud (Uthmani). Word glosses — quran.com v4. Tafsir — as labelled per entry. Not a fatwa; rulings require a qualified scholar.</div>';
+const need=()=>cur?false:(m.innerHTML='<p>Pick an ayah first (Identify, or type surah:ayah).</p>'+pick(),true);
+const pick=()=>`<p><input id="sa" placeholder="2:57" size="6"> <button class="b" onclick="setAyah($('#sa').value)">Open</button></p>`;
+async function setAyah(v){const [s,a]=v.split(':').map(Number);m.innerHTML='Loading…';try{cur=await loadAyah(s,a);go('page')}catch(e){m.innerHTML=`<p class="err">Source down: ${e.message}. Nothing has been substituted.</p>`}}
+// Phase 0
+function identify(){m.innerHTML=`<h2>Listen & identify</h2><p><button class="b" id="rec">Record</button><span id="st" class="src"></span></p><canvas id="wf" width="600" height="40" style="width:100%;height:40px"></canvas><div id="tr" class="ar" dir="rtl" lang="ar" style="font-size:26px"></div><div id="cs"></div><h2>Or open directly</h2>${pick()}${srcLink}`;
+ const SR=window.SpeechRecognition||window.webkitSpeechRecognition;if(!SR){$('#st').textContent=' Speech recognition unavailable here. Use Chrome, or type the ayah.'; return}
+ let r,on=false;$('#rec').onclick=async()=>{if(on){r.stop();return}
+  r=new SR();r.lang='ar-SA';r.interimResults=true;r.continuous=true;on=true;$('#rec').textContent='Stop';let txt='';
+  wave();r.onresult=e=>{txt=[...e.results].map(x=>x[0].transcript).join(' ');$('#tr').textContent=txt};
+  r.onend=async()=>{on=false;$('#rec').textContent='Record';await match(txt)};r.start()}}
+async function wave(){try{const s=await navigator.mediaDevices.getUserMedia({audio:true}),ac=new AudioContext(),an=ac.createAnalyser(),c=$('#wf'),x=c.getContext('2d'),d=new Uint8Array(an.fftSize);ac.createMediaStreamSource(s).connect(an);
+ (function f(){if(!document.body.contains(c)){s.getTracks().forEach(t=>t.stop());return}an.getByteTimeDomainData(d);x.clearRect(0,0,600,40);x.strokeStyle=getComputedStyle(document.body).color;x.beginPath();d.forEach((v,i)=>x[i?'lineTo':'moveTo'](i*600/d.length,v/255*40));x.stroke();requestAnimationFrame(f)})()}catch{}}
+async function match(t){const q=norm(t);if(q.split(' ').length<2){$('#cs').innerHTML='<p>Too short to match. Record at least four words.</p>';return}
+ try{const C=await corpus(),qs=new Set(q.split(' '));
+  const sc=C.map(c=>{const w=c.n.split(' ');const ov=w.filter(x=>qs.has(x)).length/Math.max(qs.size,1);const pre=c.n.slice(0,q.length+10);return{c,v:.5*Math.min(ov,1)+.5*Math.max(sim(q,c.n),sim(q,pre))}}).sort((a,b)=>b.v-a.v).slice(0,3);
+  $('#cs').innerHTML='<h2>Candidates</h2>'+sc.map(x=>`<div class="cand" onclick="setAyah('${x.c.s}:${x.c.a}')">${x.c.s}:${x.c.a}<div class="bar" style="width:${Math.round(x.v*100)}%"></div><span class="src">${Math.round(x.v*100)}% ${x.v<.6?'(low confidence, check all three)':''}</span></div>`).join('')}
+ catch(e){$('#cs').innerHTML=`<p class="err">Corpus unavailable: ${e.message}</p>`}}
+// Loop
+let L=null;
+const pad=n=>String(n).padStart(3,'0');
+const RECS={yasser:{n:'Yasser ad-Dossari (everyayah.com, folder Yasser_Ad-Dussary_128kbps)',u:c=>`https://everyayah.com/data/Yasser_Ad-Dussary_128kbps/${pad(c.s)}${pad(c.a)}.mp3`},alafasy:{n:'Mishary Alafasy (cdn.islamic.network)',u:c=>`https://cdn.islamic.network/quran/audio/128/ar.alafasy/${c.g}.mp3`}};
+const audioURL=()=>RECS[S.rec||'yasser'].u(cur);
+function loop(){if(need())return;L={ph:1,n:0,pass:1,i:0,q:[...cur.words.keys()],shown:false,ed:'ar.yasseraldossari'};draw()}
+function draw(){const w=cur.words;let h=`<h2>Phase ${L.ph}</h2>`;
+ const marks=n=>'●'.repeat(n)+'○'.repeat(5-n);
+ if(L.ph===1){h+=`<p>Listen ${marks(L.n)} <span class="src">text hidden</span></p><button class="b" onclick="play()">Play (space)</button><p id="au" class="src"></p>`}
+ else if(L.ph===2){h+=`<div class="ar" dir="rtl" lang="ar">${cur.uth}</div><button class="b" onclick="play()">Play</button><button class="b" onclick="L.ph=3;draw()">Continue</button><p id="au" class="src"></p>`}
+ else if(L.ph===3){const idx=L.q[L.i];if(idx===undefined){L.pass++;if(L.pass>5){L.ph=4;return draw()}L.q=[...w.keys()];L.i=0;return draw()}
+  h+=`<p>Pass ${marks(L.pass-1)}</p><div class="ar" dir="rtl" lang="ar">${w[idx].text}</div><p id="mean">${L.shown?w[idx].tr||'(no gloss retrieved)':'&nbsp;'}</p>${cur.wbwMissing?'<p class="err">Word glosses unavailable (quran.com unreachable). Self-check mode.</p>':''}<input id="ans" placeholder="meaning" autofocus onkeydown="if(event.key==='Enter')chk()"> <button class="b" onclick="chk()">Check</button><button class="b" onclick="L.shown=true;draw()">Reveal (R)</button><span class="src"> ${L.i+1}/${L.q.length}</span>`}
+ else{h+=`<p>Loop complete. Now recite it.</p><button class="b" onclick="go('recite')">Recite</button><button class="b" onclick="go('page')">Page</button>`}
+ m.innerHTML=h+srcLink;$('#ans')?.focus()}
+async function play(){const au=new Audio(audioURL(L.ed));$('#au').textContent='';
+ au.onerror=()=>{L.stop=1;$('#au').textContent=`Audio for ayah ${cur.key} failed to load from ${au.src}. Stopped. No other reciter is substituted; change the reciter in Plan if you want one.`};
+ au.onended=()=>{if(L.ph===1){L.n++;if(L.n>=5){L.ph=2;draw()}else{draw();play()}}};try{await au.play()}catch{}}
+function chk(){const w=cur.words[L.q[L.i]],a=$('#ans').value.toLowerCase().trim(),t=(w.tr||'').toLowerCase();
+ const ok=cur.wbwMissing?true:Math.max(sim(a,t),t.split(/\W+/).some(x=>x&&x===a)?1:0)>=.8;
+ const id=cur.key+'#'+L.q[L.i];if(ok){L.shown=true;L.i++;rate(id,true);L.shown=false;draw()}else{L.q.push(L.q[L.i]);L.q.splice(L.i,1);rate(id,false);$('#mean').textContent='Not yet. It will come back this pass.';$('#ans').value=''}}
+// Scheduler: SM-2-lite, ivl 1,3,7,16,35. A failed word resets only that word's card.
+const IV=[1,3,7,16,35],day=()=>Math.floor(Date.now()/864e5);
+function rate(id,ok){const c=S.cards[id]||{ivl:0,step:-1,due:day()};if(ok){c.step=Math.min(c.step+1,IV.length-1);c.ivl=IV[c.step]}else{c.step=-1;c.ivl=1}c.due=day()+c.ivl;S.cards[id]=c;if(!S.added[cur.key])S.added[cur.key]=day();save()}
+// Page
+async function page(){if(need())return;const k=cur.key;
+ const g=(o=>Object.entries(o).map(([l,t],i)=>`<div><sup>${i+1}</sup> <b>${l}</b><br><span dir="rtl" lang="ar">${t}</span></div>`).join('<br>'))(cur.tafsir);
+ const noSrc=['al-Mizan (al-Tabataba\'i), Shia','Nur al-Thaqalayn, Shia','al-Tabari / al-Qurtubi / Ibn Kathir, Sunni'].map(x=>`<div class="src">${x}: no source retrieved (not bundled)</div>`).join('');
+ m.innerHTML=`<div class="rule"></div><p style="color:var(--r)">${k}</p><div class="page"><div class="txt"><div class="ar" dir="rtl" lang="ar">${cur.uth}<sup style="font-size:18px">1</sup></div><button class="b" onclick="go('loop')">Begin loop</button><button class="b" onclick="go('recite')">Recite</button><button class="b" onclick="blind()">Blind test</button></div>
+ <div class="mar">${g||'<p>no source retrieved</p>'}<hr style="border:0;border-top:.5px solid var(--h)">${noSrc}<hr style="border:0;border-top:.5px solid var(--h)"><b>My notes</b><textarea id="nt" rows="4" style="width:100%">${S.notes[k]||''}</textarea><button class="b" onclick="S.notes[cur.key]=$('#nt').value;save()">Save note</button></div></div>${srcLink}`}
+// Recite: word-level alignment
+function align(ref,hyp){const R=ref.map(norm),H=hyp.map(norm),n=R.length,k=H.length,d=Array.from({length:n+1},()=>Array(k+1).fill(0));
+ for(let i=0;i<=n;i++)d[i][0]=i;for(let j=0;j<=k;j++)d[0][j]=j;
+ for(let i=1;i<=n;i++)for(let j=1;j<=k;j++)d[i][j]=Math.min(d[i-1][j]+1,d[i][j-1]+1,d[i-1][j-1]+(1-sim(R[i-1],H[j-1])));
+ const o=[];let i=n,j=k;while(i||j){if(i&&j&&Math.abs(d[i][j]-d[i-1][j-1]-(1-sim(R[i-1],H[j-1])))<1e-9){const s=sim(R[i-1],H[j-1]);o.unshift({t:s>=.85?'ok':'mis',w:ref[i-1],h:hyp[j-1]});i--;j--}else if(i&&Math.abs(d[i][j]-d[i-1][j]-1)<1e-9){o.unshift({t:'omit',w:ref[i-1]});i--}else{o.unshift({t:'ext',w:hyp[j-1]});j--}}return o}
+function recite(){if(need())return;m.innerHTML=`<h2>Recite</h2><p><button class="b" id="rb">Start</button></p><div id="out" class="ar" dir="rtl" lang="ar"></div><p id="det" class="src"></p><p class="src">Correct: ink. Mispronounced: amber. Omitted: red underline. Extra: grey struck through.</p>${srcLink}`;
+ const SR=window.SpeechRecognition||window.webkitSpeechRecognition;if(!SR){$('#det').textContent='Speech recognition unavailable in this browser.';return}
+ let r,tm,on=0;$('#rb').onclick=()=>{if(on){r.stop();return}r=new SR();r.lang='ar-SA';r.continuous=true;r.interimResults=true;on=1;$('#rb').textContent='Stop';
+  r.onresult=e=>{clearTimeout(tm);const t=[...e.results].map(x=>x[0].transcript).join(' ');tm=setTimeout(()=>show(t),300)};r.onend=()=>{on=0;$('#rb').textContent='Start'};r.start()}}
+let lastDiff=[];
+function show(t){const ref=cur.uth.split(' '),hyp=t.split(/\s+/).filter(Boolean);lastDiff=align(ref,hyp);
+ $('#out').innerHTML=lastDiff.map((x,i)=>`<span class="${x.t}" onclick="dd(${i})">${x.w} </span>`).join('');
+ const ok=lastDiff.filter(x=>x.t==='ok').length/ref.length;window._ok=ok}
+const dd=i=>{const x=lastDiff[i];$('#det').textContent=`expected: ${x.t==='ext'?'(nothing)':x.w} | heard: ${x.h||(x.t==='ok'?x.w:x.t==='ext'?x.w:'(nothing)')} | ${x.t}`};
+function blind(){if(need())return;m.innerHTML=`<h2>Blind test</h2><p>Text hidden. Recite from memory.</p><button class="b" onclick="recite();setTimeout(()=>{$('#out').style.visibility='visible'},0)">Start</button><button class="b" onclick="fin()">Score and schedule</button>`}
+function fin(){const a=window._ok??0;S.acc.push(a);rate(cur.key,a>=.8);save();m.innerHTML=`<p>Score ${Math.round(a*100)}%. Scheduled.</p>`+srcLink}
+// Tajweed, Assistant: stubs stated honestly
+function nextWord(){const i=L.q[L.i];rate(cur.key+'#'+i,false);L.q.push(i);L.q.splice(L.i,1);L.shown=false;draw()}
+function tajweed(){if(need())return;m.innerHTML=`<h2>Tajweed</h2><p class="dis" style="border:0;margin:0">heuristic — not a substitute for a teacher. Signal-level checks of sustained sounds and release bursts against the reference recording. Ghunnah is not measured. No overall score is given.</p><p><button class="b" id="tr">Record</button><span id="ts" class="src"></span></p><div id="tf"></div>${srcLink}`;
+ let mr,ch=[];$('#tr').onclick=async()=>{if(mr&&mr.state==='recording'){mr.stop();return}
+  try{const st=await navigator.mediaDevices.getUserMedia({audio:true});ch=[];mr=new MediaRecorder(st);mr.ondataavailable=e=>ch.push(e.data);mr.onstop=()=>{st.getTracks().forEach(t=>t.stop());$('#tr').textContent='Record';analyse(new Blob(ch))};mr.start();$('#tr').textContent='Stop'}
+  catch(e){$('#ts').textContent=' Microphone unavailable: '+e.message}}}
+function feat(b){const x=b.getChannelData(0),fs=Math.round(b.sampleRate*.01),e=[];for(let i=0;i+fs<=x.length;i+=fs){let q=0;for(let j=0;j<fs;j++)q+=x[i+j]*x[i+j];e.push(Math.sqrt(q/fs))}
+ const p=[...e].sort((a,c)=>a-c)[Math.floor(e.length*.9)]||1e-6,v=e.map((y,i)=>y>.3*p?i:-1).filter(i=>i>=0),sp=((v[v.length-1]||0)-(v[0]||0))*.01||1;
+ const sus=[];let a=-1;for(let i=1;i<=e.length;i++){const ok=i<e.length&&e[i]>.3*p&&Math.abs(e[i]-e[i-1])<.15*p;if(ok&&a<0)a=i-1;if(!ok&&a>=0){if(i-a>=15)sus.push({t:a*.01,d:(i-a)*.01});a=-1}}
+ const dips=[];for(let i=1;i<e.length-4;i++){if(e[i]<.08*p&&e[i-1]>=.08*p){let k=i;while(k<e.length&&e[k]<.08*p)k++;const n=k-i;if(n>=2&&n<=8&&Math.max(...e.slice(k,k+3))>.5*p)dips.push({t:i*.01});i=k}}
+ return{sus,dips,sp}}
+async function analyse(blob){const o=$('#tf'),ac=new AudioContext();o.textContent='Analysing…';let U,R;
+ try{U=await ac.decodeAudioData(await blob.arrayBuffer())}catch(e){o.innerHTML=`<p class="err">Could not decode your recording (${e.message}). No result.</p>`;return}
+ try{const r=await fetch(audioURL());if(!r.ok)throw new Error('HTTP '+r.status);R=await ac.decodeAudioData(await r.arrayBuffer())}catch(e){o.innerHTML=`<p class="err">Reference audio for ayah ${cur.key} unavailable (${e.message}). Cannot compare; no result.</p>`;return}
+ const u=feat(U),r=feat(R),k=u.sp/r.sp,rows=[];window._ua=new Audio(URL.createObjectURL(blob));
+ const n=Math.min(u.sus.length,r.sus.length);
+ for(let i=0;i<n;i++){const ex=r.sus[i].d*k,ra=u.sus[i].d/ex,sev=ra<.6||ra>1.6?'high':ra<.8||ra>1.25?'medium':null;if(sev)rows.push({rule:'madd (sustained-vowel proxy)',ex:ex.toFixed(2)+'s',he:u.sus[i].d.toFixed(2)+'s',t:u.sus[i].t,sev})}
+ if(u.dips.length!==r.dips.length)rows.push({rule:'qalqalah (release-burst proxy)',ex:r.dips.length+' bursts',he:u.dips.length+' bursts',t:u.dips[0]?.t||0,sev:Math.abs(u.dips.length-r.dips.length)>1?'high':'medium'});
+ o.innerHTML=(u.sus.length!==r.sus.length?`<p class="err">Sustained segments differ (${u.sus.length} heard, ${r.sus.length} reference), so pairing by order is unreliable.</p>`:'')+(rows.length?rows.map(x=>`<div class="cand">${x.rule}: expected ${x.ex}, heard ${x.he}, at ${x.t.toFixed(2)}s, severity ${x.sev} <button class="b" onclick="_ua.currentTime=${x.t};_ua.play()">Replay</button></div>`).join(''):'<p>No differences found at this resolution. That does not mean the tajweed is correct.</p>')}
+async function allAyahs(){const d=await db;return new Promise(res=>{const o=[],q=d.transaction('kv').objectStore('kv').openCursor();q.onsuccess=()=>{const c=q.result;if(c){if(String(c.key).startsWith('ayah:'))o.push(c.value);c.continue()}else res(o)}})}
+async function search_tafsir(q){const T=norm(q).split(' ').filter(w=>w.length>2),out=[];if(!T.length)return out;
+ for(const c of await allAyahs())for(const [w,t] of Object.entries(c.tafsir||{})){const n=norm(t),h=T.filter(x=>n.includes(x)).length;if(h>=Math.min(2,T.length))out.push({h,w,key:c.key,t})}
+ return out.sort((a,b)=>b.h-a.h).slice(0,3)}
+function assistant(){m.innerHTML=`<h2>Assistant</h2><p><input id="q" size="30" dir="auto" placeholder="search the tafsir you have opened" onkeydown="if(event.key==='Enter')ask()"> <button class="b" onclick="ask()">Search</button></p><div id="ans2"></div><p class="src">Searches only the al-Muyassar and al-Jalalayn passages already fetched for ayat you opened, and matches Arabic wording (English questions will not match). Hadith: no source retrieved (no graded corpus). Not a fatwa; rulings require a qualified scholar.</p>${srcLink}`}
+async function ask(){const q=$('#q').value,o=$('#ans2');
+ if(/حكم|فتوى|حلال|حرام|ruling|fatwa|halal|haram|permissible/i.test(q)){o.innerHTML='<p>This asks for a fiqh ruling. I will not give one; ask a qualified scholar.</p>';return}
+ const r=await search_tafsir(q);if(!r.length){o.innerHTML='<p>no source retrieved</p>';return}
+ o.innerHTML=r.map((x,i)=>`<p dir="rtl" lang="ar" class="ar" style="font-size:22px;line-height:1.9">${x.t} [${i+1}]</p>`).join('')+'<div class="src">'+r.map((x,i)=>`[${i+1}] ${x.w}, on ayah ${x.key}`).join('<br>')+'</div>'}
+// Plan
+function plan(){const d=day(),cards=Object.entries(S.cards),due=cards.filter(([,c])=>c.due<=d),keys=Object.keys(S.added);
+ const b={sabaq:0,sabqi:0,manzil:0};keys.forEach(k=>{const age=d-S.added[k];b[age<1?'sabaq':age<=7?'sabqi':'manzil']++});
+ const acc=S.acc.length?S.acc.reduce((a,x)=>a+x,0)/S.acc.length:null,perDay=3;
+ m.innerHTML=`<h2>Plan</h2><p>Due today: ${due.length}. Cap: 20 minutes.</p><p>Sabaq ${b.sabaq} · Sabqi ${b.sabqi} · Manzil ${b.manzil}</p>
+ <p>Target ayat: <input id="tg" type="number" value="${S.target||0}" style="width:70px"> in days <input id="td" type="number" value="${S.days||90}" style="width:60px"> <button class="b" onclick="S.target=+$('#tg').value;S.days=+$('#td').value;save();plan()">Set</button></p>
+ ${S.target?`<p>Daily load: ${(S.target/S.days).toFixed(1)} new, ${(3*S.target/S.days).toFixed(1)} revision (1:3). ${acc===null?'Projection needs at least one scored blind test.':`Projected completion: about ${Math.ceil((S.target-keys.length)/(perDay*acc))} days at your measured ${Math.round(acc*100)}% accuracy.`}</p>`:''}
+ <p>Reciter: <select onchange="S.rec=this.value;save()">${Object.entries(RECS).map(([k,v])=>`<option value="${k}" ${(S.rec||'yasser')===k?'selected':''}>${v.n}</option>`).join('')}</select></p><p class="src">Every fourth week is consolidation: add no new ayat.</p>${srcLink}`}
+// Export / import
+function exp(){const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(S)],{type:'application/json'}));a.download='notebook.json';a.click()}
+function imp(i){i.files[0].text().then(t=>{S=JSON.parse(t);save();go('plan')})}
+document.addEventListener('keydown',e=>{if(e.target.tagName==='INPUT'||e.target.tagName==='TEXTAREA')return;if(e.key==='Escape')go('page');if(e.key==='ArrowRight'&&L?.ph===3&&L.shown)nextWord();if(e.key==='r'||e.key==='R'){if(L?.ph===3){L.shown=true;draw()}}if(e.key===' '&&L?.ph<3&&document.getElementById('au')){e.preventDefault();play()}});
+(async()=>{S=Object.assign(S,await getJ('state',{}));go('identify')})();
+</script></body></html>
