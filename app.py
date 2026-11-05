@@ -1,5 +1,8 @@
 import base64, json, re, time
 import html as _h
+import io, threading, wave
+import numpy as np
+from streamlit.runtime.scriptrunner import add_script_run_ctx, get_script_run_ctx
 import requests
 import streamlit as st
 import streamlit.components.v1 as components
@@ -18,6 +21,13 @@ h1,h2,h3,h4,p,label,li,.stMarkdown { color:#2b2a26 !important; font-family:Georg
   border-radius:16px; padding:20px 24px; margin:12px 0; box-shadow:0 6px 24px rgba(120,100,50,.08); }
 .ar-big { font-family:'Amiri','Scheherazade New',serif; font-size:2.6rem; direction:rtl; text-align:center; line-height:2.2; color:#7a5c12; }
 [data-testid="stAudioInput"]{background:rgba(255,255,255,.55)!important;border:1px solid rgba(197,168,92,.5)!important;border-radius:999px!important;box-shadow:0 6px 24px rgba(120,100,50,.14);}
+[data-testid="stStatusWidget"]{display:none!important;}
+.ld{position:relative;overflow:hidden;margin:10px auto;max-width:560px;padding:16px 22px;border-radius:14px;color:#fff;font-weight:700;text-align:center;
+ background:linear-gradient(135deg,#c5a85c,#b39243);box-shadow:0 0 24px rgba(229,193,88,.75);animation:flick 1.3s infinite;}
+.ld::after{content:"";position:absolute;top:0;left:-60%;width:40%;height:100%;background:linear-gradient(100deg,transparent,rgba(255,255,255,.8),transparent);animation:shine 1.4s infinite;}
+.ld .bar{position:absolute;left:0;bottom:0;height:5px;background:rgba(255,255,255,.85);transition:width .25s;}
+@keyframes shine{to{left:120%}}
+@keyframes flick{0%,100%{opacity:1}45%{opacity:.8}50%{opacity:1}57%{opacity:.88}}
 div.stButton > button { background:linear-gradient(135deg,#c5a85c,#b39243)!important; color:#fff!important; border:none!important; border-radius:10px!important; font-weight:600!important; }
 </style>""", unsafe_allow_html=True)
 
@@ -195,8 +205,8 @@ Compare word by word: harakat, sukoon, madd length, ghunnah, idgham/ikhfa/iqlab/
 Write in English; Arabic words in script plus transliteration. Report only what you can actually hear; admit uncertainty; never invent mistakes. If the clip is silent or the wrong ayah, say so.
 Checklist of tajweed rules in this ayah:
 {tajweed_rules(verse)}
-Also compare breath control (where each reciter breathes or pauses, and whether the student's breath lasted each phrase). Judge each checklist rule separately, citing roughly where (seconds) you heard it in each clip, with a confidence level.
-Return JSON only: {{"overall_score":int,"rules_check":[{{"rule":"","word":"","verdict":"correct|partly|missed|unclear","evidence":"","confidence":"high|medium|low"}}],"breath":{{"reference":"","student":"","tip":""}},"spoken_summary":"max 60 words, warm","words":[{{"word":"","status":"good|needs_work","student_did":"","correction":""}}],"practice_tip":""}}"""
+Also compare breath control (where each reciter breathes or pauses, and whether the student's breath lasted each phrase). First write in heard_text, in Arabic script, exactly the words the student recited as you hear them (use [unclear] where you cannot tell). If you hear no clear recitation, set heard_text to "" and overall_score to 0 and give no word feedback; never invent mistakes. Judge each checklist rule separately, citing roughly where (seconds) you heard it in each clip, with a confidence level.
+Return JSON only: {{"overall_score":int,"rules_check":[{{"rule":"","word":"","verdict":"correct|partly|missed|unclear","evidence":"","confidence":"high|medium|low"}}],"heard_text":"","breath":{{"reference":"","student":"","tip":""}},"spoken_summary":"max 60 words, warm","words":[{{"word":"","status":"good|needs_work","student_did":"","correction":""}}],"practice_tip":""}}"""
     return call_gemini([{"text": prompt}, {"text": "Clip 1 (reference):"}, audio_part(ref_mp3, "audio/mpeg"),
                         {"text": "Clip 2 (student):"}, audio_part(student_wav, "audio/wav")], True, pro=True)
 
@@ -204,6 +214,52 @@ def plan_sessions(goal, s, a):
     prompt = f"""Create a realistic 7-day Quran memorisation plan for {st.session_state.user_name}, currently at Surah {s}, Ayah {a}. Their goal: {goal}.
 Use the Sabaq (new), Sabqi (recent review), Manzil (old review) structure, with the 5-listen method, tafsir reading and recitation check each day. Plain English, short, one line per day, no markdown symbols."""
     return call_gemini([{"text": prompt}])
+
+def boost(wav_bytes):
+    """Amplifies quiet recordings (normalises to ~90% of full scale, max 30x). Returns (wav, peak_fraction_before)."""
+    try:
+        with wave.open(io.BytesIO(wav_bytes)) as w:
+            ch, sw, fr = w.getnchannels(), w.getsampwidth(), w.getframerate()
+            raw = w.readframes(w.getnframes())
+        if sw != 2: return wav_bytes, 1.0
+        x = np.frombuffer(raw, dtype=np.int16).astype(np.float32)
+        if x.size == 0: return wav_bytes, 0.0
+        peak = float(np.percentile(np.abs(x), 99.5))
+        frac = peak / 32768
+        if peak < 30: return wav_bytes, frac
+        y = np.clip(x * min(30.0, 0.9 * 32767 / peak), -32768, 32767).astype(np.int16)
+        out = io.BytesIO()
+        with wave.open(out, "wb") as w2:
+            w2.setnchannels(ch); w2.setsampwidth(2); w2.setframerate(fr); w2.writeframes(y.tobytes())
+        return out.getvalue(), frac
+    except Exception:
+        return wav_bytes, 1.0
+
+def loader_html(label, pct, left):
+    sub = "100% · done" if pct >= 100 else f"{pct}% · " + (f"about {left}s left" if left else "almost there")
+    return f'<div class="ld"><div class="bar" style="width:{pct}%"></div>✨ {label} · {sub}</div>'
+
+def run_with_progress(fn, label, est=15):
+    """Runs fn in a thread and shows a shimmering 0-100% button (time left is an estimate)."""
+    box, out = st.empty(), {}
+    def work():
+        try: out["v"] = fn()
+        except Exception as e: out["e"] = e
+    t = threading.Thread(target=work)
+    add_script_run_ctx(t, get_script_run_ctx())
+    t.start(); t0 = time.time()
+    while t.is_alive():
+        el = time.time() - t0
+        pct = int(min(98, 100 * (1 - 2.718 ** (-3 * el / est))))
+        box.markdown(loader_html(label, pct, int(est - el) + 1 if el < est else 0), unsafe_allow_html=True)
+        time.sleep(0.25)
+    box.markdown(loader_html(label, 100, 0), unsafe_allow_html=True)
+    time.sleep(0.3); box.empty()
+    if "e" in out: raise out["e"]
+    return out["v"]
+
+def transcribe(wav):
+    return call_gemini([{"text": "Transcribe exactly what the speaker says, word for word, in the language spoken. Output only the transcript. If there is no intelligible speech, output exactly: [inaudible]"}, audio_part(wav, "audio/wav")]).strip()
 
 def card(t):
     st.markdown(f'<div class="glass">{_h.escape(str(t)).replace(chr(10), "<br>")}</div>', unsafe_allow_html=True)
@@ -225,22 +281,26 @@ def play(b, mime="audio/mpeg", auto=True):
     components.html(AUDIO_TPL.replace("__URI__", uri).replace("__AUTO__", "autoplay" if auto else ""), height=110)
 
 def voice_in(key, label):
-    """Aesthetic mic (st.audio_input); falls back to mic_recorder on older Streamlit. Returns wav bytes once per recording."""
+    """Aesthetic mic; quiet recordings are amplified before use. Returns wav bytes once per recording."""
     st.markdown(f"<div style='text-align:center;color:#7a5c12'>🎙️ {label}</div>", unsafe_allow_html=True)
     if not hasattr(st, "audio_input"):
         m = mic_recorder(start_prompt="🎙️ Tap to talk", stop_prompt="⏹️ Send", key=key, just_once=True)
-        return m["bytes"] if m else None
-    clip = st.audio_input(label, key=key, label_visibility="collapsed")
-    if clip is None: return None
-    b = clip.getvalue(); hs = hash(b)
-    if st.session_state.get("seen_" + key) == hs: return None
-    st.session_state["seen_" + key] = hs
-    return b
+        if not m: return None
+        b = m["bytes"]
+    else:
+        clip = st.audio_input(label, key=key, label_visibility="collapsed")
+        if clip is None: return None
+        b = clip.getvalue(); hs = hash(b)
+        if st.session_state.get("seen_" + key) == hs: return None
+        st.session_state["seen_" + key] = hs
+    b2, frac = boost(b)
+    st.session_state["lvl_" + key] = frac
+    return b2
 
 def live_reply(ref, verse, ctx, hist, text, wav):
     convo = "\n".join(f"{m['role']}: {m['text']}" for m in hist[-10:])
     sysmsg = f"""You are a warm, casual, learned Quran teacher (a kind sheikh chatting over tea) talking with {st.session_state.user_name} about {ref}: {verse}
-Speak naturally in English, 2-5 short sentences (about 80 words), because your answer is read aloud. No markdown, no lists. Arabic terms in transliteration. Ask at most one gentle follow-up question.
+Speak naturally in English, 2-5 short sentences (about 80 words), because your answer is read aloud. No markdown, no lists. Arabic terms in transliteration. Ask at most one gentle follow-up question. Respond directly to what the student actually said below; if it is unclear, ask what they mean instead of guessing.
 Ground explanations in the CONTEXT. If it does not cover the question, say so; never invent hadith, narrations or scholar names. You are not a mufti: for fiqh rulings advise a qualified scholar. Never claim to have heard something you did not.
 CONTEXT:
 {ctx}
@@ -257,11 +317,15 @@ def teacher_turn(key, ctx, ref, verse, hist_key):
     hist = st.session_state.setdefault(hist_key, [])
     audio = None
     if wav or txt:
+        def job():
+            q = transcribe(wav) if wav else txt
+            if not q or "[inaudible]" in q.lower():
+                return "(could not hear)", "I couldn't quite hear you. Could you move a little closer to the mic and say it again?", False
+            return q, live_reply(ref, verse, ctx, hist, q, None), True
         try:
-            with st.spinner("Your teacher is thinking..."):
-                ans = live_reply(ref, verse, ctx, hist, txt, wav)
-            hist += [{"role": "student", "text": txt or "🎙️ (voice message)"}, {"role": "teacher", "text": ans}]
-            audio = speak(ans)
+            q, ans, heard = run_with_progress(job, "Listening to you", 14)
+            hist += [{"role": "student", "text": ("🎙️ You said: " if wav else "") + q}, {"role": "teacher", "text": ans}]
+            if heard: audio = run_with_progress(lambda: speak(ans), "Preparing voice", 6)
         except Exception as e:
             st.error(e)
     if audio: play(audio)
@@ -323,14 +387,12 @@ else:
         c1, c2 = st.columns(2)
         if c1.button("📖 Explain this ayah to me"):
             try:
-                with st.spinner("Preparing tafsir..."):
-                    st.session_state.tafsir_text[key] = explain_tafsir(ref, verse, src)
+                st.session_state.tafsir_text[key] = run_with_progress(lambda: explain_tafsir(ref, verse, src), "Preparing tafsir", 15)
             except Exception as e:
                 st.error(e)
         if c2.button("🎓 Teach me to recite it") and ref_mp3:
             try:
-                with st.spinner("Your teacher is listening to the reference recitation..."):
-                    st.session_state.lessons[key] = recitation_lesson(s, a, verse, tajweed_rules(verse), ref_mp3, reciter)
+                st.session_state.lessons[key] = run_with_progress(lambda: recitation_lesson(s, a, verse, tajweed_rules(verse), ref_mp3, reciter), "Teacher is listening to the reference", 45)
             except Exception as e:
                 st.error(e)
         if key in st.session_state.tafsir_text:
@@ -348,18 +410,20 @@ else:
         spoken = None
         if wav and ref_mp3:
             play(wav, "audio/wav", False)
+            if st.session_state.get("lvl_recite", 1) < 0.05:
+                st.warning("Your recording was very faint. I amplified it, but moving closer to the mic will make the feedback more accurate.")
             try:
-                with st.spinner("Comparing with the reference recitation..."):
-                    res = analyse(verse, ref_mp3, wav, reciter)
+                res = run_with_progress(lambda: analyse(verse, ref_mp3, wav, reciter), "Listening to your recitation", 45)
                 st.session_state.last_analysis[key] = res
                 st.session_state.coach = []
-                spoken = speak(res.get("spoken_summary", ""))
+                spoken = run_with_progress(lambda: speak(res.get("spoken_summary", "")), "Preparing voice", 6)
             except Exception as e:
                 st.error(f"Analysis failed: {e}")
         res = st.session_state.last_analysis.get(key)
         if res:
             st.metric("Estimated accuracy", f"{res.get('overall_score','?')}%")
             st.caption("AI estimate, not a certified assessment.")
+            card("What I heard you recite: " + (res.get("heard_text") or "(nothing clear)"))
             card(res.get("spoken_summary", ""))
             if spoken: play(spoken)
             b = res.get("breath") or {}
@@ -384,6 +448,6 @@ else:
         goal = st.text_input("Your goal", placeholder="e.g., memorise 5 ayat a week, 20 minutes a day")
         if st.button("🗓️ Plan my sessions") and goal.strip():
             try:
-                st.markdown(f'<div class="glass">{plan_sessions(goal, s, a)}</div>'.replace("\n", "<br>"), unsafe_allow_html=True)
+                card(run_with_progress(lambda: plan_sessions(goal, s, a), "Planning your sessions", 15))
             except Exception as e:
                 st.error(e)
