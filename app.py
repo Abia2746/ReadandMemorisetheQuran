@@ -1,6 +1,7 @@
 import base64, json, re, time
 import html as _h
 import difflib
+import datetime, math
 import io, threading, wave
 import numpy as np
 from streamlit.runtime.scriptrunner import add_script_run_ctx, get_script_run_ctx
@@ -31,6 +32,25 @@ h1,h2,h3,h4,p,label,li,.stMarkdown { color:#2b2a26 !important; font-family:Georg
 @keyframes flick{0%,100%{opacity:1}45%{opacity:.8}50%{opacity:1}57%{opacity:.88}}
 [data-testid="stSidebar"]{background:rgba(255,255,255,.55)!important;backdrop-filter:blur(10px);}
 div.stButton > button { background:linear-gradient(135deg,#c5a85c,#b39243)!important; color:#fff!important; border:none!important; border-radius:10px!important; font-weight:600!important; }
+</style>""", unsafe_allow_html=True)
+
+st.markdown("""<style>
+@import url('https://fonts.googleapis.com/css2?family=Amiri+Quran&family=Cormorant+Garamond:wght@500;600&family=Inter:wght@400;500&display=swap');
+.stApp{background:#FAF6EC!important}
+p,li,label,span,div{font-family:Inter,system-ui,sans-serif}
+h1,h2,h3,h4{font-family:'Cormorant Garamond',serif!important;font-weight:600!important;color:#241C17!important}
+.glass{background:#FDFBF6!important;border:1px solid #E6DCC8!important;border-radius:20px!important;box-shadow:0 8px 28px -12px rgba(36,28,23,.18)!important;backdrop-filter:none!important}
+.ar-big,.ayahbox{font-family:'Amiri Quran','Amiri',serif!important}
+.ayahbox{direction:rtl;text-align:center;font-size:2.4rem;line-height:2.2;padding:20px}
+div.stButton>button{background:#C9A227!important;color:#241C17!important;border-radius:999px!important;box-shadow:none!important;font-weight:500!important;min-height:44px}
+.ft{display:inline-block;margin:6px;padding:2px 12px;border-radius:14px;opacity:0;animation:rev .24s forwards}
+.ft small{font:12px Inter;margin-left:6px}.ft.correct{background:#E8D9A8;color:#241C17}.ft.correct small{color:#2E7D5B}
+.ft.close{background:#F1E3B5;box-shadow:inset 0 -3px #C9A227;color:#241C17}.ft.missed{color:#C0453A}
+.ft.hide{opacity:1;animation:none;background:#F2EADA;height:1.6em;vertical-align:middle}
+@keyframes rev{to{opacity:1}}
+.ban{border-radius:20px;padding:16px 20px;color:#fff;margin:12px 0}
+.cells{display:grid;grid-template-columns:repeat(10,1fr);gap:4px}.cells i{aspect-ratio:1;border-radius:4px;display:block}
+@media(prefers-reduced-motion:reduce){.ft{animation:none;opacity:1}}
 </style>""", unsafe_allow_html=True)
 
 for k, v in {"user_name": "", "app_phase": "onboarding", "current_surah": 2, "current_ayah": 57,
@@ -148,14 +168,14 @@ body{margin:0;font-family:Georgia,serif;background:transparent}
 .on{background:rgba(229,193,88,.45);transform:scale(1.07);box-shadow:0 0 18px rgba(197,168,92,.6)}
 audio{width:100%;margin-top:18px}
 </style>
-<div id="w"></div><audio id="a" controls src="__URL__"></audio><div id="n" style="text-align:center;margin-top:10px;color:#7a5c12;font-weight:600"></div><div style="text-align:center;margin-top:8px">🔈 <input id="v" type="range" min="0" max="100" value="50" style="width:60%"> 🔊</div>
+<div id="w"></div><audio id="a" controls src="__URL__"></audio><div id="n" style="text-align:center;margin-top:10px;color:#7a5c12;font-weight:600"></div><div style="text-align:center;margin-top:8px">🔈 <input id="v" type="range" min="0" max="100" value="50" style="width:60%"> 🔊 <button id="sp" style="margin-left:10px;border-radius:999px;border:1px solid #E6DCC8;background:#FDFBF6;padding:6px 12px">1×</button></div>
 <script>
 const W=__WORDS__,a=document.getElementById('a'),box=document.getElementById('w');
 const els=W.map(w=>{const d=document.createElement('div');d.className='c';
 d.innerHTML='<div class="ar">'+w.ar+'</div><div class="tr">'+w.tr+'</div><div class="en">'+w.en+'</div>';box.appendChild(d);return d;});
 let cum=[];
-function build(){const d=a.duration||1,l=d*.05,sp=d*.88,tot=W.reduce((s,w)=>s+w.ar.length,0);let t=l;
-cum=W.map(w=>{t+=sp*w.ar.length/tot;return t;});}
+const L=w=>Math.max(1,w.ar.replace(/[\u064B-\u0652\u0670\u06D6-\u06ED\u0640]/g,'').length);function build(){const d=a.duration||1,l=d*.05,sp=d*.88,tot=W.reduce((s,w)=>s+L(w),0);let t=l;
+cum=W.map(w=>{t+=sp*L(w)/tot;return t;});}
 a.onloadedmetadata=build;
 a.ontimeupdate=()=>{if(!cum.length)build();const t=a.currentTime;let i=cum.findIndex(c=>t<c);if(a.ended)i=-1;
 els.forEach((e,k)=>e.classList.toggle('on',k===i));};
@@ -164,6 +184,7 @@ ctx.createMediaElementSource(a).connect(g);g.connect(ctx.destination);
 const vs=document.getElementById('v');g.gain.value=vs.value/100;
 vs.oninput=()=>{g.gain.value=vs.value/100;ctx.resume();};
 a.addEventListener('play',()=>ctx.resume());
+const sb=document.getElementById('sp');sb.onclick=()=>{a.playbackRate=a.playbackRate==1?1.25:a.playbackRate==1.25?.75:1;sb.textContent=a.playbackRate+'×';};
 let n=1,done=false;const cn=document.getElementById('n');
 function upd(){cn.textContent=done?'✅ All 5 listens complete':'Listen '+n+' of 5';}
 a.onplay=()=>{if(done){n=1;done=false;}upd();};
@@ -278,73 +299,72 @@ def asr_arabic(wav, orig=None):
 
 def norm_ar(t):
     t = re.sub("[\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06ED\u0640]", "", t)
-    t = re.sub("[إأآٱ]", "ا", t).replace("ى", "ي")
+    t = re.sub("[إأآٱ]", "ا", t).replace("ى", "ي").replace("ة", "ه")
     return re.sub("[^\u0621-\u064A\\s]", "", t).split()
 
-def match_report(verse, heard):
-    vw, hw = norm_ar(verse), norm_ar(heard)
-    if not hw: return None
-    r = lambda x, y: difflib.SequenceMatcher(None, x, y).ratio()
-    miss = [w for w in vw if not any(r(w, h) >= 0.75 for h in hw)]
-    extra = [h for h in hw if not any(r(h, w) >= 0.75 for w in vw)]
-    return {"pct": round(100 * (len(vw) - len(miss)) / max(1, len(vw))), "missing": miss, "extra": extra}
+def nw_align(exp, heard):
+    n, m = len(exp), len(heard)
+    sc = lambda e, h: 2 if e == h else (1 if e[:2] == h[:2] and abs(len(e) - len(h)) <= 1 else 0)
+    D = [[0] * (m + 1) for _ in range(n + 1)]
+    for i in range(1, n + 1): D[i][0] = -i
+    for j in range(1, m + 1): D[0][j] = -j
+    for i in range(1, n + 1):
+        for j in range(1, m + 1):
+            D[i][j] = max(D[i-1][j-1] + sc(exp[i-1], heard[j-1]), D[i-1][j] - 1, D[i][j-1] - 1)
+    st_, i, j, extra = ["missed"] * n, n, m, 0
+    while i > 0 or j > 0:
+        if i and j and D[i][j] == D[i-1][j-1] + sc(exp[i-1], heard[j-1]):
+            x = sc(exp[i-1], heard[j-1]); st_[i-1] = {2: "correct", 1: "close"}.get(x, "missed"); extra += (x == 0); i -= 1; j -= 1
+        elif i and D[i][j] == D[i-1][j] - 1: i -= 1
+        else: extra += 1; j -= 1
+    return st_, extra
 
-def card(t):
-    st.markdown(f'<div class="glass">{_h.escape(str(t)).replace(chr(10), "<br>")}</div>', unsafe_allow_html=True)
+def match_report(words_ar, heard):
+    exp = ["".join(norm_ar(w)) for w in words_ar]; hw = norm_ar(heard)
+    if not hw or len(hw) < 0.25 * len(exp): return None
+    st_, extra = nw_align(exp, hw)
+    pts = sum(1 if x == "correct" else .5 if x == "close" else 0 for x in st_)
+    return {"pct": round(100 * pts / len(exp)), "states": st_, "missing": [w for w, x in zip(exp, st_) if x == "missed"], "extra": extra, "n_ok": st_.count("correct"), "total": len(exp)}
 
-AUDIO_TPL = """<style>body{margin:0;font-family:Georgia,serif;background:transparent;text-align:center}audio{width:100%}input{width:60%}</style>
-<audio id="a" controls __AUTO__ src="__URI__"></audio>
-<div>🔈 <input id="v" type="range" min="0" max="100" value="50"> 🔊</div>
-<script>
-const a=document.getElementById('a'),v=document.getElementById('v');
-const ctx=new (window.AudioContext||window.webkitAudioContext)();
-const g=ctx.createGain();ctx.createMediaElementSource(a).connect(g);g.connect(ctx.destination);
-g.gain.value=v.value/100;
-v.oninput=()=>{g.gain.value=v.value/100;ctx.resume();};
-a.addEventListener('play',()=>ctx.resume());
-</script>"""
+def feedback_tiles(words, states):
+    mark = {"correct": "✓", "close": "•", "missed": "✕"}
+    h = "".join(f'<span class="ft {x}" style="animation-delay:{200 + i * 40}ms">{w["ar"]}<small>{mark[x]}</small></span>' for i, (w, x) in enumerate(zip(words, states)))
+    return f'<div class="glass ayahbox">{h}</div>'
 
-def play(b, mime="audio/mpeg", auto=True):
-    uri = f"data:{mime};base64," + base64.b64encode(b).decode()
-    components.html(AUDIO_TPL.replace("__URI__", uri).replace("__AUTO__", "autoplay" if auto else ""), height=110)
+def tajweed_hints(words):
+    out = []
+    for w in words:
+        t, name = w["ar"], w.get("tr") or w["ar"]
+        if re.search("[نم]\u0651", t): out.append(("Ghunnah", name, "hold the sound through the nose for two counts."))
+        if re.search("ٱل[\u0621-\u064A]\u0651", t): out.append(("Lam Shamsiyyah", name, "the lam is silent and the next letter is doubled."))
+    return out
 
-def voice_in(key, label):
-    """Aesthetic mic; quiet recordings are amplified before use. Returns wav bytes once per recording."""
-    st.markdown(f"<div style='text-align:center;color:#7a5c12'>🎙️ {label}</div>", unsafe_allow_html=True)
-    if not hasattr(st, "audio_input"):
-        m = mic_recorder(start_prompt="🎙️ Tap to talk", stop_prompt="⏹️ Send", key=key, just_once=True)
-        if not m: return None
-        b = m["bytes"]
-    else:
-        clip = st.audio_input(label, key=key, label_visibility="collapsed")
-        if clip is None: return None
-        b = clip.getvalue(); hs = hash(b)
-        if st.session_state.get("seen_" + key) == hs: return None
-        st.session_state["seen_" + key] = hs
-    b2, frac = boost(b)
-    st.session_state["lvl_" + key] = frac
-    st.session_state["orig_" + key] = b
-    try:
-        with wave.open(io.BytesIO(b)) as w: dur = w.getnframes() / w.getframerate()
-    except Exception: dur = 0
-    st.session_state["diag_" + key] = f"Captured {dur:.1f}s of audio · mic level {frac*100:.0f}%"
-    return b2
+SS = [1,2,50,77,106,128,151,177,187,208,221,235,249,255,262,267,282,293,305,312,322,332,342,350,359,367,377,385,396,404,411,415,418,428,434,440,446,453,458,467,477,483,489,496,499,502,507,511,515,518,520,523,526,528,531,534,537,542,545,549,551,553,554,556,558,560,562,564,566,568,570,572,574,575,577,578,580,582,583,585,586,587,587,589,590,591,591,592,593,594,595,595,596,596,597,597,598,598,599,599,600,600,601,601,601,602,602,602,603,603,603,604,604,604]
+MPP = {"none": 60, "juz30": 45, "some": 32, "most": 22}
 
-def understand_and_answer(ref, verse, ctx, hist, q):
-    g = st.session_state.get
-    style = {"Warm & casual": "a warm, casual sheikh chatting over tea", "Classical scholar": "a dignified, precise and gentle classical scholar", "Concise coach": "a crisp, friendly tajweed coach"}[g("cfg_style", "Warm & casual")]
-    words = {1: 60, 2: 130, 3: 250}[g("cfg_detail", 2)]
-    convo = "\n".join(f"{m['role']}: {m['text']}" for m in hist[-10:])
-    prompt = f"""You are {style}, teaching {st.session_state.user_name} (level: {g('cfg_level', 'Beginner')}). They are on {ref}: {verse}, but they may ask about ANYTHING related to the Quran, tajweed, Arabic, memorisation, tafsir, the Prophets, seerah, Islamic basics or this app. Answer the question they actually asked, even if it is unrelated to the current ayah.
-Step 1: work out what they really mean (use the conversation to resolve words like 'it' or 'that', and fix likely speech-recognition errors).
-Step 2: answer directly in about {words} words, spoken style, no markdown, no lists, Arabic terms in transliteration. Use the REFERENCE MATERIAL when relevant but do not limit yourself to it. Say plainly when you rely on general knowledge. Never invent hadith, narrations or scholar names; if unsure, say so. For fiqh rulings give the mainstream view briefly and suggest a qualified scholar. If the message is truly unclear, ask one short clarifying question instead of guessing. End with at most one short follow-up question.
-Return JSON only: {{"understood":"<their question rewritten clearly in one sentence>","answer":"<your answer>"}}
-REFERENCE MATERIAL:
-{ctx}
-CONVERSATION:
-{convo}
-STUDENT'S MESSAGE: {q}"""
-    return call_gemini([{"text": prompt}], True, pro=(g("cfg_quality", "Best") == "Best"))
+def compute_plan(goal, t, deadline, minutes, known):
+    today = datetime.date.today(); avail = max(1, (deadline - today).days)
+    total = (21 if t == 1 else 23 if t == 30 else 20) if goal == "juz" else max(1, (605 if t == 114 else SS[t]) - SS[t-1]) if goal == "surah" else 604
+    base = (1 if t == 1 else 22 + (t - 2) * 20) if goal == "juz" else SS[t-1] if goal == "surah" else 1
+    strengthen = goal == "strengthen"; mpp = 12 if strengthen else MPP[known]
+    held = 0 if strengthen else min(21, total) if known == "juz30" else round(total * .3) if known == "some" else round(total * .7) if known == "most" else 0
+    rem = max(0, total - held); ppd = (minutes if strengthen else minutes * .65) / mpp
+    need = math.ceil(rem / ppd) if rem else 0; hours = rem * mpp / 60
+    band = "feasible" if rem == 0 or need / avail <= 1 else "tight" if need / avail <= 1.3 else "infeasible"
+    alt = ""
+    if band == "infeasible":
+        maxp = int(ppd * avail) + held
+        if goal in ("full", "strengthen"):
+            i = 114
+            while i > 1 and 604 - SS[i-2] + 1 <= maxp: i -= 1
+            n = 115 - i; alt = "a single ayah a day" if maxp < 1 else f"the last {n} sūrah{'s' if n > 1 else ''} (sūrahs {i}–114)"
+        else: alt = f"the first {max(1, min(total, maxp))} pages of this target"
+    sched, cur = [], 0.0
+    for d in range(min(60, need)):
+        f, tt = int(cur) + 1, min(rem, math.ceil(cur + ppd))
+        sched.append({"date": today + datetime.timedelta(d), "f": base + held + f - 1, "t": base + held + tt - 1,
+                      "rev": round(minutes * (1 if strengthen else .35)), "new": 0 if strengthen else round(minutes * .65)}); cur += ppd
+    return dict(avail=avail, total=total, held=held, rem=rem, ppd=ppd, need=need, hours=hours, band=band, alt=alt, sched=sched, finish=today + datetime.timedelta(need))
 
 @st.cache_data(show_spinner=False)
 def fetch_translation(s, a):
@@ -429,7 +449,7 @@ else:
     with t1:
         st.markdown(f'<div class="glass"><div class="ar-big">{verse}</div></div>', unsafe_allow_html=True)
         if audio_url and words:
-            st.caption(f"Reciter: {reciter}. Words light up as they are recited (timing is estimated from word length).")
+            st.caption(f"Reciter: {reciter}. Words light up as they are recited (~ timing is estimated from letter count, not measured, so it can drift).")
             components.html(player_html(words, "data:audio/mpeg;base64," + base64.b64encode(ref_mp3).decode()), height=420 + 40 * (len(words) // 6), scrolling=True)
         else:
             st.warning("Could not load audio or word-by-word data. Check your connection and reload.")
@@ -458,11 +478,22 @@ else:
         if key in st.session_state.lessons:
             st.markdown("#### 🎓 Recitation lesson and breath map")
             card(st.session_state.lessons[key])
+        hs = tajweed_hints(words)
+        if hs:
+            st.markdown("#### Watch for")
+            card("\n".join(f"{r} in “{w}”: {n}" for r, w, n in hs) + "\nHints come from the text of the ayah, not from your audio.")
         st.markdown("#### 🎙️ Talk to your teacher")
         teacher_turn("t2", ctx_for(s, a, src), ref, verse, "chat")
 
     with t3:
         st.caption("Listen on tab 1 first, then recite from memory. Your teacher stays in the conversation afterwards.")
+        conceal = st.toggle("Recite from memory", True, key="conceal")
+        if not st.session_state.last_analysis.get(key):
+            if conceal:
+                blocks = "".join(f'<span class="ft hide" style="width:{max(2, len("".join(norm_ar(w["ar"])))) * 0.7}em"></span>' for w in words)
+                st.markdown(f'<div class="glass ayahbox" aria-hidden="true">{blocks}</div><p>The text stays hidden</p>', unsafe_allow_html=True)
+            else:
+                st.markdown(f'<div class="glass ayahbox">{verse}</div><p>Text visible</p>', unsafe_allow_html=True)
         wav = voice_in("recite", "Tap the mic, recite the ayah from memory, then stop")
         st.caption(st.session_state.get("diag_recite", ""))
         spoken = None
@@ -476,7 +507,7 @@ else:
                     heard = asr_arabic(wav, orig)
                     if not heard: return None
                     r = analyse(verse, ref_mp3, wav, reciter, heard)
-                    r["asr"], r["match"] = heard, match_report(verse, heard)
+                    r["asr"], r["match"] = heard, match_report([w["ar"] for w in words] or verse.split(), heard)
                     return r
                 res = run_with_progress(job, "Listening to your recitation", 50)
                 if res is None:
@@ -492,7 +523,16 @@ else:
             st.metric("Estimated accuracy", f"{res.get('overall_score','?')}%")
             st.caption("AI estimate, not a certified assessment.")
             m_ = res.get("match")
-            if m_: card(f"Memorisation match: {m_['pct']}%\nMissing or different: {', '.join(m_['missing']) or 'none'}\nExtra words: {', '.join(m_['extra']) or 'none'}\nTranscript of what was heard: {res.get('asr','')}")
+            if m_:
+                st.markdown(feedback_tiles(words, m_["states"]), unsafe_allow_html=True)
+                card(f"{m_['n_ok']} of {m_['total']} words correct" + (". Every word. Move to the next ayah." if not m_["missing"] else f", {len(m_['missing'])} missed.") + f"\nExtra words: {m_['extra']} · score {m_['pct']}% (close counts half)")
+                b1, b2 = st.columns(2)
+                if b1.button("Once more"):
+                    st.session_state.last_analysis.pop(key, None); st.rerun()
+                if b2.button("Next ayah"):
+                    st.session_state.current_ayah = a + 1; st.rerun()
+            else:
+                st.warning("I didn't hear enough of the ayah to score it. Check your microphone and try again.")
             card("What I heard you recite: " + (res.get("heard_text") or "(nothing clear)"))
             card(res.get("spoken_summary", ""))
             if spoken: play(spoken)
@@ -515,9 +555,42 @@ else:
             teacher_turn("t3", ctx, ref, verse, "coach")
 
     with t4:
-        goal = st.text_input("Your goal", placeholder="e.g., memorise 5 ayat a week, 20 minutes a day")
-        if st.button("🗓️ Plan my sessions") and goal.strip():
-            try:
-                card(run_with_progress(lambda: plan_sessions(goal, s, a), "Planning your sessions", 15))
-            except Exception as e:
-                st.error(e)
+        P = st.session_state.setdefault("plan", {"step": 0, "goal": "full", "t": 1, "dl": datetime.date.today() + datetime.timedelta(30), "min": 30, "known": "none"})
+        if P["step"] < 4:
+            st.markdown(f"<p class='mi'>Step {P['step'] + 1} of 4 · Tell us what you want to memorise, and by when.</p>", unsafe_allow_html=True)
+            st.progress((P["step"] + 1) / 4)
+            if P["step"] == 0:
+                gl = {"full": "The whole Qur'an", "juz": "A juz", "surah": "A sūrah", "strengthen": "Strengthen what I know"}
+                P["goal"] = st.radio("What do you want to memorise?", list(gl), format_func=gl.get, index=list(gl).index(P["goal"]))
+                if P["goal"] in ("juz", "surah"):
+                    P["t"] = st.number_input("Which one?", 1, 30 if P["goal"] == "juz" else 114, min(P["t"], 30 if P["goal"] == "juz" else 114))
+            elif P["step"] == 1:
+                P["dl"] = st.date_input("By when?", P["dl"], min_value=datetime.date.today())
+            elif P["step"] == 2:
+                P["min"] = st.radio("How long each day?", [15, 30, 60, 120], format_func=lambda x: f"{x} minutes", index=[15, 30, 60, 120].index(P["min"]), horizontal=True)
+            else:
+                kn = {"none": "Nothing yet", "juz30": "Juz 30", "some": "Some of it", "most": "Most of it"}
+                P["known"] = st.radio("What do you already know?", list(kn), format_func=kn.get, index=list(kn).index(P["known"]))
+                st.caption("Based on what you told us.")
+            c1, c2 = st.columns(2)
+            if P["step"] and c1.button("Back"):
+                P["step"] -= 1; st.rerun()
+            if c2.button("Build my plan" if P["step"] == 3 else "Next"):
+                P["step"] += 1; st.rerun()
+        else:
+            c = compute_plan(P["goal"], int(P["t"]), P["dl"], P["min"], P["known"])
+            col = {"feasible": "#2E7D5B", "tight": "#B8912F", "infeasible": "#C0453A"}[c["band"]]
+            hd = {"feasible": "This fits your time.", "tight": "This is tight. Missing a day costs you the deadline.", "infeasible": "This doesn't fit the time you've given it."}[c["band"]]
+            ar_ = (f"At {P['min']} minutes a day you memorise about {c['ppd']:.1f} pages. This target is {c['total']} pages" + (f" ({c['held']} already held)" if c["held"] else "")
+                   + f", so {c['rem']} pages take about {c['need']} days against the {c['avail']} you have. That is about {c['hours']:.0f} hours of memorisation inside that window.") if c["rem"] else "You've told us you hold all of this; the schedule is revision only."
+            st.markdown(f'<div class="ban" style="background:{col}"><b style="font-size:1.1rem">{hd}</b><p style="color:#fff!important;margin:8px 0 0">{ar_}</p></div>', unsafe_allow_html=True)
+            if c["band"] == "infeasible":
+                card(f"Nearest goal that fits: {c['alt']}.\nOr keep the goal and move the date: {c['finish']} ({c['need']} days from today).")
+            if c["sched"]:
+                d0 = c["sched"][0]
+                card(f"TODAY · pages {d0['f']}–{d0['t']}\n" + (f"New: {d0['new']} min · " if d0["new"] else "") + f"Review: {d0['rev']} min" + (" · Consolidate: last 8 min, from memory" if d0["new"] else ""))
+                mx = max(d["rev"] + d["new"] for d in c["sched"]); pal = ["#F2EADA", "#E8D9A8", "#D9BE62", "#C9A227"]
+                cells = "".join(f'<i title="{d["date"]}" style="background:{pal[min(3, math.ceil((d["rev"] + d["new"]) / mx * 3))]}"></i>' for d in c["sched"])
+                st.markdown(f'<div class="glass" style="padding:16px"><p class="mi">Next {len(c["sched"])} days</p><div class="cells">{cells}</div></div>', unsafe_allow_html=True)
+            if st.button("Change plan"):
+                P["step"] = 0; st.rerun()
