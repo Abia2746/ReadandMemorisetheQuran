@@ -366,6 +366,63 @@ def compute_plan(goal, t, deadline, minutes, known):
                       "rev": round(minutes * (1 if strengthen else .35)), "new": 0 if strengthen else round(minutes * .65)}); cur += ppd
     return dict(avail=avail, total=total, held=held, rem=rem, ppd=ppd, need=need, hours=hours, band=band, alt=alt, sched=sched, finish=today + datetime.timedelta(need))
 
+def card(t):
+    st.markdown(f'<div class="glass">{_h.escape(str(t)).replace(chr(10), "<br>")}</div>', unsafe_allow_html=True)
+
+AUDIO_TPL = """<style>body{margin:0;font-family:Georgia,serif;background:transparent;text-align:center}audio{width:100%}input{width:60%}</style>
+<audio id="a" controls __AUTO__ src="__URI__"></audio>
+<div>🔈 <input id="v" type="range" min="0" max="100" value="50"> 🔊</div>
+<script>
+const a=document.getElementById('a'),v=document.getElementById('v');
+const ctx=new (window.AudioContext||window.webkitAudioContext)();
+const g=ctx.createGain();ctx.createMediaElementSource(a).connect(g);g.connect(ctx.destination);
+g.gain.value=v.value/100;
+v.oninput=()=>{g.gain.value=v.value/100;ctx.resume();};
+a.addEventListener('play',()=>ctx.resume());
+</script>"""
+
+def play(b, mime="audio/mpeg", auto=True):
+    uri = f"data:{mime};base64," + base64.b64encode(b).decode()
+    components.html(AUDIO_TPL.replace("__URI__", uri).replace("__AUTO__", "autoplay" if auto else ""), height=110)
+
+def voice_in(key, label):
+    """Aesthetic mic; quiet recordings are amplified before use. Returns wav bytes once per recording."""
+    st.markdown(f"<div style='text-align:center;color:#7a5c12'>🎙️ {label}</div>", unsafe_allow_html=True)
+    if not hasattr(st, "audio_input"):
+        m = mic_recorder(start_prompt="🎙️ Tap to talk", stop_prompt="⏹️ Send", key=key, just_once=True)
+        if not m: return None
+        b = m["bytes"]
+    else:
+        clip = st.audio_input(label, key=key, label_visibility="collapsed")
+        if clip is None: return None
+        b = clip.getvalue(); hs = hash(b)
+        if st.session_state.get("seen_" + key) == hs: return None
+        st.session_state["seen_" + key] = hs
+    b2, frac = boost(b)
+    st.session_state["lvl_" + key] = frac
+    st.session_state["orig_" + key] = b
+    try:
+        with wave.open(io.BytesIO(b)) as w: dur = w.getnframes() / w.getframerate()
+    except Exception: dur = 0
+    st.session_state["diag_" + key] = f"Captured {dur:.1f}s of audio · mic level {frac*100:.0f}%"
+    return b2
+
+def understand_and_answer(ref, verse, ctx, hist, q):
+    g = st.session_state.get
+    style = {"Warm & casual": "a warm, casual sheikh chatting over tea", "Classical scholar": "a dignified, precise and gentle classical scholar", "Concise coach": "a crisp, friendly tajweed coach"}[g("cfg_style", "Warm & casual")]
+    words = {1: 60, 2: 130, 3: 250}[g("cfg_detail", 2)]
+    convo = "\n".join(f"{m['role']}: {m['text']}" for m in hist[-10:])
+    prompt = f"""You are {style}, teaching {st.session_state.user_name} (level: {g('cfg_level', 'Beginner')}). They are on {ref}: {verse}, but they may ask about ANYTHING related to the Quran, tajweed, Arabic, memorisation, tafsir, the Prophets, seerah, Islamic basics or this app. Answer the question they actually asked, even if it is unrelated to the current ayah.
+Step 1: work out what they really mean (use the conversation to resolve words like 'it' or 'that', and fix likely speech-recognition errors).
+Step 2: answer directly in about {words} words, spoken style, no markdown, no lists, Arabic terms in transliteration. Use the REFERENCE MATERIAL when relevant but do not limit yourself to it. Say plainly when you rely on general knowledge. Never invent hadith, narrations or scholar names; if unsure, say so. For fiqh rulings give the mainstream view briefly and suggest a qualified scholar. If the message is truly unclear, ask one short clarifying question instead of guessing. End with at most one short follow-up question.
+Return JSON only: {{"understood":"<their question rewritten clearly in one sentence>","answer":"<your answer>"}}
+REFERENCE MATERIAL:
+{ctx}
+CONVERSATION:
+{convo}
+STUDENT'S MESSAGE: {q}"""
+    return call_gemini([{"text": prompt}], True, pro=(g("cfg_quality", "Best") == "Best"))
+
 @st.cache_data(show_spinner=False)
 def fetch_translation(s, a):
     try: return requests.get(f"https://api.alquran.cloud/v1/ayah/{s}:{a}/en.sahih", timeout=15).json()["data"]["text"]
