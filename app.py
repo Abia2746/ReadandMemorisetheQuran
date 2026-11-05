@@ -1,5 +1,6 @@
 import base64, json, re, time
 import html as _h
+import difflib
 import io, threading, wave
 import numpy as np
 from streamlit.runtime.scriptrunner import add_script_run_ctx, get_script_run_ctx
@@ -28,6 +29,7 @@ h1,h2,h3,h4,p,label,li,.stMarkdown { color:#2b2a26 !important; font-family:Georg
 .ld .bar{position:absolute;left:0;bottom:0;height:5px;background:rgba(255,255,255,.85);transition:width .25s;}
 @keyframes shine{to{left:120%}}
 @keyframes flick{0%,100%{opacity:1}45%{opacity:.8}50%{opacity:1}57%{opacity:.88}}
+[data-testid="stSidebar"]{background:rgba(255,255,255,.55)!important;backdrop-filter:blur(10px);}
 div.stButton > button { background:linear-gradient(135deg,#c5a85c,#b39243)!important; color:#fff!important; border:none!important; border-radius:10px!important; font-weight:600!important; }
 </style>""", unsafe_allow_html=True)
 
@@ -68,7 +70,9 @@ def call_gemini(parts, expect_json=False, pro=False):
         for attempt in range(3):
             r = requests.post(f"{API}/{model}:generateContent", json=p, headers=h, timeout=150)
             if r.status_code == 200:
-                ps = r.json()["candidates"][0]["content"]["parts"]
+                try: ps = r.json()["candidates"][0]["content"]["parts"]
+                except (KeyError, IndexError):
+                    last = f"{model}: empty response ({r.text[:120]})"; break
                 t = "".join(x.get("text", "") for x in ps if not x.get("thought")).strip()
                 if expect_json:
                     return json.loads(re.sub(r"^```(?:json)?|```$", "", t).strip())
@@ -198,14 +202,14 @@ student: {question}"""
 def tajweed_rules(verse):
     return call_gemini([{"text": "List every tajweed rule that truly applies in this ayah, word by word in order, one short line each: word (Arabic + transliteration) - rule - what to do (counts for madd, etc). Use these 16 categories, starting each line with its category number, and include only categories that actually occur: " + TAJWEED_16 + ". No invention, no markdown symbols.\n\n" + verse}], pro=True)
 
-def analyse(verse, ref_mp3, student_wav, reciter):
+def analyse(verse, ref_mp3, student_wav, reciter, heard=""):
     prompt = f"""You are an expert Tajweed teacher. The student recited this ayah from memory: {verse}
 Clip 1 is the reference by {reciter}. Clip 2 is the student.
 Compare word by word: harakat, sukoon, madd length, ghunnah, idgham/ikhfa/iqlab/izhar, qalqalah, makharij, waqf. Also say if any words were skipped or wrong (memorisation errors).
 Write in English; Arabic words in script plus transliteration. Report only what you can actually hear; admit uncertainty; never invent mistakes. If the clip is silent or the wrong ayah, say so.
 Checklist of tajweed rules in this ayah:
 {tajweed_rules(verse)}
-Also compare breath control (where each reciter breathes or pauses, and whether the student's breath lasted each phrase). First write in heard_text, in Arabic script, exactly the words the student recited as you hear them (use [unclear] where you cannot tell). If you hear no clear recitation, set heard_text to "" and overall_score to 0 and give no word feedback; never invent mistakes. Judge each checklist rule separately, citing roughly where (seconds) you heard it in each clip, with a confidence level.
+Also compare breath control (where each reciter breathes or pauses, and whether the student's breath lasted each phrase). Marking strictness: {st.session_state.get("cfg_strict", "Standard")}. Independent ASR transcript of the student (cross-check only; trust your own hearing if they differ): {heard or "(none)"}. First write in heard_text, in Arabic script, exactly the words the student recited as you hear them (use [unclear] where you cannot tell). If you hear no clear recitation, set heard_text to "" and overall_score to 0 and give no word feedback; never invent mistakes. Judge each checklist rule separately, citing roughly where (seconds) you heard it in each clip, with a confidence level.
 Return JSON only: {{"overall_score":int,"rules_check":[{{"rule":"","word":"","verdict":"correct|partly|missed|unclear","evidence":"","confidence":"high|medium|low"}}],"heard_text":"","breath":{{"reference":"","student":"","tip":""}},"spoken_summary":"max 60 words, warm","words":[{{"word":"","status":"good|needs_work","student_did":"","correction":""}}],"practice_tip":""}}"""
     return call_gemini([{"text": prompt}, {"text": "Clip 1 (reference):"}, audio_part(ref_mp3, "audio/mpeg"),
                         {"text": "Clip 2 (student):"}, audio_part(student_wav, "audio/wav")], True, pro=True)
@@ -227,7 +231,7 @@ def boost(wav_bytes):
         peak = float(np.percentile(np.abs(x), 99.5))
         frac = peak / 32768
         if peak < 30: return wav_bytes, frac
-        y = np.clip(x * min(30.0, 0.9 * 32767 / peak), -32768, 32767).astype(np.int16)
+        y = np.clip(x * min(float(st.session_state.get("cfg_gain", 12)), 0.9 * 32767 / peak), -32768, 32767).astype(np.int16)
         out = io.BytesIO()
         with wave.open(out, "wb") as w2:
             w2.setnchannels(ch); w2.setsampwidth(2); w2.setframerate(fr); w2.writeframes(y.tobytes())
@@ -258,8 +262,32 @@ def run_with_progress(fn, label, est=15):
     if "e" in out: raise out["e"]
     return out["v"]
 
-def transcribe(wav):
-    return call_gemini([{"text": "Transcribe exactly what the speaker says, word for word, in the language spoken. Output only the transcript. If there is no intelligible speech, output exactly: [inaudible]"}, audio_part(wav, "audio/wav")]).strip()
+def transcribe(wav, orig=None):
+    p = "This is a short voice message from a Quran student speaking English (they may use words like tajweed, madd, ghunnah, ayah, surah, qalqalah, ikhfa, waqf). Transcribe it word for word. Output only the transcript. Use [inaudible] only if there is truly no speech."
+    for audio, pro in ((wav, False), (orig or wav, False), (wav, True)):
+        t = call_gemini([{"text": p}, audio_part(audio, "audio/wav")], pro=pro).strip()
+        if t and "[inaudible]" not in t.lower(): return t
+    return ""
+
+def asr_arabic(wav, orig=None):
+    p = "Transcribe this Quran recitation exactly as actually spoken, in Arabic script (diacritics optional). Do NOT correct it and do NOT complete it from memory: write only what you hear, including mistakes, repeats and skipped words. If there is no speech output exactly: [inaudible]"
+    for audio, pro in ((wav, False), (orig or wav, False), (wav, True)):
+        t = call_gemini([{"text": p}, audio_part(audio, "audio/wav")], pro=pro).strip()
+        if t and "[inaudible]" not in t.lower(): return t
+    return ""
+
+def norm_ar(t):
+    t = re.sub("[\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06ED\u0640]", "", t)
+    t = re.sub("[إأآٱ]", "ا", t).replace("ى", "ي")
+    return re.sub("[^\u0621-\u064A\\s]", "", t).split()
+
+def match_report(verse, heard):
+    vw, hw = norm_ar(verse), norm_ar(heard)
+    if not hw: return None
+    r = lambda x, y: difflib.SequenceMatcher(None, x, y).ratio()
+    miss = [w for w in vw if not any(r(w, h) >= 0.75 for h in hw)]
+    extra = [h for h in hw if not any(r(h, w) >= 0.75 for w in vw)]
+    return {"pct": round(100 * (len(vw) - len(miss)) / max(1, len(vw))), "missing": miss, "extra": extra}
 
 def card(t):
     st.markdown(f'<div class="glass">{_h.escape(str(t)).replace(chr(10), "<br>")}</div>', unsafe_allow_html=True)
@@ -295,42 +323,62 @@ def voice_in(key, label):
         st.session_state["seen_" + key] = hs
     b2, frac = boost(b)
     st.session_state["lvl_" + key] = frac
+    st.session_state["orig_" + key] = b
+    try:
+        with wave.open(io.BytesIO(b)) as w: dur = w.getnframes() / w.getframerate()
+    except Exception: dur = 0
+    st.session_state["diag_" + key] = f"Captured {dur:.1f}s of audio · mic level {frac*100:.0f}%"
     return b2
 
-def live_reply(ref, verse, ctx, hist, text, wav):
+def understand_and_answer(ref, verse, ctx, hist, q):
+    g = st.session_state.get
+    style = {"Warm & casual": "a warm, casual sheikh chatting over tea", "Classical scholar": "a dignified, precise and gentle classical scholar", "Concise coach": "a crisp, friendly tajweed coach"}[g("cfg_style", "Warm & casual")]
+    words = {1: 60, 2: 130, 3: 250}[g("cfg_detail", 2)]
     convo = "\n".join(f"{m['role']}: {m['text']}" for m in hist[-10:])
-    sysmsg = f"""You are a warm, casual, learned Quran teacher (a kind sheikh chatting over tea) talking with {st.session_state.user_name} about {ref}: {verse}
-Speak naturally in English, 2-5 short sentences (about 80 words), because your answer is read aloud. No markdown, no lists. Arabic terms in transliteration. Ask at most one gentle follow-up question. Respond directly to what the student actually said below; if it is unclear, ask what they mean instead of guessing.
-Ground explanations in the CONTEXT. If it does not cover the question, say so; never invent hadith, narrations or scholar names. You are not a mufti: for fiqh rulings advise a qualified scholar. Never claim to have heard something you did not.
-CONTEXT:
+    prompt = f"""You are {style}, teaching {st.session_state.user_name} (level: {g('cfg_level', 'Beginner')}). They are on {ref}: {verse}, but they may ask about ANYTHING related to the Quran, tajweed, Arabic, memorisation, tafsir, the Prophets, seerah, Islamic basics or this app. Answer the question they actually asked, even if it is unrelated to the current ayah.
+Step 1: work out what they really mean (use the conversation to resolve words like 'it' or 'that', and fix likely speech-recognition errors).
+Step 2: answer directly in about {words} words, spoken style, no markdown, no lists, Arabic terms in transliteration. Use the REFERENCE MATERIAL when relevant but do not limit yourself to it. Say plainly when you rely on general knowledge. Never invent hadith, narrations or scholar names; if unsure, say so. For fiqh rulings give the mainstream view briefly and suggest a qualified scholar. If the message is truly unclear, ask one short clarifying question instead of guessing. End with at most one short follow-up question.
+Return JSON only: {{"understood":"<their question rewritten clearly in one sentence>","answer":"<your answer>"}}
+REFERENCE MATERIAL:
 {ctx}
 CONVERSATION:
-{convo}"""
-    parts = [{"text": sysmsg}]
-    if wav: parts += [{"text": "The student's spoken message is in this audio. Answer it:"}, audio_part(wav, "audio/wav")]
-    else: parts.append({"text": "student: " + text})
-    return call_gemini(parts)
+{convo}
+STUDENT'S MESSAGE: {q}"""
+    return call_gemini([{"text": prompt}], True, pro=(g("cfg_quality", "Best") == "Best"))
+
+@st.cache_data(show_spinner=False)
+def fetch_translation(s, a):
+    try: return requests.get(f"https://api.alquran.cloud/v1/ayah/{s}:{a}/en.sahih", timeout=15).json()["data"]["text"]
+    except Exception: return ""
+
+def ctx_for(s, a, src):
+    return f"English translation (Sahih International): {fetch_translation(s, a)}\nTafsir Ibn Kathir (abridged): {src}"
 
 def teacher_turn(key, ctx, ref, verse, hist_key):
     wav = voice_in(key + "_v", "Tap the mic and talk to your teacher")
+    st.caption(st.session_state.get("diag_" + key + "_v", ""))
     txt = st.chat_input("...or type here", key=key + "_t")
     hist = st.session_state.setdefault(hist_key, [])
     audio = None
     if wav or txt:
         def job():
-            q = transcribe(wav) if wav else txt
-            if not q or "[inaudible]" in q.lower():
-                return "(could not hear)", "I couldn't quite hear you. Could you move a little closer to the mic and say it again?", False
-            return q, live_reply(ref, verse, ctx, hist, q, None), True
+            q = transcribe(wav, st.session_state.get("orig_" + key + "_v")) if wav else txt
+            if not q: return "", "", "I couldn't make out any speech in that recording. Check the mic level above, move a little closer and try again.", False
+            r = understand_and_answer(ref, verse, ctx, hist, q)
+            return q, r.get("understood", ""), r.get("answer", ""), True
         try:
-            q, ans, heard = run_with_progress(job, "Listening to you", 14)
-            hist += [{"role": "student", "text": ("🎙️ You said: " if wav else "") + q}, {"role": "teacher", "text": ans}]
-            if heard: audio = run_with_progress(lambda: speak(ans), "Preparing voice", 6)
+            q, und, ans, heard = run_with_progress(job, "Listening and thinking", 20)
+            if heard:
+                hist += [{"role": "student", "text": ("🎙️ You said: " if wav else "") + q}, {"role": "teacher", "text": ans, "u": und}]
+                if st.session_state.get("cfg_voice", True): audio = run_with_progress(lambda: speak(ans), "Preparing voice", 6)
+            else:
+                st.warning(ans)
         except Exception as e:
             st.error(e)
     if audio: play(audio)
     for m in hist:
         with st.chat_message("user" if m["role"] == "student" else "assistant"):
+            if m.get("u"): st.caption("Understood: " + m["u"])
             st.write(m["text"])
 
 @st.cache_data(show_spinner=False)
@@ -360,6 +408,15 @@ else:
         st.session_state.current_surah, st.session_state.current_ayah = si, ai
         st.session_state.chat = []
         st.rerun()
+
+    with sb.expander("⚙️ Teacher settings"):
+        st.selectbox("Teacher style", ["Warm & casual", "Classical scholar", "Concise coach"], key="cfg_style")
+        st.selectbox("My level", ["Beginner", "Intermediate", "Advanced"], key="cfg_level")
+        st.select_slider("Answer detail", options=[1, 2, 3], value=2, format_func=lambda x: {1: "Short", 2: "Medium", 3: "Detailed"}[x], key="cfg_detail")
+        st.radio("Answer quality", ["Best", "Fast"], key="cfg_quality", horizontal=True)
+        st.select_slider("Recitation strictness", options=["Gentle", "Standard", "Strict"], value="Standard", key="cfg_strict")
+        st.slider("Mic boost (max x)", 1, 30, 12, key="cfg_gain")
+        st.toggle("Spoken replies", True, key="cfg_voice")
 
     s, a = st.session_state.current_surah, st.session_state.current_ayah
     key, ref = f"{s}:{a}", f"Surah {s}, Ayah {a}"
@@ -402,27 +459,40 @@ else:
             st.markdown("#### 🎓 Recitation lesson and breath map")
             card(st.session_state.lessons[key])
         st.markdown("#### 🎙️ Talk to your teacher")
-        teacher_turn("t2", src, ref, verse, "chat")
+        teacher_turn("t2", ctx_for(s, a, src), ref, verse, "chat")
 
     with t3:
         st.caption("Listen on tab 1 first, then recite from memory. Your teacher stays in the conversation afterwards.")
         wav = voice_in("recite", "Tap the mic, recite the ayah from memory, then stop")
+        st.caption(st.session_state.get("diag_recite", ""))
         spoken = None
         if wav and ref_mp3:
             play(wav, "audio/wav", False)
             if st.session_state.get("lvl_recite", 1) < 0.05:
                 st.warning("Your recording was very faint. I amplified it, but moving closer to the mic will make the feedback more accurate.")
             try:
-                res = run_with_progress(lambda: analyse(verse, ref_mp3, wav, reciter), "Listening to your recitation", 45)
-                st.session_state.last_analysis[key] = res
-                st.session_state.coach = []
-                spoken = run_with_progress(lambda: speak(res.get("spoken_summary", "")), "Preparing voice", 6)
+                orig = st.session_state.get("orig_recite", wav)
+                def job():
+                    heard = asr_arabic(wav, orig)
+                    if not heard: return None
+                    r = analyse(verse, ref_mp3, wav, reciter, heard)
+                    r["asr"], r["match"] = heard, match_report(verse, heard)
+                    return r
+                res = run_with_progress(job, "Listening to your recitation", 50)
+                if res is None:
+                    st.warning("I couldn't pick up any recitation in that recording. Check the level shown under the mic, move closer and try again.")
+                else:
+                    st.session_state.last_analysis[key] = res
+                    st.session_state.coach = []
+                    spoken = run_with_progress(lambda: speak(res.get("spoken_summary", "")), "Preparing voice", 6)
             except Exception as e:
                 st.error(f"Analysis failed: {e}")
         res = st.session_state.last_analysis.get(key)
         if res:
             st.metric("Estimated accuracy", f"{res.get('overall_score','?')}%")
             st.caption("AI estimate, not a certified assessment.")
+            m_ = res.get("match")
+            if m_: card(f"Memorisation match: {m_['pct']}%\nMissing or different: {', '.join(m_['missing']) or 'none'}\nExtra words: {', '.join(m_['extra']) or 'none'}\nTranscript of what was heard: {res.get('asr','')}")
             card("What I heard you recite: " + (res.get("heard_text") or "(nothing clear)"))
             card(res.get("spoken_summary", ""))
             if spoken: play(spoken)
