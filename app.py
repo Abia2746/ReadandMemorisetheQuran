@@ -705,3 +705,26 @@ else:
                 st.markdown(f'<div class="glass" style="padding:16px"><p class="mi">Next {len(c["sched"])} days</p><div class="cells">{cells}</div></div>', unsafe_allow_html=True)
             if st.button("Change plan"):
                 P["step"] = 0; st.rerun()
+              # Add this to the very bottom of your app.py to see changes!
+
+if st.session_state.app_phase == "onboarding":
+    st.title("Welcome to Al-Mu'allim 🕌")
+    st.markdown("### Let's get started with your Quranic study.")
+    
+    name = st.text_input("Enter your name:", value=st.session_state.user_name)
+    if st.button("Start Learning"):
+        st.session_state.user_name = name
+        st.session_state.app_phase = "dashboard"
+        st.rerun()
+
+elif st.session_state.app_phase == "dashboard":
+    st.title(f"Assalamu Alaikum, {st.session_state.user_name}")
+    
+    # Simple test to verify your API helpers work
+    s = st.session_state.current_surah
+    a = st.session_state.current_ayah
+    
+    st.markdown(f"#### Surah {s}, Ayah {a}")
+    verse_text = fetch_verse(s, a)
+    st.markdown(f"<div class='ayahbox'>{verse_text}</div>", unsafe_allow_html=True)
+
