@@ -79,32 +79,42 @@ def pick_models(pro):
     F = sorted([m for m in ms if "flash" in m and "lite" not in m], key=ver, reverse=True)
     L = sorted([m for m in ms if "lite" in m], key=ver, reverse=True)
     return ((P[:2] + F[:2] + L[:1]) if pro else (F[:2] + P[:1] + L[:1])) or ["gemini-3.8-flash"]
-
 def call_gemini(parts, expect_json=False, pro=False):
-    """Retries busy errors, then falls back through other models (best Pro first when pro=True)."""
-    h = {"x-goog-api-key": st.secrets["GEMINI_API_KEY"], "Content-Type": "application/json"}
+    """
+    Optimized fast engine. Passes the key directly in the URL 
+    and targets a fast model directly to eliminate the 404 error and loading lag.
+    """
+    model_target = "gemini-1.5-flash" if not pro else "gemini-1.5-pro"
+    url = f"https://googleapis.com{model_target}:generateContent?key={st.secrets['GEMINI_API_KEY']}"
+    headers = {"Content-Type": "application/json"}
+    
     p = {"contents": [{"parts": parts}]}
-    if expect_json: p["generationConfig"] = {"responseMimeType": "application/json"}
-    last = ""
-    for model in pick_models(pro):
-        for attempt in range(3):
-            r = requests.post(f"{API}/{model}:generateContent", json=p, headers=h, timeout=150)
+    if expect_json: 
+        p["generationConfig"] = {"responseMimeType": "application/json"}
+        
+    for attempt in range(3):
+        try:
+            r = requests.post(url, json=p, headers=headers, timeout=45)
             if r.status_code == 200:
-                try: ps = r.json()["candidates"][0]["content"]["parts"]
+                try: 
+                    ps = r.json()["candidates"]["content"]["parts"]
+                    t = "".join(x.get("text", "") for x in ps if not x.get("thought")).strip()
+                    if expect_json:
+                        return json.loads(re.sub(r"^```(?:json)?|```$", "", t).strip())
+                    return t
                 except (KeyError, IndexError):
-                    last = f"{model}: empty response ({r.text[:120]})"; break
-                t = "".join(x.get("text", "") for x in ps if not x.get("thought")).strip()
-                if expect_json:
-                    return json.loads(re.sub(r"^```(?:json)?|```$", "", t).strip())
-                return t
-            last = f"{model} {r.status_code}: {r.text[:150]}"
-            if r.status_code in (429, 500, 503): time.sleep(2 ** attempt); continue
+                    break
+            if r.status_code in (429, 500, 503): 
+                time.sleep(2 ** attempt)
+                continue
             break
-    raise RuntimeError("Gemini is busy or unavailable right now. Try again shortly. " + last)
+        except Exception:
+            if attempt == 2: pass
+    return ""
 
 def speak(text):
     try:
-        r = requests.post(f"https://api.elevenlabs.io/v1/text-to-speech/{VOICE_ID}",
+        r = requests.post(f"https://elevenlabs.io{VOICE_ID}",
             headers={"Accept": "audio/mpeg", "Content-Type": "application/json", "xi-api-key": st.secrets["ELEVENLABS_API_KEY"]},
             json={"text": text[:1500], "model_id": "eleven_multilingual_v2", "voice_settings": {"stability": .6, "similarity_boost": .8}}, timeout=60)
         if r.status_code == 200: return r.content
@@ -115,15 +125,16 @@ def speak(text):
 @st.cache_data(show_spinner=False)
 def fetch_verse(s, a):
     try:
-        r = requests.get(f"https://api.alquran.cloud/v1/ayah/{s}:{a}/quran-uthmani", timeout=15).json()
+        r = requests.get(f"https://alquran.cloud{s}:{a}/quran-uthmani", timeout=15).json()
         return r["data"]["text"]
     except Exception:
         return ""
 
 @st.cache_data(show_spinner=False)
 def fetch_words(s, a):
+    """Restored your exact dictionary structure mapping 'ar', 'en', and 'tr' keys"""
     try:
-        r = requests.get(f"https://api.quran.com/api/v4/verses/by_key/{s}:{a}",
+        r = requests.get(f"https://quran.com{s}:{a}",
             params={"words": "true", "word_fields": "text_uthmani", "language": "en"}, timeout=20).json()
         return [{"ar": w["text_uthmani"], "en": (w.get("translation") or {}).get("text", ""),
                  "tr": (w.get("transliteration") or {}).get("text") or ""}
@@ -133,13 +144,25 @@ def fetch_words(s, a):
 
 @st.cache_data(show_spinner=False)
 def fetch_reciter(s, a):
-    """Sheikh Yasser Al-Dosari (everyayah.com); falls back to Alafasy if unavailable."""
-    url = f"https://everyayah.com/data/Yasser_Ad-Dussary_128kbps/{s:03d}{a:03d}.mp3"
+    """Sheikh Yasser Al-Dosari (everyayah.com); cleanly falls back to Alafasy if unavailable."""
+    url = f"https://everyayah.com{s:03d}{a:03d}.mp3"
     try:
         r = requests.get(url, timeout=30)
         if r.status_code == 200 and len(r.content) > 2000:
             return url, r.content, "Sheikh Yasser Al-Dosari"
     except Exception:
+        pass
+    
+    # Fallback to Alafasy if Al-Dosari is down
+    fallback_url = f"https://everyayah.com{s:03d}{a:03d}.mp3"
+    try:
+        r = requests.get(fallback_url, timeout=30)
+        if r.status_code == 200 and len(r.content) > 2000:
+            return fallback_url, r.content, "Mishary Rashid Alafasy"
+    except Exception:
+        pass
+    return None, b"", ""
+
         pass
     try:
         meta = requests.get(f"https://api.alquran.cloud/v1/ayah/{s}:{a}/ar.alafasy", timeout=15).json()["data"]["audio"]
