@@ -260,20 +260,54 @@ def _version(name: str) -> float:
         return 0.0
 
 
-def pick_models(pro: bool) -> list:
-    """Ordered candidates. Never a bare list with one unverified name in it."""
-    pool = list_models()
-    pro_models = sorted([m for m in pool if "pro" in m], key=_version, reverse=True)
-    flash = sorted([m for m in pool if "flash" in m and "lite" not in m], key=_version, reverse=True)
-    lite = sorted([m for m in pool if "lite" in m], key=_version, reverse=True)
+# Model names that are not chat models, or that are so slow and quota-hungry that
+# they should never be tried first for a single reply.
+_EXCLUDE = ("deep-research", "embedding", "imagen", "veo", "image", "tts", "audio",
+            "live", "robotics", "computer", "vision", "learnlm", "gemma")
 
-    ordered = (pro_models[:2] + flash[:2] + lite[:1]) if pro else (flash[:2] + pro_models[:1] + lite[:1])
-    if ordered:
-        return ordered
-    # Listing failed (no key, offline, quota). Fall back to names that have
-    # existed for a long time rather than inventing one.
-    return ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"] if not pro else \
-           ["gemini-2.5-pro", "gemini-2.0-flash", "gemini-1.5-pro"]
+_COOLDOWN: dict = {}
+_COOL_LOCK = threading.Lock()
+COOLDOWN_SECONDS = 180.0
+
+
+def _cool(model: str) -> None:
+    """Remember a rate-limited model so the next request does not burn time on it."""
+    with _COOL_LOCK:
+        _COOLDOWN[model] = time.time() + COOLDOWN_SECONDS
+
+
+def _cooling(model: str) -> bool:
+    with _COOL_LOCK:
+        return _COOLDOWN.get(model, 0.0) > time.time()
+
+
+def pick_models(pro: bool) -> list:
+    """Ordered candidates for one request: stable before experimental, fast before slow.
+
+    The previous version sorted purely by version number, which put
+    `deep-research-pro-preview` first. That is a research endpoint with the
+    tightest quota and the slowest first token, so a hard question exhausted the
+    good models before reaching a flash model that would have answered.
+    """
+    pool = [m for m in list_models() if not any(token in m for token in _EXCLUDE)]
+    if not pool:
+        pool = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
+
+    def rank(name: str) -> tuple:
+        experimental = 1 if ("preview" in name or "exp" in name) else 0
+        if "lite" in name:
+            tier = 2
+        elif "flash" in name:
+            tier = 0 if not pro else 1
+        elif "pro" in name:
+            tier = 0 if pro else 1
+        else:
+            tier = 3
+        return (experimental, tier, -_version(name))
+
+    ordered = sorted(pool, key=rank)
+    ready = [m for m in ordered if not _cooling(m)]
+    return ready or ordered
 
 
 def _extract_json(text: str) -> dict:
@@ -308,11 +342,84 @@ def _drain() -> list:
     return items
 
 
-def call_gemini(parts: list, expect_json: bool = False, pro: bool = False) -> object:
-    """One request per candidate model, inside a hard wall-clock deadline.
+def _sync_errors() -> None:
+    """Move queued worker messages onto the script thread's session state."""
+    items = _drain()
+    if items:
+        st.session_state["api_error"] = items[-1]
 
-    Returns "" (or {}) on failure, and records the reason in `last_error` so the
-    UI can say something true instead of showing an empty card.
+
+class _ModelError(Exception):
+    def __init__(self, status: int, detail: str = ""):
+        super().__init__(f"{status}: {detail[:120]}")
+        self.status = status
+        self.detail = detail
+
+
+def _stream_model(model: str, payload: dict, deadline: float):
+    """Yield text chunks as they arrive.
+
+    Streaming is not a display feature here, it is the timeout fix: a long answer
+    no longer has to be produced inside one read window, because tokens keep
+    arriving and each one resets the socket timeout.
+    """
+    url = f"{GEMINI_HOST}/{model}:streamGenerateContent"
+    read_window = max(6.0, min(25.0, deadline - time.time()))
+    response = requests.post(
+        url,
+        headers={"Content-Type": "application/json", "x-goog-api-key": GEMINI_KEY},
+        json=payload,
+        params={"alt": "sse"},
+        stream=True,
+        timeout=(9.0, read_window),
+    )
+    if response.status_code != 200:
+        raise _ModelError(response.status_code, response.text)
+
+    produced = False
+    try:
+        for raw in response.iter_lines(decode_unicode=True):
+            if time.time() > deadline:
+                break
+            if not raw or not raw.startswith("data:"):
+                continue
+            data = raw[5:].strip()
+            if data == "[DONE]":
+                break
+            try:
+                event = json.loads(data)
+            except json.JSONDecodeError:
+                continue
+            if "error" in event:
+                raise _ModelError(int(event["error"].get("code", 500)),
+                                  str(event["error"].get("message", "")))
+            try:
+                chunk_parts = event["candidates"][0]["content"]["parts"]
+            except (KeyError, IndexError):
+                continue
+            text = "".join(p.get("text", "") for p in chunk_parts if not p.get("thought"))
+            if text:
+                produced = True
+                yield text
+    finally:
+        response.close()
+
+    if not produced:
+        raise _ModelError(204, "empty stream")
+
+
+def _quota_message(errors: list) -> str:
+    if errors and all("rate limited" in e or "cooling down" in e for e in errors):
+        return ("Every Gemini model available to this key is rate limited, so this is the API "
+                "quota rather than the app. Wait a minute and ask again, or raise the limit on "
+                "the key in Google AI Studio.")
+    return "The language model did not answer. " + "; ".join(errors[:4])
+
+
+def call_gemini(parts: list, expect_json: bool = False, pro: bool = False) -> object:
+    """Stream one request, accumulating the whole answer, across ranked models.
+
+    Returns "" (or {}) on failure and queues a truthful reason for the UI.
     """
     if not GEMINI_KEY:
         _record("No Gemini key is configured. Add GEMINI_API_KEY in Streamlit → Settings → Secrets.")
@@ -322,58 +429,109 @@ def call_gemini(parts: list, expect_json: bool = False, pro: bool = False) -> ob
     if expect_json:
         payload["generationConfig"] = {"responseMimeType": "application/json"}
 
-    deadline = time.time() + (AUDIO_DEADLINE if any("inline_data" in p for p in parts) else TEXT_DEADLINE)
-    errors = []
+    audio = any("inline_data" in p for p in parts)
+    deadline = time.time() + (AUDIO_DEADLINE if audio else TEXT_DEADLINE)
+    errors: list = []
 
     for model in pick_models(pro):
-        remaining = deadline - time.time()
-        if remaining <= 1:
+        if _cooling(model):
+            errors.append(f"{model}: cooling down")
+            continue
+        if deadline - time.time() <= 2:
             errors.append("deadline reached")
             break
-        url = f"{GEMINI_HOST}/{model}:generateContent"
+        buffer = ""
         try:
-            r = requests.post(
-                url,
-                headers={"Content-Type": "application/json", "x-goog-api-key": GEMINI_KEY},
-                json=payload,
-                timeout=min(REQUEST_TIMEOUT, remaining),
-            )
+            for piece in _stream_model(model, payload, deadline):
+                buffer += piece
+        except _ModelError as exc:
+            # A connection that drops mid-answer should not discard the answer.
+            if buffer.strip() and not expect_json:
+                return buffer.strip()
+            if exc.status in (400, 403):
+                _record(f"Gemini rejected the request ({exc.status}). {exc.detail[:180]}")
+                return {} if expect_json else ""
+            if exc.status == 429:
+                _cool(model)
+                errors.append(f"{model}: rate limited")
+                continue
+            if exc.status == 404:
+                errors.append(f"{model}: not available")
+                continue
+            errors.append(f"{model}: HTTP {exc.status}")
+            continue
         except requests.Timeout:
+            if buffer.strip() and not expect_json:
+                return buffer.strip()
+            _cool(model)
+            errors.append(f"{model}: timeout")
+            continue
+        except Exception as exc:
+            if buffer.strip() and not expect_json:
+                return buffer.strip()
+            errors.append(f"{model}: {type(exc).__name__}")
+            continue
+
+        if not buffer.strip():
+            errors.append(f"{model}: empty")
+            continue
+        return _extract_json(buffer) if expect_json else buffer.strip()
+
+    _record(_quota_message(errors))
+    return {} if expect_json else ""
+
+
+def stream_answer(parts: list):
+    """Yield chunks for `st.write_stream`, hopping to the next model if one refuses.
+
+    This is what makes the teacher feel like a chat instead of a form submission:
+    the first sentence appears while the rest is still being written.
+    """
+    if not GEMINI_KEY:
+        _record("No Gemini key is configured. Add GEMINI_API_KEY in Streamlit → Settings → Secrets.")
+        return
+
+    payload = {"contents": [{"parts": parts}]}
+    deadline = time.time() + 120
+    errors: list = []
+
+    for model in pick_models(False):
+        if _cooling(model):
+            errors.append(f"{model}: cooling down")
+            continue
+        try:
+            chunks = _stream_model(model, payload, deadline)
+            first = next(chunks)
+        except StopIteration:
+            errors.append(f"{model}: empty")
+            continue
+        except _ModelError as exc:
+            if exc.status in (400, 403):
+                _record(f"Gemini rejected the request ({exc.status}). {exc.detail[:180]}")
+                return
+            if exc.status == 429:
+                _cool(model)
+                errors.append(f"{model}: rate limited")
+                continue
+            errors.append(f"{model}: HTTP {exc.status}")
+            continue
+        except requests.Timeout:
+            _cool(model)
             errors.append(f"{model}: timeout")
             continue
         except Exception as exc:
             errors.append(f"{model}: {type(exc).__name__}")
             continue
 
-        if r.status_code == 200:
-            try:
-                body = r.json()
-                chunk = body["candidates"][0]["content"]["parts"]
-                text = "".join(p.get("text", "") for p in chunk if not p.get("thought")).strip()
-            except (KeyError, IndexError, ValueError):
-                errors.append(f"{model}: unreadable response")
-                continue
-            if not text:
-                errors.append(f"{model}: empty")
-                continue
-            return _extract_json(text) if expect_json else text
+        yield first
+        try:
+            for chunk in chunks:
+                yield chunk
+        except Exception:
+            pass
+        return
 
-        if r.status_code in (400, 403):
-            # Bad key or bad request: trying other models will not help.
-            detail = r.text[:180].replace("\n", " ")
-            _record(f"Gemini rejected the request ({r.status_code}). {detail}")
-            return {} if expect_json else ""
-        if r.status_code == 404:
-            errors.append(f"{model}: not available")
-            continue
-        if r.status_code == 429:
-            errors.append(f"{model}: rate limited")
-            time.sleep(min(2.0, max(0.0, deadline - time.time())))
-            continue
-        errors.append(f"{model}: HTTP {r.status_code}")
-
-    _record("The language model did not answer. " + "; ".join(errors[:4]))
-    return {} if expect_json else ""
+    _record(_quota_message(errors))
 
 
 def speak(text: str):
@@ -506,11 +664,20 @@ _PLAYER = """<!DOCTYPE html><html><head><meta charset="utf-8"><style>
 body{margin:0;font-family:Inter,system-ui,sans-serif;background:transparent;color:@@WORD@@}
 #w{display:flex;flex-wrap:wrap;gap:10px;justify-content:center;direction:rtl}
 .c{padding:8px 12px;border-radius:14px;text-align:center;background:@@CARD@@;
-   border:1px solid @@RULE@@;transition:all .16s ease}
+   border:1px solid @@RULE@@;transition:background-color .13s ease,color .13s ease,
+   transform .13s ease,box-shadow .13s ease,opacity .13s ease}
 .ar{font-family:'Amiri Quran',Amiri,serif;font-size:2rem;line-height:1.9;color:@@WORD@@}
 .tr{font-size:.78rem;color:@@DIM@@;font-style:italic}
 .en{font-size:.95rem;color:@@WORD@@;opacity:.9}
-.on{background:@@WASH@@;transform:scale(1.06);box-shadow:0 0 18px @@GLOW@@55}
+/* The reciting word is filled solid, not tinted. A 16% wash of the same gold
+   that is already in the border reads as "this card is slightly warmer", which
+   is why it was invisible. */
+.on{background:@@GLOW@@;transform:scale(1.12);position:relative;z-index:2;
+    box-shadow:0 0 0 3px @@GLOW@@,0 12px 28px -10px @@SHADOW@@}
+.on .ar{color:#1A1208}
+.on .tr{color:#5A4614}
+.on .en{color:#241C17;opacity:1}
+#w.playing .c:not(.on){opacity:.45}
 .bar{display:flex;align-items:center;gap:12px;margin-top:16px;justify-content:center}
 #n{color:@@WORD@@;font-weight:600;font-size:13px;letter-spacing:.02em}
 button{font:inherit;border-radius:999px;border:1px solid @@RULE@@;background:@@CARD@@;
@@ -614,6 +781,13 @@ a.addEventListener('ended', function () {
   if (listens < 5) { upd(); setTimeout(function () { a.play(); }, 1400); }
   else { upd(); }
 });
+
+/* Dim the rest only while the recitation is running, so a paused page is still
+   fully legible. */
+a.addEventListener('play', function () { box.classList.add('playing'); });
+a.addEventListener('pause', function () { box.classList.remove('playing'); });
+a.addEventListener('ended', function () { box.classList.remove('playing'); });
+
 upd();
 </script></body></html>"""
 
@@ -627,6 +801,7 @@ def player_html(words: list, data_uri: str) -> str:
         ("@@RULE@@", t["rule"]),
         ("@@WASH@@", t["wash"]),
         ("@@GLOW@@", t["glow"]),
+        ("@@SHADOW@@", t["glow"] + "99"),
         ("@@CARD@@", t["bg2"]),
     ):
         out = out.replace(token, value)
@@ -657,7 +832,7 @@ def tajweed_rules(verse: str) -> str:
                 "word (Arabic + transliteration) - rule - what to do (counts for madd, etc). Use these 16 categories, "
                 "starting each line with its category number, and include only categories that actually occur: "
                 + TAJWEED_16 + ". No invention, no markdown symbols.\n\n" + verse
-    }], pro=True)
+    }], pro=False)
 
 
 @st.cache_data(ttl=900, show_spinner=False)
@@ -669,7 +844,7 @@ BREATH MAP: where the reciter breathes or pauses, roughly how many seconds each 
 PACING: three short tips for steady air (long madds, ghunnah, ending the ayah).
 COMMON MISTAKES: three typical errors for this ayah.
 Only describe what you can hear or what the rules require; say where you are unsure."""
-    return call_gemini([{"text": prompt}, audio_part(mp3, "audio/mpeg")], pro=True)
+    return call_gemini([{"text": prompt}, audio_part(mp3, "audio/mpeg")], pro=False)
 
 
 @st.cache_data(ttl=900, show_spinner=False)
@@ -687,7 +862,7 @@ Return JSON only: {{"overall_score":int,"rules_check":[{{"rule":"","word":"","ve
     result = call_gemini(
         [{"text": prompt}, {"text": "Clip 1 (reference):"}, audio_part(ref_mp3, "audio/mpeg"),
          {"text": "Clip 2 (student):"}, audio_part(student_wav, "audio/wav")],
-        True, pro=True,
+        True, pro=False,
     )
     return result if isinstance(result, dict) else {}
 
@@ -716,27 +891,27 @@ def transcribe_arabic(wav: bytes, orig: bytes) -> str:
     return ""
 
 
-@st.cache_data(ttl=900, show_spinner=False)
-def answer_question(ref: str, verse: str, ctx: str, convo: str, question: str,
-                    name: str, style: str, level: str, detail: int, quality: str) -> dict:
-    style_desc = {
+def teacher_prompt(ref: str, verse: str, ctx: str, convo: str, question: str,
+                   cfg: dict) -> str:
+    """Plain prose, not JSON: the answer is streamed, so it must be displayable
+    from the first token."""
+    style = {
         "Warm & casual": "a warm, casual sheikh chatting over tea",
         "Classical scholar": "a dignified, precise and gentle classical scholar",
         "Concise coach": "a crisp, friendly tajweed coach",
-    }.get(style, "a warm, casual sheikh chatting over tea")
-    words = {1: 60, 2: 130, 3: 250}.get(detail, 130)
+    }.get(cfg["style"], "a warm, casual sheikh chatting over tea")
+    words = {1: 60, 2: 130, 3: 250}.get(cfg["detail"], 130)
 
-    prompt = f"""You are {style_desc}, teaching {name} (level: {level}). They are on {ref}: {verse}, but they may ask about ANYTHING related to the Qur'an, tajweed, Arabic, memorisation, tafsir, the Prophets, seerah, Islamic basics or this app. Answer the question they actually asked, even if it is unrelated to the current ayah.
-Step 1: work out what they really mean (use the conversation to resolve words like 'it' or 'that', and fix likely speech-recognition errors).
-Step 2: answer directly in about {words} words, spoken style, no markdown, no lists, Arabic terms in transliteration. Use the REFERENCE MATERIAL when relevant but do not limit yourself to it. Say plainly when you rely on general knowledge. Never invent hadith, narrations or scholar names; if unsure, say so. For fiqh rulings give the mainstream view briefly and suggest a qualified scholar. If the message is truly unclear, ask one short clarifying question instead of guessing. End with at most one short follow-up question.
-Return JSON only: {{"understood":"<their question rewritten clearly in one sentence>","answer":"<your answer>"}}
+    return f"""You are {style}, teaching {cfg['name']} (level: {cfg['level']}). They are on {ref}: {verse}, but they may ask about ANYTHING related to the Qur'an, tajweed, Arabic, memorisation, tafsir, the Prophets, seerah, Islamic basics or this app. Answer the question they actually asked, even if it is unrelated to the current ayah.
+Work out what they really mean (use the conversation to resolve words like 'it' or 'that', and fix likely speech-recognition errors).
+Answer directly in about {words} words, spoken style, no markdown, no lists, no headings. Arabic terms in transliteration. Use the REFERENCE MATERIAL when it helps, but do not limit yourself to it, and say plainly when you are relying on general knowledge. Never invent hadith, narrations or scholar names; if you are unsure, say so. For fiqh rulings give the mainstream view briefly and suggest a qualified scholar. If the message is truly unclear, ask one short clarifying question instead of guessing. End with at most one short follow-up question.
+Start with the answer itself, not with a restatement of the question.
+
 REFERENCE MATERIAL:
 {ctx}
 CONVERSATION:
 {convo}
 STUDENT'S MESSAGE: {question}"""
-    out = call_gemini([{"text": prompt}], True, pro=(quality == "Best"))
-    return out if isinstance(out, dict) else {}
 
 
 # ------------------------------------------------------------------- alignment
@@ -863,6 +1038,18 @@ SURAH_START = [
     602, 602, 603, 603, 603, 604, 604, 604,
 ]
 
+# Ayat per surah, index 0 unused. A short surah is where "next ayah" used to
+# request a verse that does not exist, the fetch returned nothing, and the page
+# stopped dead.
+SURAH_AYAHS = [
+    0, 7, 286, 200, 176, 120, 165, 206, 75, 129, 109, 123, 111, 43, 52, 99, 128,
+    111, 110, 98, 135, 112, 78, 118, 64, 77, 227, 93, 88, 69, 60, 34, 30, 73, 54,
+    45, 83, 182, 88, 75, 85, 54, 53, 89, 59, 37, 35, 38, 29, 18, 45, 60, 49, 62,
+    55, 78, 96, 29, 22, 24, 13, 14, 11, 11, 18, 12, 12, 30, 52, 52, 44, 28, 28,
+    20, 56, 40, 31, 50, 40, 46, 42, 29, 19, 36, 25, 22, 17, 19, 26, 30, 20, 15,
+    21, 11, 8, 8, 19, 5, 8, 8, 11, 11, 8, 3, 9, 5, 4, 7, 3, 6, 3, 5, 4, 5, 6,
+]
+
 MINUTES_PER_PAGE = {"none": 60, "juz30": 45, "some": 32, "most": 22}
 TOTAL_PAGES = 604
 
@@ -884,6 +1071,37 @@ def _range_for(goal: str, target: int) -> tuple:
     else:
         start, end = 1, TOTAL_PAGES
     return start, max(start, end)
+
+
+def ayah_count(surah: int) -> int:
+    return SURAH_AYAHS[max(1, min(114, int(surah)))]
+
+
+def goto(surah: int, ayah: int) -> None:
+    """Move the reader, keeping the sidebar widgets and the state in step.
+
+    The widget state cannot be written here: Streamlit refuses to modify a keyed
+    widget after it has been instantiated this run. So the move is queued and
+    applied at the top of the next run, before the widgets are built. Without
+    this the number box kept its old value and the reader snapped back.
+    """
+    s = max(1, min(114, int(surah)))
+    a = max(1, min(ayah_count(s), int(ayah)))
+    st.session_state.current_surah = s
+    st.session_state.current_ayah = a
+    st.session_state["pending_nav"] = (s, a)
+    for slot in ("chat", "coach"):
+        st.session_state[slot] = []
+
+
+def goto_next(surah: int, ayah: int) -> None:
+    """Next ayah, rolling into the following surah instead of off the end."""
+    if ayah + 1 <= ayah_count(surah):
+        goto(surah, ayah + 1)
+    elif surah < 114:
+        goto(surah + 1, 1)
+    else:
+        goto(114, ayah_count(114))
 
 
 def compute_plan(goal: str, target: int, deadline: datetime.date, minutes: int,
@@ -1119,9 +1337,7 @@ def run_with_progress(fn, label: str, budget: float):
         time.sleep(0.25)
     box.empty()
 
-    drained = _drain()
-    if drained:
-        st.session_state["api_error"] = drained[-1]
+    _sync_errors()
 
     if "error" in boxed:
         raise boxed["error"]
@@ -1149,8 +1365,14 @@ def _config_snapshot() -> dict:
 
 
 def teacher_turn(slot: str, ctx: str, ref: str, verse: str, history_key: str) -> None:
+    """One conversational turn, streamed so the reply starts appearing at once."""
     cfg = _config_snapshot()
     history = st.session_state.setdefault(history_key, [])
+
+    for message in history:
+        role = "user" if message["role"] == "student" else "assistant"
+        with st.chat_message(role):
+            st.write(message["text"])
 
     mic_key = f"{slot}_voice"
     wav = voice_in(mic_key, "Tap the mic and talk to your teacher")
@@ -1159,67 +1381,65 @@ def teacher_turn(slot: str, ctx: str, ref: str, verse: str, history_key: str) ->
     if wav:
         st.audio(wav, format="audio/wav")
 
-    typed = None
     with st.form(key=f"{slot}_ask", clear_on_submit=True):
         typed = st.text_input("…or type your question", key=f"{slot}_text",
                               label_visibility="collapsed",
                               placeholder="…or type your question")
         submitted = st.form_submit_button("Ask")
 
-    audio_reply = None
-    if wav or (submitted and typed and typed.strip()):
-        question_source = wav
-        original = st.session_state.get(f"orig_{mic_key}", wav)
+    if not wav and not (submitted and (typed or "").strip()):
+        return
 
-        def job():
-            spoken = transcribe_english(question_source, original) if question_source else ""
-            question = spoken or (typed or "").strip()
-            if not question:
-                return {"unheard": True}
-            convo = "\n".join(f"{m['role']}: {m['text']}" for m in history[-8:])
-            reply = answer_question(ref, verse, ctx, convo, question, cfg["name"],
-                                    cfg["style"], cfg["level"], cfg["detail"], cfg["quality"])
-            return {"question": question, "spoken": bool(spoken),
-                    "understood": reply.get("understood", ""),
-                    "answer": reply.get("answer", "")}
-
+    original = st.session_state.get(f"orig_{mic_key}", wav)
+    if wav:
         try:
-            result = run_with_progress(job, "Listening and thinking", 70)
+            question = run_with_progress(
+                lambda: transcribe_english(wav, original), "Hearing you", 45
+            )
         except Exception as exc:
             st.error(str(exc))
-            result = None
+            return
+        if not question:
+            st.warning("I couldn't make out any speech in that recording. Move a little closer "
+                       "to the mic and try again, or type the question.")
+            return
+    else:
+        question = (typed or "").strip()
 
-        if result and result.get("unheard"):
-            st.warning("I couldn't make out any speech in that recording. Check the mic level shown "
-                       "above, move a little closer, and try again.")
-        elif result and result.get("answer"):
-            prefix = "🎙️ You said: " if result.get("spoken") else ""
-            history.append({"role": "student", "text": prefix + result["question"]})
-            history.append({"role": "teacher", "text": result["answer"],
-                            "u": result.get("understood", "")})
-            if cfg["voice"]:
-                try:
-                    spoken_reply = run_with_progress(lambda: speak(result["answer"]),
-                                                     "Preparing voice", 25)
-                    if isinstance(spoken_reply, bytes):
-                        audio_reply = spoken_reply
-                    elif isinstance(spoken_reply, str) and spoken_reply:
-                        st.caption(spoken_reply)
-                except Exception:
-                    pass
+    spoken_prefix = "🎙️ " if wav else ""
+    with st.chat_message("user"):
+        st.write(spoken_prefix + question)
+    history.append({"role": "student", "text": spoken_prefix + question})
 
+    convo = "\n".join(f"{m['role']}: {m['text']}" for m in history[-9:])
+    prompt = teacher_prompt(ref, verse, ctx, convo, question, cfg)
+
+    with st.chat_message("assistant"):
+        try:
+            answer = st.write_stream(stream_answer([{"text": prompt}]))
+        except Exception as exc:
+            st.error(str(exc))
+            answer = ""
+    _sync_errors()
+
+    if not answer:
         error = st.session_state.get("api_error")
-        if error and not (result and result.get("answer")):
+        if error:
             st.error(error)
+        return
 
-    if audio_reply:
-        play(audio_reply)
+    history.append({"role": "teacher", "text": answer})
+    st.session_state.pop("api_error", None)
 
-    for message in history:
-        with st.chat_message("user" if message["role"] == "student" else "assistant"):
-            if message.get("u"):
-                st.caption("Understood: " + message["u"])
-            st.write(message["text"])
+    if cfg["voice"]:
+        try:
+            audio = run_with_progress(lambda: speak(answer), "Preparing voice", 30)
+            if isinstance(audio, bytes):
+                play(audio)
+            elif isinstance(audio, str) and audio:
+                st.caption(audio)
+        except Exception:
+            pass
 
 
 # ----------------------------------------------------------------------- assets
@@ -1286,13 +1506,25 @@ else:
     sidebar = st.sidebar
     sidebar.markdown(f"### {st.session_state.user_name}")
 
-    surah_in = sidebar.number_input("Surah", 1, 114, int(st.session_state.current_surah))
-    ayah_in = sidebar.number_input("Ayah", 1, 286, int(st.session_state.current_ayah))
-    if sidebar.button("Go to this ayah"):
-        st.session_state.current_surah = int(surah_in)
-        st.session_state.current_ayah = int(ayah_in)
-        for slot in ("chat", "coach"):
-            st.session_state[slot] = []
+    # Apply a queued move before any keyed widget exists in this run.
+    queued = st.session_state.pop("pending_nav", None)
+    if queued:
+        st.session_state["nav_surah"], st.session_state["nav_ayah"] = queued
+
+    st.session_state.setdefault("nav_surah", int(st.session_state.current_surah))
+    # Clamp before the widget is built: number_input raises if its stored value
+    # is above max_value, which happens the moment you switch to a short surah.
+    st.session_state["nav_surah"] = max(1, min(114, int(st.session_state["nav_surah"])))
+    st.session_state.setdefault("nav_ayah", int(st.session_state.current_ayah))
+    st.session_state["nav_ayah"] = max(
+        1, min(ayah_count(st.session_state["nav_surah"]), int(st.session_state["nav_ayah"]))
+    )
+
+    surah_in = sidebar.number_input("Surah", 1, 114, key="nav_surah")
+    ayah_in = sidebar.number_input("Ayah", 1, ayah_count(st.session_state["nav_surah"]),
+                                   key="nav_ayah")
+    if sidebar.button("Go to this ayah", use_container_width=True):
+        goto(int(surah_in), int(ayah_in))
         st.rerun()
 
     with sidebar.expander("Teacher settings"):
@@ -1310,8 +1542,9 @@ else:
         st.caption("Illustrative portraits. Your study companion is not a person.")
         st.radio("Theme", ["White", "Brown", "Night", "Black"], key="cfg_theme", horizontal=True)
 
-    s = int(st.session_state.current_surah)
-    a = int(st.session_state.current_ayah)
+    s = max(1, min(114, int(st.session_state.current_surah)))
+    a = max(1, min(ayah_count(s), int(st.session_state.current_ayah)))
+    st.session_state.current_surah, st.session_state.current_ayah = s, a
     key = f"{s}:{a}"
     ref = f"Surah {s}, Ayah {a}"
 
@@ -1365,7 +1598,7 @@ else:
                 st.error(str(exc))
         if right.button("Teach me to recite it", use_container_width=True) and ref_mp3:
             try:
-                rules = tajweed_rules(verse)
+                rules = TAJWEED_16
                 st.session_state.lessons[key] = run_with_progress(
                     lambda: recitation_lesson(verse, rules, ref_mp3, reciter),
                     "Teacher is listening to the reference", 100,
@@ -1421,7 +1654,10 @@ else:
             st.caption(st.session_state["diag_recite"])
 
         if wav and ref_mp3:
-            play(wav, "audio/wav", auto=False)
+            # Playback of the student's own voice is opt-in: putting it inline made
+            # the page appear to "play a recording" instead of answering.
+            with st.expander("Hear your recording"):
+                play(wav, "audio/wav", auto=False, height=95)
             if st.session_state.get("lvl_recite", 1) < 0.05:
                 st.warning("That recording was very faint. I amplified it, but moving closer to the "
                            "mic will make the feedback more accurate.")
@@ -1430,19 +1666,23 @@ else:
             strictness = st.session_state.get("cfg_strict", "Standard")
 
             def job():
-                heard = transcribe_arabic(wav, original)
-                if not heard:
-                    return None
-                result = analyse(verse, ref_mp3, wav, reciter, tajweed_rules(verse),
-                                 strictness, heard)
+                # One call, not three. The old path transcribed, then re-analysed,
+                # then fetched tajweed rules from a third model: three queues
+                # before the user saw anything.
+                result = analyse(verse, ref_mp3, wav, reciter, TAJWEED_16, strictness, "")
                 if not result:
                     return None
+                heard = result.get("heard_text") or ""
+                if not heard:
+                    heard = transcribe_arabic(wav, original)  # only if the model heard nothing
                 result["asr"] = heard
-                result["match"] = match_report([w["ar"] for w in words] or verse.split(), heard)
+                result["match"] = (
+                    match_report([w["ar"] for w in words] or verse.split(), heard) if heard else None
+                )
                 return result
 
             try:
-                result = run_with_progress(job, "Listening to your recitation", 130)
+                result = run_with_progress(job, "Listening to your recitation", 95)
             except Exception as exc:
                 st.error(str(exc))
                 result = None
@@ -1516,7 +1756,7 @@ else:
                 clear_recording("recite")
                 st.rerun()
             if nxt.button("Next ayah", use_container_width=True):
-                st.session_state.current_ayah = a + 1
+                goto_next(s, a)
                 st.session_state.last_analysis.pop(key, None)
                 clear_recording("recite")
                 st.rerun()
@@ -1524,7 +1764,7 @@ else:
             st.markdown("#### Talk it through with your teacher")
             coach_ctx = ("Latest recitation analysis (AI estimate): "
                          + json.dumps(analysis, ensure_ascii=False)[:6000]
-                         + "\nRule checklist:\n" + tajweed_rules(verse))
+                         + "\nRule checklist:\n" + TAJWEED_16)
             teacher_turn("t3", coach_ctx, ref, verse, "coach")
 
     # ------------------------------------------------------------------ plan
