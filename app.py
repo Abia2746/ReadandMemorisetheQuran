@@ -153,6 +153,28 @@ def fetch_reciter(s, a):
     except Exception:
         pass
     
+    fallback_url = f"https://everyayah.com{s:03d}{a:03d}.mp3"
+    try:
+        r = requests.get(fallback_url, timeout=30)
+        if r.status_code == 200 and len(r.content) > 2000:
+            return fallback_url, r.content, "Mishary Rashid Alafasy"
+    except Exception:
+        pass
+    return None, b"", ""
+
+        return []
+
+@st.cache_data(show_spinner=False)
+def fetch_reciter(s, a):
+    """Sheikh Yasser Al-Dosari (everyayah.com); cleanly falls back to Alafasy if unavailable."""
+    url = f"https://everyayah.com{s:03d}{a:03d}.mp3"
+    try:
+        r = requests.get(url, timeout=30)
+        if r.status_code == 200 and len(r.content) > 2000:
+            return url, r.content, "Sheikh Yasser Al-Dosari"
+    except Exception:
+        pass
+    
     # Fallback to Alafasy if Al-Dosari is down
     fallback_url = f"https://everyayah.com{s:03d}{a:03d}.mp3"
     try:
