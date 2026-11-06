@@ -1,7 +1,7 @@
 import base64, json, re, time
 import html as _h
 import difflib
-import datetime, math
+import datetime, math, random, pathlib
 import io, threading, wave
 import numpy as np
 from streamlit.runtime.scriptrunner import add_script_run_ctx, get_script_run_ctx
@@ -191,6 +191,9 @@ a.onplay=()=>{if(done){n=1;done=false;}upd();};
 a.onended=()=>{els.forEach(e=>e.classList.remove('on'));if(n<5){n++;upd();setTimeout(()=>a.play(),1500);}else{done=true;upd();}};
 upd();
 </script>"""
+    t = T()
+    for o, n in (("#7a5c12", t["word"]), ("#2b2a26", t["word"]), ("#8a8574", t["dim"]), ("rgba(255,255,255,.6)", "rgba(128,128,128,.10)"), ("rgba(197,168,92,.3)", t["rule"]), ("rgba(229,193,88,.45)", t["glow"] + "66")):
+        tpl = tpl.replace(o, n)
     return tpl.replace("__URL__", audio_url).replace("__WORDS__", json.dumps(words, ensure_ascii=False))
 
 # ---------- AI teachers ----------
@@ -260,12 +263,11 @@ def boost(wav_bytes):
     except Exception:
         return wav_bytes, 1.0
 
-def loader_html(label, pct, left):
-    sub = "100% · done" if pct >= 100 else f"{pct}% · " + (f"about {left}s left" if left else "almost there")
-    return f'<div class="ld"><div class="bar" style="width:{pct}%"></div>✨ {label} · {sub}</div>'
+def loader_html(label, secs):
+    return f'<div class="ld"><div class="ind"></div>✨ {label} · {secs}s</div>'
 
 def run_with_progress(fn, label, est=15):
-    """Runs fn in a thread and shows a shimmering 0-100% button (time left is an estimate)."""
+    """Indeterminate loader with a real elapsed-seconds counter. Gives up after est*2.5 s with an error instead of hanging."""
     box, out = st.empty(), {}
     def work():
         try: out["v"] = fn()
@@ -275,11 +277,12 @@ def run_with_progress(fn, label, est=15):
     t.start(); t0 = time.time()
     while t.is_alive():
         el = time.time() - t0
-        pct = int(min(98, 100 * (1 - 2.718 ** (-3 * el / est))))
-        box.markdown(loader_html(label, pct, int(est - el) + 1 if el < est else 0), unsafe_allow_html=True)
+        if el > est * 2.5:
+            box.empty()
+            raise TimeoutError("This is taking too long. Check your connection and try again.")
+        box.markdown(loader_html(label, int(el)), unsafe_allow_html=True)
         time.sleep(0.25)
-    box.markdown(loader_html(label, 100, 0), unsafe_allow_html=True)
-    time.sleep(0.3); box.empty()
+    box.empty()
     if "e" in out: raise out["e"]
     return out["v"]
 
@@ -469,7 +472,52 @@ COMMON MISTAKES: three typical errors for this ayah.
 Only describe what you can hear or what the rules require; say where you are unsure."""
     return call_gemini([{"text": prompt}, audio_part(_mp3, "audio/mpeg")], pro=True)
 
+THEMES = {
+ "White": dict(bg="#FDFBF6", bg2="#F4EEE1", word="#241C17", dim="#8A7A66", glow="#B8912F", rule="rgba(36,28,23,.10)", wash="rgba(184,145,47,.16)", ok="#2E7D5B", bad="#C0453A"),
+ "Brown": dict(bg="#241B15", bg2="#3A2C22", word="#F4E8D2", dim="#8A7A66", glow="#C9A227", rule="rgba(244,232,210,.14)", wash="rgba(201,162,39,.22)", ok="#7FD1A8", bad="#FF8A7E"),
+ "Night": dict(bg="#0A0E18", bg2="#151B2B", word="#F3EEE2", dim="#6E7789", glow="#D9B45B", rule="rgba(243,238,226,.12)", wash="rgba(217,180,91,.20)", ok="#7FD1A8", bad="#FF8A7E"),
+ "Black": dict(bg="#000000", bg2="#0A0A0A", word="#FFFFFF", dim="#5A5A5A", glow="#FFD166", rule="rgba(255,255,255,.12)", wash="rgba(255,209,102,.18)", ok="#7FD1A8", bad="#FF8A7E"),
+}
+def T(): return THEMES[st.session_state.get("cfg_theme", "White")]
+
+def apply_theme():
+    t, name = T(), st.session_state.get("cfg_theme", "White")
+    rnd = random.Random(7)
+    stars = ",".join(f"{rnd.randint(0,100)}vw {rnd.randint(0,100)}vh 0 {rnd.choice([0,0,1])}px rgba(243,238,226,{rnd.uniform(.25,.9):.2f})" for _ in range(140))
+    star_css = ".stApp::before{content:'';position:fixed;left:0;top:0;width:1px;height:1px;box-shadow:" + stars + ";animation:tw 7s ease-in-out infinite;pointer-events:none;z-index:0}@keyframes tw{0%,100%{opacity:.5}50%{opacity:1}}@media(prefers-reduced-motion:reduce){.stApp::before{animation:none}}" if name == "Night" else ""
+    st.markdown(f"""<style>
+:root{{--bg:{t['bg']};--bg2:{t['bg2']};--word:{t['word']};--dim:{t['dim']};--wash:{t['wash']};--glow:{t['glow']};--rule:{t['rule']};--ok:{t['ok']};--bad:{t['bad']}}}
+.stApp{{background:var(--bg)!important;transition:background-color .24s}}
+[data-testid="stSidebar"]{{background:var(--bg2)!important}}
+.stApp p,.stApp li,.stApp label,.stApp span,.stApp h1,.stApp h2,.stApp h3,.stApp h4,.stApp [data-testid="stCaptionContainer"]{{color:var(--word)!important}}
+div.stButton>button,div.stButton>button *{{color:#241C17!important}}
+.ban p,.ld{{color:#fff!important}}
+.glass{{background:var(--bg2)!important;border-color:var(--rule)!important}}
+.ayahbox{{background:transparent!important;border:0!important;box-shadow:none!important}}
+.ft.correct{{background:var(--wash);color:var(--word)}}.ft.correct small{{color:var(--ok)}}
+.ft.close{{background:var(--wash);box-shadow:inset 0 -3px var(--glow);color:var(--word)}}.ft.missed{{color:var(--bad)}}.ft.hide{{background:var(--bg2)}}
+.ld{{position:relative;overflow:hidden}}.ld .ind{{position:absolute;bottom:0;left:-35%;width:35%;height:5px;background:rgba(255,255,255,.9);animation:slide 1.2s ease-in-out infinite}}
+@keyframes slide{{to{{left:100%}}}}
+@media(prefers-reduced-motion:reduce){{.ld .ind{{animation:none;left:0;width:100%;opacity:.6}}}}
+{star_css}
+</style>""", unsafe_allow_html=True)
+
+ASSETS = pathlib.Path(__file__).parent / "assets"
+@st.cache_data(show_spinner=False)
+def _b64(name):
+    f = ASSETS / name
+    return base64.b64encode(f.read_bytes()).decode() if name and f.is_file() else ""
+
+MOTIF = '<svg width="96" height="128" viewBox="0 0 96 128" aria-hidden="true"><g transform="translate(48 64)" fill="none" stroke="#C9A227" stroke-width="2"><rect x="-22" y="-22" width="44" height="44"/><rect x="-22" y="-22" width="44" height="44" transform="rotate(45)"/></g></svg>'
+
+def portrait():
+    c = st.session_state.get("cfg_teacher", "None")
+    b = _b64({"Male": "teacher_male.webp", "Female": "teacher_female.webp"}.get(c, ""))
+    inner = f'<img alt="" aria-hidden="true" src="data:image/webp;base64,{b}" style="width:96px;height:128px;object-fit:cover;border-radius:16px;box-shadow:0 0 0 2px var(--glow)">' if b else MOTIF
+    st.markdown(f'<div style="display:flex;justify-content:center;margin:8px 0">{inner}</div>', unsafe_allow_html=True)
+
 # ---------- UI ----------
+apply_theme()
 if st.session_state.app_phase == "onboarding":
     st.title("🕌 Al-Mu'allim")
     n = st.text_input("What is your name?", placeholder="e.g., Abia")
@@ -494,6 +542,9 @@ else:
         st.select_slider("Recitation strictness", options=["Gentle", "Standard", "Strict"], value="Standard", key="cfg_strict")
         st.slider("Mic boost (max x)", 1, 30, 12, key="cfg_gain")
         st.toggle("Spoken replies", True, key="cfg_voice")
+        st.radio("Study companion", ["None", "Male", "Female"], key="cfg_teacher", horizontal=True)
+        st.caption("Illustrative portraits. Your study companion is not a person.")
+        st.radio("Theme", ["White", "Brown", "Night", "Black"], key="cfg_theme", horizontal=True)
 
     s, a = st.session_state.current_surah, st.session_state.current_ayah
     key, ref = f"{s}:{a}", f"Surah {s}, Ayah {a}"
@@ -517,6 +568,7 @@ else:
         if listens >= 5: st.success("Five listens done. Read the tafsir, then try reciting from memory.")
 
     with t2:
+        portrait()
         src = fetch_ibn_kathir(s, a)
         c1, c2 = st.columns(2)
         if c1.button("📖 Explain this ayah to me"):
@@ -543,6 +595,7 @@ else:
         teacher_turn("t2", ctx_for(s, a, src), ref, verse, "chat")
 
     with t3:
+        portrait()
         st.caption("Listen on tab 1 first, then recite from memory. Your teacher stays in the conversation afterwards.")
         conceal = st.toggle("Recite from memory", True, key="conceal")
         if not st.session_state.last_analysis.get(key):
@@ -612,7 +665,7 @@ else:
             teacher_turn("t3", ctx, ref, verse, "coach")
 
     with t4:
-        P = st.session_state.setdefault("plan", {"step": 0, "goal": "full", "t": 1, "dl": datetime.date.today() + datetime.timedelta(30), "min": 30, "known": "none"})
+        P = st.session_state.setdefault("plan", {"step": 0, "goal": "full", "t": 1, "dl": datetime.date.today() + datetime.timedelta(30), "min": 30, "known": "none", "when": datetime.time(20, 0)})
         if P["step"] < 4:
             st.markdown(f"<p class='mi'>Step {P['step'] + 1} of 4 · Tell us what you want to memorise, and by when.</p>", unsafe_allow_html=True)
             st.progress((P["step"] + 1) / 4)
@@ -629,6 +682,7 @@ else:
                 kn = {"none": "Nothing yet", "juz30": "Juz 30", "some": "Some of it", "most": "Most of it"}
                 P["known"] = st.radio("What do you already know?", list(kn), format_func=kn.get, index=list(kn).index(P["known"]))
                 st.caption("Based on what you told us.")
+                P["when"] = st.time_input("When will you sit down?", P.get("when", datetime.time(20, 0)))
             c1, c2 = st.columns(2)
             if P["step"] and c1.button("Back"):
                 P["step"] -= 1; st.rerun()
@@ -645,7 +699,7 @@ else:
                 card(f"Nearest goal that fits: {c['alt']}.\nOr keep the goal and move the date: {c['finish']} ({c['need']} days from today).")
             if c["sched"]:
                 d0 = c["sched"][0]
-                card(f"TODAY · pages {d0['f']}–{d0['t']}\n" + (f"New: {d0['new']} min · " if d0["new"] else "") + f"Review: {d0['rev']} min" + (" · Consolidate: last 8 min, from memory" if d0["new"] else ""))
+                card(f"TODAY at {P['when'].strftime('%H:%M')} · pages {d0['f']}–{d0['t']}\n" + (f"New: {d0['new']} min · " if d0["new"] else "") + f"Review: {d0['rev']} min" + (" · Consolidate: last 8 min, from memory" if d0["new"] else ""))
                 mx = max(d["rev"] + d["new"] for d in c["sched"]); pal = ["#F2EADA", "#E8D9A8", "#D9BE62", "#C9A227"]
                 cells = "".join(f'<i title="{d["date"]}" style="background:{pal[min(3, math.ceil((d["rev"] + d["new"]) / mx * 3))]}"></i>' for d in c["sched"])
                 st.markdown(f'<div class="glass" style="padding:16px"><p class="mi">Next {len(c["sched"])} days</p><div class="cells">{cells}</div></div>', unsafe_allow_html=True)
