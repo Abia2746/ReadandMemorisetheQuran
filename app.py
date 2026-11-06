@@ -132,7 +132,6 @@ def fetch_verse(s, a):
 
 @st.cache_data(show_spinner=False)
 def fetch_words(s, a):
-    """Restored your exact dictionary structure mapping 'ar', 'en', and 'tr' keys"""
     try:
         r = requests.get(f"https://quran.com{s}:{a}",
             params={"words": "true", "word_fields": "text_uthmani", "language": "en"}, timeout=20).json()
@@ -140,6 +139,26 @@ def fetch_words(s, a):
                  "tr": (w.get("transliteration") or {}).get("text") or ""}
                 for w in r["verse"]["words"] if w.get("char_type_name") == "word"]
     except Exception:
+        return []
+
+@st.cache_data(show_spinner=False)
+def fetch_reciter(s, a):
+    url = f"https://everyayah.com{s:03d}{a:03d}.mp3"
+    try:
+        r = requests.get(url, timeout=30)
+        if r.status_code == 200 and len(r.content) > 2000:
+            return url, r.content, "Sheikh Yasser Al-Dosari"
+    except Exception:
+        pass
+    
+    fallback_url = f"https://everyayah.com{s:03d}{a:03d}.mp3"
+    try:
+        r = requests.get(fallback_url, timeout=30)
+        if r.status_code == 200 and len(r.content) > 2000:
+            return fallback_url, r.content, "Mishary Rashid Alafasy"
+    except Exception:
+        pass
+    return None, b"", ""
         return []
 
 @st.cache_data(show_spinner=False)
