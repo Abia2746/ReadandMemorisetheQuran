@@ -102,8 +102,8 @@ div.stButton>button *{color:#241C17!important}
 @keyframes slide{to{left:100%}}
 [data-testid="stStatusWidget"]{display:none!important}
 @media(prefers-reduced-motion:reduce){
- .ft{animation:none;opacity:1}
- .ld .ind{animation:none;left:0;width:100%;opacity:.6}
+  .ft{animation:none;opacity:1}
+  .ld .ind{animation:none;left:0;width:100%;opacity:.6}
 }
 """
 
@@ -114,17 +114,17 @@ _FONTS = (
 
 THEMES = {
     "White":  dict(bg="#FDFBF6", bg2="#F4EEE1", word="#241C17", dim="#7A6A5C",
-                   glow="#C9A227", rule="rgba(36,28,23,.10)", wash="rgba(184,145,47,.16)",
-                   ok="#2E7D5B", bad="#C0453A"),
+                    glow="#C9A227", rule="rgba(36,28,23,.10)", wash="rgba(184,145,47,.16)",
+                    ok="#2E7D5B", bad="#C0453A"),
     "Brown":  dict(bg="#241B15", bg2="#3A2C22", word="#F4E8D2", dim="#A08D74",
-                   glow="#C9A227", rule="rgba(244,232,210,.14)", wash="rgba(201,162,39,.22)",
-                   ok="#7FD1A8", bad="#FF8A7E"),
+                    glow="#C9A227", rule="rgba(244,232,210,.14)", wash="rgba(201,162,39,.22)",
+                    ok="#7FD1A8", bad="#FF8A7E"),
     "Night":  dict(bg="#0A0E18", bg2="#151B2B", word="#F3EEE2", dim="#8390A6",
-                   glow="#D9B45B", rule="rgba(243,238,226,.12)", wash="rgba(217,180,91,.20)",
-                   ok="#7FD1A8", bad="#FF8A7E"),
+                    glow="#D9B45B", rule="rgba(243,238,226,.12)", wash="rgba(217,180,91,.20)",
+                    ok="#7FD1A8", bad="#FF8A7E"),
     "Black":  dict(bg="#000000", bg2="#0A0A0A", word="#FFFFFF", dim="#8A8A8A",
-                   glow="#FFD166", rule="rgba(255,255,255,.12)", wash="rgba(255,209,102,.18)",
-                   ok="#7FD1A8", bad="#FF8A7E"),
+                    glow="#FFD166", rule="rgba(255,255,255,.12)", wash="rgba(255,209,102,.18)",
+                    ok="#7FD1A8", bad="#FF8A7E"),
 }
 
 
@@ -665,7 +665,7 @@ body{margin:0;font-family:Inter,system-ui,sans-serif;background:transparent;colo
 #w{display:flex;flex-wrap:wrap;gap:10px;justify-content:center;direction:rtl}
 .c{padding:8px 12px;border-radius:14px;text-align:center;background:@@CARD@@;
    border:1px solid @@RULE@@;transition:background-color .13s ease,color .13s ease,
-   transform .13s ease,box-shadow .13s ease,opacity .13s ease}
+    transform .13s ease,box-shadow .13s ease,opacity .13s ease}
 .ar{font-family:'Amiri Quran',Amiri,serif;font-size:2rem;line-height:1.9;color:@@WORD@@}
 .tr{font-size:.78rem;color:@@DIM@@;font-style:italic}
 .en{font-size:.95rem;color:@@WORD@@;opacity:.9}
@@ -857,8 +857,8 @@ Compare word by word: harakat, sukoon, madd length, ghunnah, idgham/ikhfa/iqlab/
 Write in English; Arabic words in script plus transliteration. Report only what you can actually hear; admit uncertainty; never invent mistakes. If the clip is silent or the wrong ayah, say so.
 Checklist of tajweed rules in this ayah:
 {rules}
-Also compare breath control (where each reciter breathes or pauses, and whether the student's breath lasted each phrase). Marking strictness: {strict}. Independent ASR transcript of the student (cross-check only; trust your own hearing if they differ): {heard or "(none)"}. First write in heard_text, in Arabic script, exactly the words the student recited as you hear them (use [unclear] where you cannot tell). If you hear no clear recitation, set heard_text to "" and overall_score to 0 and give no word feedback; never invent mistakes. Judge each checklist rule separately, citing roughly where (seconds) you heard it in each clip, with a confidence level.
-Return JSON only: {{"overall_score":int,"rules_check":[{{"rule":"","word":"","verdict":"correct|partly|missed|unclear","evidence":"","confidence":"high|medium|low"}}],"heard_text":"","breath":{{"reference":"","student":"","tip":""}},"spoken_summary":"max 60 words, warm","words":[{{"word":"","status":"good|needs_work","student_did":"","correction":""}}],"practice_tip":""}}"""
+Also compare breath control (where each reciter breathes or pauses, and whether the student's breath lasted each phrase). Marking strictness: {strict}. Independent ASR transcript of the student ([...]
+Return JSON only: {{"overall_score":int,"rules_check":[{{"rule":"","word":"","verdict":"correct|partly|missed|unclear","evidence":"","confidence":"high|medium|low"}}],"heard_text":"","breath":{{"reference":"","student":"","tip":""}},"spoken_summary":"","words":[{{"word":"","status":"good|needs_work","student_did":"","correction":""}}],"practice_tip":""}}"""
     result = call_gemini(
         [{"text": prompt}, {"text": "Clip 1 (reference):"}, audio_part(ref_mp3, "audio/mpeg"),
          {"text": "Clip 2 (student):"}, audio_part(student_wav, "audio/wav")],
@@ -902,9 +902,9 @@ def teacher_prompt(ref: str, verse: str, ctx: str, convo: str, question: str,
     }.get(cfg["style"], "a warm, casual sheikh chatting over tea")
     words = {1: 60, 2: 130, 3: 250}.get(cfg["detail"], 130)
 
-    return f"""You are {style}, teaching {cfg['name']} (level: {cfg['level']}). They are on {ref}: {verse}, but they may ask about ANYTHING related to the Qur'an, tajweed, Arabic, memorisation, tafsir, the Prophets, seerah, Islamic basics or this app. Answer the question they actually asked, even if it is unrelated to the current ayah.
+    return f"""You are {style}, teaching {cfg['name']} (level: {cfg['level']}). They are on {ref}: {verse}, but they may ask about ANYTHING related to the Qur'an, tajweed, Arabic, memorisation, t[...]
 Work out what they really mean (use the conversation to resolve words like 'it' or 'that', and fix likely speech-recognition errors).
-Answer directly in about {words} words, spoken style, no markdown, no lists, no headings. Arabic terms in transliteration. Use the REFERENCE MATERIAL when it helps, but do not limit yourself to it, and say plainly when you are relying on general knowledge. Never invent hadith, narrations or scholar names; if you are unsure, say so. For fiqh rulings give the mainstream view briefly and suggest a qualified scholar. If the message is truly unclear, ask one short clarifying question instead of guessing. End with at most one short follow-up question.
+Answer directly in about {words} words, spoken style, no markdown, no lists, no headings. Arabic terms in transliteration. Use the REFERENCE MATERIAL when it helps, but do not limit yourself to i[...]
 Start with the answer itself, not with a restatement of the question.
 
 REFERENCE MATERIAL:
@@ -923,7 +923,7 @@ def norm_ar(text: str) -> list:
     """Strip diacritics and unify the letters Arabic keyboards disagree about."""
     t = _DIACRITICS.sub("", text)
     t = re.sub("[إأآٱ]", "ا", t).replace("ى", "ي").replace("ة", "ه")
-    t = re.sub("[^\u0621-\u064A\\s]", "", t)
+    t = re.sub("[^\u0621-\u064A\s]", "", t)
     return t.split()
 
 
@@ -1214,7 +1214,7 @@ def boost(wav_bytes: bytes, gain_cap: float = 400.0) -> tuple:
 
 
 _AUDIO_TPL = """<style>body{margin:0;font-family:Inter,sans-serif;background:transparent;text-align:center}
-audio{width:100%}input{width:55%;accent-color:@@GLOW@@}</style>
+ audio{width:100%}input{width:55%;accent-color:@@GLOW@@}</style>
 <audio id="a" controls @@AUTO@@ src="@@URI@@"></audio>
 <div style="margin-top:6px">&#128264; <input id="v" type="range" min="0" max="100" value="80"
  aria-label="Volume"> &#128266;</div>
@@ -1485,6 +1485,9 @@ def card(text: str) -> None:
 
 # --------------------------------------------------------------------------- UI
 
+import hearing
+hearing.install(globals())
+
 apply_theme()
 
 if st.session_state.app_phase == "onboarding":
@@ -1720,6 +1723,7 @@ else:
             elif analysis.get("heard_text"):
                 st.info("Word-level scoring needs the word list; here is what the teacher heard instead.")
 
+            hearing.render_vowels(analysis)
             card("What I heard you recite: " + (analysis.get("heard_text") or "(nothing clear)"))
             if analysis.get("spoken_summary"):
                 card(analysis["spoken_summary"])
@@ -1821,7 +1825,7 @@ else:
                 st.rerun()
         else:
             computed = compute_plan(plan["goal"], int(plan["t"]), plan["dl"],
-                                    int(plan["min"]), plan["known"])
+                                   int(plan["min"]), plan["known"])
             colour = {"feasible": "#2E7D5B", "tight": "#B8912F", "infeasible": "#C0453A"}[computed["band"]]
             headline = {
                 "feasible": "This fits your time.",
