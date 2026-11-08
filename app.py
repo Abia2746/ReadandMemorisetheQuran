@@ -1,13 +1,4 @@
-"""Al-Mu'allim: Streamlit shell.
 
-All the real work (live voice with Muallim, words that light up while you recite, the
-teacher photos, the plan) lives in index.html, which is plain HTML and JavaScript. Streamlit
-cannot do live audio or instant word lighting, because every interaction reloads the page,
-so this file just serves index.html. It is deliberately tiny so it cannot crash or show a
-blank screen the way the old 1,500-line version could.
-
-Keep index.html in the same folder as this file.
-"""
 import pathlib
 
 import streamlit as st
