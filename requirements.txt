@@ -1,4 +1,4 @@
-streamlit>=1.40
-streamlit-mic-recorder
-requests
-numpy
+streamlit>=1.36,<2
+requests>=2.31
+numpy>=1.26
+streamlit-mic-recorder>=0.0.45
