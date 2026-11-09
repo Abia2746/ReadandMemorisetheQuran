@@ -1,30 +1,6 @@
-/**
- * Live recitation.
- *
- * Two engines behind one hook, because no single one covers every device:
- *
- *  - `speech`  the browser's own recogniser. Truly instant: interim results
- *              arrive while you are still speaking, so words light as you say
- *              them. No key, no cost. Chrome, Edge, Samsung Internet, Chrome on
- *              Android. NOT Safari or any iOS browser — they are all WebKit and
- *              none of them expose SpeechRecognition.
- *
- *  - `cloud`   MediaRecorder plus a rolling upload to Gemini. Every couple of
- *              seconds the recording so far is sent and the transcript comes
- *              back. Works on iOS Safari, costs a request per tick, and runs
- *              roughly a second behind your voice.
- *
- * Lighting is monotonic. Interim transcripts get revised by the recogniser, and
- * an un-lit word looks like a mistake the reader did not make, so a word once lit
- * never goes dark.
- */
-
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { WordState } from './align'
-import { createRecogniser, speechSupported, type Recogniser } from './speech'
-import { transcribeArabic } from './gemini'
 
-const RANK: Record<WordState, number> = { pending: 0, missed: 1, close: 2, correct: 3 }
+type WordState = 'pending' | 'missed' | 'close' | 'correct'
 
 const DIACRITICS = /[\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06ED\u0640]/g
 const NON_LETTERS = /[^\u0621-\u064A\s]/g
@@ -44,7 +20,8 @@ function levenshtein(a: string, b: string): number {
   if (a === b) return 0
   if (!a.length) return b.length
   if (!b.length) return a.length
-  let previous = Array.from({ length: b.length + 1 }, (_, i) => i)
+
+  let previous = Array.from({ length: b.length + 1 }, (_, index) => index)
   for (let i = 1; i <= a.length; i += 1) {
     const current = [i]
     for (let j = 1; j <= b.length; j += 1) {
@@ -60,100 +37,143 @@ function levenshtein(a: string, b: string): number {
 }
 
 function scoreWord(expected: string, heard: string): number {
-  if (expected === heard) return 2
-  if (expected.startsWith(heard) && heard.length >= 2) return 1
-  if (heard.startsWith(expected) && expected.length >= 2) return 1
-  if (Math.abs(expected.length - heard.length) <= 1 && levenshtein(expected, heard) <= 1) return 1
-  return 0
+  if (expected === heard) return 3
+  if (heard.length >= 2 && expected.startsWith(heard)) return 1
+  if (expected.length >= 2 && heard.startsWith(expected)) return 1
+  if (
+    Math.min(expected.length, heard.length) >= 3
+    && Math.abs(expected.length - heard.length) <= 1
+    && levenshtein(expected, heard) <= 1
+  ) return 1
+  return -2
 }
 
 export interface LiveAlignment {
+  /** Only recognized matches are marked. Unrecognized words remain pending. */
   states: WordState[]
   cursor: number
   matched: number
+  activeIndex: number
 }
 
-/**
- * Align a partial transcript. Anything past the last word actually recognised
- * stays `pending` rather than `missed`, because the reader has not reached it
- * yet — calling it missed mid-recitation is a lie that shows up as a red word
- * jumping ahead of the voice.
- */
+/** Align speech-recognition text to this ayah. This is transcript matching, not phoneme or Tajweed assessment. */
 export function alignLive(expectedWords: string[], transcript: string): LiveAlignment {
-  const expected = expectedWords.map((w) => normaliseArabic(w).replace(/\s+/g, '')).filter(Boolean)
+  const expected = expectedWords.map((word) => normaliseArabic(word).replace(/\s/g, '')).filter(Boolean)
   const heard = normaliseArabic(transcript).split(' ').filter(Boolean)
   const states: WordState[] = new Array(expected.length).fill('pending')
 
   if (!expected.length || !heard.length) {
-    return { states, cursor: 0, matched: 0 }
+    return { states, cursor: 0, matched: 0, activeIndex: -1 }
   }
 
   const n = expected.length
   const m = heard.length
-  const table: number[][] = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(0))
-  for (let i = 1; i <= n; i += 1) table[i][0] = -i
-  for (let j = 1; j <= m; j += 1) table[0][j] = -j
+  const table = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(0))
+  const trace = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(''))
+  for (let i = 1; i <= n; i += 1) {
+    table[i][0] = -i
+    trace[i][0] = 'up'
+  }
+  for (let j = 1; j <= m; j += 1) {
+    table[0][j] = -j
+    trace[0][j] = 'left'
+  }
 
   for (let i = 1; i <= n; i += 1) {
     for (let j = 1; j <= m; j += 1) {
-      const s = scoreWord(expected[i - 1], heard[j - 1])
-      table[i][j] = Math.max(
-        table[i - 1][j - 1] + s,
-        table[i - 1][j] - 1,
-        table[i][j - 1] - 1,
-      )
+      const wordScoreValue = scoreWord(expected[i - 1], heard[j - 1])
+      const diagonal = table[i - 1][j - 1] + wordScoreValue
+      const skipExpected = table[i - 1][j] - 1
+      const skipHeard = table[i][j - 1] - 1
+      const best = Math.max(diagonal, skipExpected, skipHeard)
+      table[i][j] = best
+      // Prefer a genuine word match; otherwise avoid turning noisy transcript
+      // words into false misses during the live, partial-recognition phase.
+      trace[i][j] = wordScoreValue > 0 && diagonal === best
+        ? 'match'
+        : skipExpected === best
+          ? 'up'
+          : 'left'
     }
   }
 
   let i = n
   let j = m
-  let lastMatched = -1
+  let activeIndex = -1
   while (i > 0 || j > 0) {
-    if (i > 0 && j > 0) {
-      const s = scoreWord(expected[i - 1], heard[j - 1])
-      if (table[i][j] === table[i - 1][j - 1] + s) {
-        if (s > 0) {
-          states[i - 1] = s === 2 ? 'correct' : 'close'
-          if (lastMatched < 0) lastMatched = i - 1
-        } else {
-          states[i - 1] = 'missed'
-        }
-        i -= 1
-        j -= 1
-        continue
-      }
-    }
-    if (i > 0 && table[i][j] === table[i - 1][j] - 1) {
-      states[i - 1] = 'missed'
+    if (i > 0 && j > 0 && trace[i][j] === 'match') {
+      const value = scoreWord(expected[i - 1], heard[j - 1])
+      states[i - 1] = value === 3 ? 'correct' : 'close'
+      if (activeIndex < 0) activeIndex = i - 1
       i -= 1
-      continue
+      j -= 1
+    } else if (i > 0 && (j === 0 || trace[i][j] === 'up')) {
+      i -= 1
+    } else {
+      j -= 1
     }
-    j -= 1
   }
 
-  for (let k = lastMatched + 1; k < n; k += 1) states[k] = 'pending'
-
-  const cursor = states.findIndex((s) => s === 'pending' || s === 'missed')
+  const cursor = states.findIndex((state) => state === 'pending')
   return {
     states,
     cursor: cursor === -1 ? n : cursor,
-    matched: states.filter((s) => s === 'correct' || s === 'close').length,
+    matched: states.filter((state) => state === 'correct' || state === 'close').length,
+    activeIndex,
   }
 }
 
-export type Engine = 'speech' | 'cloud' | 'none'
+export type Engine = 'browser-speech' | 'unavailable'
+export type LiveStatus = 'idle' | 'connecting' | 'listening' | 'stopped' | 'unavailable' | 'error'
 
-export function pickEngine(hasKey: boolean): Engine {
-  if (speechSupported()) return 'speech'
-  if (hasKey && typeof MediaRecorder !== 'undefined') return 'cloud'
-  return 'none'
+export function speechSupported(): boolean {
+  if (typeof window === 'undefined') return false
+  const speechWindow = window as Window & {
+    SpeechRecognition?: unknown
+    webkitSpeechRecognition?: unknown
+  }
+  return Boolean(speechWindow.SpeechRecognition || speechWindow.webkitSpeechRecognition)
+}
+
+interface RecognitionResultLike {
+  0: { transcript: string }
+  isFinal: boolean
+}
+
+interface RecognitionEventLike {
+  results: ArrayLike<RecognitionResultLike>
+}
+
+interface RecognitionErrorLike {
+  error: string
+}
+
+interface SpeechRecognitionLike {
+  lang: string
+  continuous: boolean
+  interimResults: boolean
+  onstart: (() => void) | null
+  onresult: ((event: RecognitionEventLike) => void) | null
+  onerror: ((event: RecognitionErrorLike) => void) | null
+  onend: (() => void) | null
+  start: () => void
+  stop: () => void
+  abort: () => void
+}
+
+interface SpeechRecognitionWindow extends Window {
+  SpeechRecognition?: new () => SpeechRecognitionLike
+  webkitSpeechRecognition?: new () => SpeechRecognitionLike
 }
 
 export interface LiveControls {
   engine: Engine
+  status: LiveStatus
+  statusMessage: string
   listening: boolean
   states: WordState[]
   cursor: number
+  activeIndex: number
   transcript: string
   matched: number
   error: string | null
@@ -162,182 +182,203 @@ export interface LiveControls {
   reset: () => void
 }
 
-const CHUNK_MS = 2200
-
-export function useLiveRecitation(words: string[], apiKey: string, model: string): LiveControls {
+export function useLiveRecitation(words: string[]): LiveControls {
   const signature = useMemo(() => words.join('|'), [words])
+  const expectedWords = useMemo(() => words, [signature])
   const blank = useMemo<WordState[]>(
     () => new Array(words.length).fill('pending') as WordState[],
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [signature],
+    [signature, words.length],
   )
 
   const [states, setStates] = useState<WordState[]>(blank)
   const [cursor, setCursor] = useState(0)
+  const [activeIndex, setActiveIndex] = useState(-1)
   const [listening, setListening] = useState(false)
+  const [status, setStatus] = useState<LiveStatus>('idle')
   const [transcript, setTranscript] = useState('')
   const [matched, setMatched] = useState(0)
   const [error, setError] = useState<string | null>(null)
 
-  const statesRef = useRef<WordState[]>(blank)
-  const recorderRef = useRef<Recogniser | null>(null)
-  const mediaRef = useRef<MediaRecorder | null>(null)
-  const chunksRef = useRef<Blob[]>([])
-  const timerRef = useRef<number | null>(null)
-  const busyRef = useRef(false)
-  const aliveRef = useRef(false)
-
-  const engine = pickEngine(Boolean(apiKey))
+  const recognitionRef = useRef<SpeechRecognitionLike | null>(null)
+  const keepAliveRef = useRef(false)
+  const restartTimerRef = useRef<number | null>(null)
 
   const reset = useCallback(() => {
-    statesRef.current = blank
     setStates(blank)
     setCursor(0)
+    setActiveIndex(-1)
     setTranscript('')
     setMatched(0)
     setError(null)
+    setStatus('idle')
   }, [blank])
 
-  // A new ayah means a clean slate; carrying old highlights across would score
-  // the new verse against the previous recitation.
   useEffect(() => {
+    keepAliveRef.current = false
+    if (restartTimerRef.current !== null) {
+      window.clearTimeout(restartTimerRef.current)
+      restartTimerRef.current = null
+    }
+    recognitionRef.current?.abort()
+    recognitionRef.current = null
+    setListening(false)
     reset()
   }, [signature, reset])
 
-  const accept = useCallback(
-    (text: string) => {
-      const live = alignLive(words, text)
-      const merged = live.states.map((s, idx) =>
-        RANK[s] > RANK[statesRef.current[idx] ?? 'pending'] ? s : statesRef.current[idx] ?? 'pending',
-      ) as WordState[]
-      statesRef.current = merged
-      setStates(merged)
-      setTranscript(text)
-      setMatched(merged.filter((s) => s === 'correct' || s === 'close').length)
-      setCursor(merged.findIndex((s) => s === 'pending'))
-    },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [signature],
-  )
+  const acceptTranscript = useCallback((text: string) => {
+    const alignment = alignLive(expectedWords, text)
+    setStates(alignment.states)
+    setCursor(alignment.cursor)
+    setActiveIndex(alignment.activeIndex)
+    setTranscript(text)
+    setMatched(alignment.matched)
+  }, [expectedWords])
 
   const stop = useCallback(() => {
-    aliveRef.current = false
-    if (timerRef.current !== null) {
-      window.clearInterval(timerRef.current)
-      timerRef.current = null
+    keepAliveRef.current = false
+    if (restartTimerRef.current !== null) {
+      window.clearTimeout(restartTimerRef.current)
+      restartTimerRef.current = null
     }
-    recorderRef.current?.stop()
-    recorderRef.current = null
-    if (mediaRef.current && mediaRef.current.state !== 'inactive') {
-      mediaRef.current.stop()
+    const recognition = recognitionRef.current
+    recognitionRef.current = null
+    if (recognition) {
+      try { recognition.stop() } catch { /* recognition may already have ended */ }
     }
-    mediaRef.current = null
     setListening(false)
+    setStatus('stopped')
   }, [])
 
-  const startSpeech = useCallback(() => {
-    const recogniser = createRecogniser('ar-SA', {
-      onTranscript: (text) => {
-        if (aliveRef.current) accept(text)
-      },
-      onError: (code) => {
-        if (code === 'not-allowed' || code === 'service-not-allowed') {
-          setError('Microphone access was blocked. Allow it in the browser, then try again.')
-          stop()
-        } else if (code === 'no-speech') {
-          setError('I could not hear anything. Move closer to the mic.')
-        } else if (code !== 'aborted') {
-          setError(`The recogniser stopped (${code}).`)
-        }
-      },
-      onEnd: () => {
-        // Chrome ends the session after a pause; restart while the user is live.
-        if (aliveRef.current) {
-          try {
-            recogniser?.start()
-          } catch {
-            /* already restarting */
-          }
-        }
-      },
-    })
-    if (!recogniser) {
-      setError('This browser has no speech recogniser.')
+  const start = useCallback(() => {
+    if (keepAliveRef.current) return
+    setError(null)
+    setTranscript('')
+    setStates(blank)
+    setMatched(0)
+    setCursor(0)
+    setActiveIndex(-1)
+
+    if (typeof window === 'undefined' || !navigator.mediaDevices) {
+      setStatus('unavailable')
+      setError('Microphone capture is unavailable in this browser or page context.')
       return
     }
-    recorderRef.current = recogniser
-    recogniser.start()
-  }, [accept, stop])
 
-  const startCloud = useCallback(async () => {
-    let stream: MediaStream
+    const speechWindow = window as SpeechRecognitionWindow
+    const Recognition = speechWindow.SpeechRecognition || speechWindow.webkitSpeechRecognition
+    if (!Recognition) {
+      setStatus('unavailable')
+      setError('Live highlighting is not supported by this browser. No cloud-recognition service is configured, so audio will not be sent or falsely marked as recognized.')
+      return
+    }
+
+    let recognition: SpeechRecognitionLike
     try {
-      stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      recognition = new Recognition()
     } catch {
-      setError('Microphone access was blocked. Allow it in the browser, then try again.')
+      setStatus('error')
+      setError('This browser could not create a speech-recognition session.')
       return
     }
 
-    const recorder = new MediaRecorder(stream, { mimeType: pickMime() })
-    mediaRef.current = recorder
-    chunksRef.current = []
+    recognition.lang = 'ar-SA'
+    recognition.continuous = true
+    recognition.interimResults = true
+    recognitionRef.current = recognition
+    keepAliveRef.current = true
+    setStatus('connecting')
 
-    recorder.ondataavailable = (event) => {
-      if (event.data.size > 0) chunksRef.current.push(event.data)
-    }
-
-    const flush = async () => {
-      if (busyRef.current || !chunksRef.current.length) return
-      const blob = new Blob(chunksRef.current, { type: recorder.mimeType })
-      if (blob.size < 4000) return
-      busyRef.current = true
-      try {
-        const text = await transcribeArabic(blob, apiKey, model)
-        if (text && aliveRef.current) accept(text)
-      } catch {
-        /* a dropped tick is not fatal; the next one carries the audio */
-      } finally {
-        busyRef.current = false
+    recognition.onstart = () => {
+      if (keepAliveRef.current) {
+        setListening(true)
+        setStatus('listening')
       }
     }
 
-    recorder.start(500)
-    timerRef.current = window.setInterval(() => {
-      void flush()
-    }, CHUNK_MS)
-
-    recorder.onstop = () => {
-      stream.getTracks().forEach((t) => t.stop())
-      void flush()
+    recognition.onresult = (event) => {
+      if (!keepAliveRef.current) return
+      const chunks: string[] = []
+      for (let index = 0; index < event.results.length; index += 1) {
+        const result = event.results[index]
+        if (result?.[0]?.transcript) chunks.push(result[0].transcript)
+      }
+      const text = chunks.join(' ').trim()
+      if (text) acceptTranscript(text)
     }
-  }, [accept, apiKey, model])
 
-  const start = useCallback(() => {
-    if (listening) return
-    if (engine === 'none') {
-      setError(
-        apiKey
-          ? 'Live capture is unavailable in this browser.'
-          : 'Live capture needs Chrome or Edge, or a Gemini key in Settings for iPhone.',
-      )
-      return
+    recognition.onerror = (event) => {
+      if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
+        keepAliveRef.current = false
+        setListening(false)
+        setStatus('error')
+        setError('Microphone or speech-recognition permission was denied. Allow access in browser settings and try again.')
+      } else if (event.error === 'audio-capture') {
+        keepAliveRef.current = false
+        setListening(false)
+        setStatus('error')
+        setError('The browser could not access a microphone. Check iPad/browser microphone permissions.')
+      } else if (event.error === 'network') {
+        setStatus('error')
+        setError('The browser speech-recognition service lost its network connection. Stop and retry when online.')
+      } else if (event.error !== 'no-speech' && event.error !== 'aborted') {
+        setStatus('error')
+        setError(`Speech recognition failed (${event.error}). No words were inferred.`)
+      }
     }
-    setError(null)
-    aliveRef.current = true
-    setListening(true)
-    if (engine === 'speech') startSpeech()
-    else void startCloud()
-  }, [apiKey, engine, listening, startCloud, startSpeech])
 
-  useEffect(() => stop, [stop])
+    recognition.onend = () => {
+      if (recognitionRef.current !== recognition) return
+      if (!keepAliveRef.current) {
+        recognitionRef.current = null
+        setListening(false)
+        if (status !== 'error') setStatus('stopped')
+        return
+      }
+      // Some browser engines close recognition after pauses; show a reconnecting
+      // state and retry without claiming the recognizer stayed continuously live.
+      setListening(false)
+      setStatus('connecting')
+      restartTimerRef.current = window.setTimeout(() => {
+        restartTimerRef.current = null
+        if (!keepAliveRef.current || recognitionRef.current !== recognition) return
+        try { recognition.start() } catch {
+          keepAliveRef.current = false
+          recognitionRef.current = null
+          setStatus('error')
+          setError('The browser speech recognizer could not reconnect. Stop and start again.')
+        }
+      }, 350)
+    }
 
-  return { engine, listening, states, cursor, transcript, matched, error, start, stop, reset }
-}
+    try {
+      recognition.start()
+    } catch {
+      keepAliveRef.current = false
+      recognitionRef.current = null
+      setStatus('error')
+      setError('The browser could not start speech recognition. Check microphone permission and retry.')
+    }
+  }, [acceptTranscript, blank, status])
 
-function pickMime(): string {
-  const candidates = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg']
-  for (const type of candidates) {
-    if (typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(type)) return type
-  }
-  return ''
+  useEffect(() => () => {
+    keepAliveRef.current = false
+    if (restartTimerRef.current !== null) window.clearTimeout(restartTimerRef.current)
+    try { recognitionRef.current?.abort() } catch { /* unmount cleanup */ }
+    recognitionRef.current = null
+  }, [])
+
+  const engine: Engine = speechSupported() ? 'browser-speech' : 'unavailable'
+  const statusMessage = status === 'connecting'
+    ? 'Connecting to browser speech recognition…'
+    : status === 'listening'
+      ? 'Listening with browser Arabic speech recognition. Highlights reflect recognized transcript matches, not word timing.'
+      : status === 'stopped'
+        ? 'Stopped. Unhighlighted words may be recognition errors or unspoken; this is not a Tajweed assessment.'
+        : status === 'error'
+          ? error ?? 'Speech recognition failed.'
+          : status === 'unavailable'
+            ? error ?? 'Live recognition is unavailable.'
+            : 'Ready. Start to check whether this browser supports live Arabic speech recognition.'
+
+  return { engine, status, statusMessage, listening, states, cursor, activeIndex, transcript, matched, error, start, stop, reset }
 }
