@@ -63,44 +63,156 @@ def audio_part(b, mime):
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def list_models():
+    """Discover models available to this API key; keep a safe fallback."""
+    api_key = st.secrets.get("GEMINI_API_KEY", "")
+    if not api_key:
+        return ["gemini-2.5-flash"]
     try:
-        r = requests.get(API, headers={"x-goog-api-key": st.secrets["GEMINI_API_KEY"]}, params={"pageSize": 200}, timeout=20).json()
+        r = requests.get(
+            API,
+            headers={"x-goog-api-key": api_key},
+            params={"pageSize": 200},
+            timeout=15,
+        )
+        r.raise_for_status()
+        payload = r.json()
         bad = ("image", "tts", "live", "embed", "audio", "robotics", "computer")
-        return [m["name"].split("/")[-1] for m in r.get("models", [])
-                if "generateContent" in m.get("supportedGenerationMethods", []) and not any(x in m["name"] for x in bad)]
+        names = []
+        for model in payload.get("models", []):
+            name = model.get("name", "").split("/")[-1]
+            methods = model.get("supportedGenerationMethods", [])
+            if name and "generateContent" in methods and not any(x in name.lower() for x in bad):
+                names.append(name)
+        return names or ["gemini-2.5-flash"]
     except Exception:
-        return []
+        return ["gemini-2.5-flash"]
+
 
 def pick_models(pro):
+    """Prefer the strongest available model, then progressively cheaper fallbacks."""
     ms = list_models()
-    def ver(n):
-        v = re.findall(r"\d+(?:\.\d+)?", n); return float(v[0]) if v else 0
-    P = sorted([m for m in ms if "pro" in m], key=ver, reverse=True)
-    F = sorted([m for m in ms if "flash" in m and "lite" not in m], key=ver, reverse=True)
-    L = sorted([m for m in ms if "lite" in m], key=ver, reverse=True)
-    return ((P[:2] + F[:2] + L[:1]) if pro else (F[:2] + P[:1] + L[:1])) or ["gemini-3.8-flash"]
+
+    def version(name):
+        nums = re.findall(r"\d+(?:\.\d+)?", name)
+        return tuple(float(x) for x in nums[:2]) if nums else (0.0,)
+
+    pro_models = sorted(
+        [m for m in ms if "pro" in m.lower()],
+        key=version, reverse=True
+    )
+    flash_models = sorted(
+        [m for m in ms if "flash" in m.lower() and "lite" not in m.lower()],
+        key=version, reverse=True
+    )
+    lite_models = sorted(
+        [m for m in ms if "lite" in m.lower()],
+        key=version, reverse=True
+    )
+    ordered = (pro_models[:2] + flash_models[:3] + lite_models[:1]) if pro else (
+        flash_models[:3] + pro_models[:1] + lite_models[:1]
+    )
+    # Stable de-duplication; never use a made-up model identifier.
+    ordered = list(dict.fromkeys(ordered))
+    return ordered or ["gemini-2.5-flash"]
+
 
 def call_gemini(parts, expect_json=False, pro=False):
-    """Retries busy errors, then falls back through other models (best Pro first when pro=True)."""
-    h = {"x-goog-api-key": st.secrets["GEMINI_API_KEY"], "Content-Type": "application/json"}
-    p = {"contents": [{"parts": parts}]}
-    if expect_json: p["generationConfig"] = {"responseMimeType": "application/json"}
-    last = ""
-    for model in pick_models(pro):
-        for attempt in range(3):
-            r = requests.post(f"{API}/{model}:generateContent", json=p, headers=h, timeout=150)
-            if r.status_code == 200:
-                try: ps = r.json()["candidates"][0]["content"]["parts"]
-                except (KeyError, IndexError):
-                    last = f"{model}: empty response ({r.text[:120]})"; break
-                t = "".join(x.get("text", "") for x in ps if not x.get("thought")).strip()
-                if expect_json:
-                    return json.loads(re.sub(r"^```(?:json)?|```$", "", t).strip())
-                return t
-            last = f"{model} {r.status_code}: {r.text[:150]}"
-            if r.status_code in (429, 500, 503): time.sleep(2 ** attempt); continue
+    """
+    Call Gemini with bounded retries and clear quota/network errors.
+    This cannot bypass a provider's free-tier quota; it avoids wasting calls
+    against unavailable models and makes the failure understandable.
+    """
+    api_key = st.secrets.get("GEMINI_API_KEY", "")
+    if not api_key:
+        raise RuntimeError(
+            "Gemini API key is missing. Add GEMINI_API_KEY to Streamlit secrets."
+        )
+
+    headers = {
+        "x-goog-api-key": api_key,
+        "Content-Type": "application/json",
+    }
+    payload = {"contents": [{"parts": parts}]}
+    if expect_json:
+        payload["generationConfig"] = {"responseMimeType": "application/json"}
+
+    last_error = "No Gemini model was available."
+    models = pick_models(pro)
+    for model in models:
+        for attempt in range(2):
+            try:
+                response = requests.post(
+                    f"{API}/{model}:generateContent",
+                    json=payload,
+                    headers=headers,
+                    timeout=(15, 100),
+                )
+            except requests.RequestException as exc:
+                last_error = f"Network error calling {model}: {exc}"
+                break
+
+            if response.status_code == 200:
+                try:
+                    body = response.json()
+                    candidates = body.get("candidates") or []
+                    if not candidates:
+                        feedback = body.get("promptFeedback", {})
+                        last_error = (
+                            f"{model} returned no answer. "
+                            f"{feedback.get('blockReason', 'The response was empty.')}"
+                        )
+                        break
+                    response_parts = candidates[0].get("content", {}).get("parts", [])
+                    answer = "".join(
+                        part.get("text", "")
+                        for part in response_parts
+                        if not part.get("thought")
+                    ).strip()
+                    if not answer:
+                        last_error = f"{model} returned an empty answer."
+                        break
+                    if expect_json:
+                        cleaned = re.sub(
+                            r"^```(?:json)?\s*|\s*```$",
+                            "",
+                            answer,
+                            flags=re.IGNORECASE,
+                        ).strip()
+                        try:
+                            return json.loads(cleaned)
+                        except json.JSONDecodeError as exc:
+                            raise RuntimeError(
+                                "The AI returned an invalid structured response. "
+                                "Please retry; no result has been saved."
+                            ) from exc
+                    return answer
+                except (ValueError, KeyError, IndexError, TypeError) as exc:
+                    last_error = f"{model} returned an unreadable response: {exc}"
+                    break
+
+            try:
+                detail = response.json().get("error", {}).get("message", response.text[:240])
+            except Exception:
+                detail = response.text[:240]
+            last_error = f"{model} ({response.status_code}): {detail}"
+
+            # Retry transient server errors once. A quota error is not fixed by
+            # hammering the same endpoint, so move to the next available model.
+            if response.status_code in (500, 502, 503, 504) and attempt == 0:
+                time.sleep(1.5)
+                continue
             break
-    raise RuntimeError("Gemini is busy or unavailable right now. Try again shortly. " + last)
+
+    if "429" in last_error or "quota" in last_error.lower() or "resource_exhausted" in last_error.lower():
+        raise RuntimeError(
+            "The AI provider has temporarily reached this API key's usage limit. "
+            "Your lesson and saved chat remain available. Wait for the quota to reset, "
+            "or use an API key/plan with available capacity."
+        )
+    raise RuntimeError(
+        "The AI teacher could not complete this request. "
+        "Check your connection and API key, then retry. " + last_error
+    )
 
 def speak(text):
     try:
@@ -172,7 +284,11 @@ audio{width:100%;margin-top:18px}
 <script>
 const W=__WORDS__,a=document.getElementById('a'),box=document.getElementById('w');
 const els=W.map(w=>{const d=document.createElement('div');d.className='c';
-d.innerHTML='<div class="ar">'+w.ar+'</div><div class="tr">'+w.tr+'</div><div class="en">'+w.en+'</div>';box.appendChild(d);return d;});
+for (const [cls,val] of [['ar',w.ar],['tr',w.tr],['en',w.en]]) {
+  const node=document.createElement('div'); node.className=cls;
+  node.textContent=val || ''; d.appendChild(node);
+}
+box.appendChild(d);return d;});
 let cum=[];
 const L=w=>Math.max(1,w.ar.replace(/[\u064B-\u0652\u0670\u06D6-\u06ED\u0640]/g,'').length);function build(){const d=a.duration||1,l=d*.05,sp=d*.88,tot=W.reduce((s,w)=>s+L(w),0);let t=l;
 cum=W.map(w=>{t+=sp*L(w)/tot;return t;});}
@@ -547,8 +663,12 @@ else:
         st.radio("Theme", ["White", "Brown", "Night", "Black"], key="cfg_theme", horizontal=True)
 
     s, a = st.session_state.current_surah, st.session_state.current_ayah
+    st.caption("Your Quran study space · recitation, understanding, memorisation and revision")
     key, ref = f"{s}:{a}", f"Surah {s}, Ayah {a}"
     verse, words = fetch_verse(s, a), fetch_words(s, a)
+    if not verse:
+        st.error("The Qur’an text could not be loaded. Check your internet connection and try again.")
+        st.stop()
     audio_url, ref_mp3, reciter = fetch_reciter(s, a)
     listens = st.session_state.listens.get(key, 0)
 
@@ -592,6 +712,7 @@ else:
             st.markdown("#### Watch for")
             card("\n".join(f"{r} in “{w}”: {n}" for r, w, n in hs) + "\nHints come from the text of the ayah, not from your audio.")
         st.markdown("#### 🎙️ Talk to your teacher")
+        st.caption("Ask about the meaning, context, Arabic vocabulary, tajweed, memorisation or anything you are studying.")
         teacher_turn("t2", ctx_for(s, a, src), ref, verse, "chat")
 
     with t3:
@@ -625,7 +746,8 @@ else:
                 else:
                     st.session_state.last_analysis[key] = res
                     st.session_state.coach = []
-                    spoken = run_with_progress(lambda: speak(res.get("spoken_summary", "")), "Preparing voice", 6)
+                    if st.session_state.get("cfg_voice", True):
+                        spoken = run_with_progress(lambda: speak(res.get("spoken_summary", "")), "Preparing voice", 6)
             except Exception as e:
                 st.error(f"Analysis failed: {e}")
         res = st.session_state.last_analysis.get(key)
