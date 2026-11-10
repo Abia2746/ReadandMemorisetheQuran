@@ -1,6 +1,6 @@
-streamlit>=1.36,<2
-requests>=2.31
-numpy>=1.26
+streamlit>=1.40,<2
+requests>=2.31,<3
+numpy>=1.26,<3
+streamlit-mic-recorder>=0.0.8
 streamlit-webrtc>=0.47.0
 av>=10.0.0
-streamlit-mic-recorder
