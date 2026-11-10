@@ -15,11 +15,7 @@ from streamlit_mic_recorder import mic_recorder
 # ──────────────────────────────────────────────────────────────────────────────
 API = "https://generativelanguage.googleapis.com/v1beta/models"
 VOICE_ID = "pNInz6obpgDQGcFmaJgB"
-ASSETS = pathlib.Path(__file__).parent / "assets"
-
-# Aesthetic fallback if user hasn't provided images yet
-_FALLBACK_MALE = "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?auto=format&fit=crop&q=80&w=600&h=800"
-_FALLBACK_FEMALE = "https://images.unsplash.com/photo-1580489944761-15a19d654956?auto=format&fit=crop&q=80&w=600&h=800"
+ROOT = pathlib.Path(__file__).parent
 
 st.set_page_config(layout="wide", page_title="Al-Mu'allim", page_icon="🕌")
 
@@ -81,7 +77,7 @@ def pick_models(pro):
 
 def call_gemini(parts, expect_json=False, pro=False):
     api_key = get_secret("GEMINI_API_KEY")
-    if not api_key: raise RuntimeError("Gemini API key missing. Add GEMINI_API_KEY to Streamlit secrets.")
+    if not api_key: raise RuntimeError("Gemini API key missing.")
     
     headers = {"x-goog-api-key": api_key, "Content-Type": "application/json"}
     payload = {"contents": [{"parts": parts}]}
@@ -100,7 +96,7 @@ def call_gemini(parts, expect_json=False, pro=False):
                     body = response.json()
                     cands = body.get("candidates") or []
                     if not cands:
-                        last_error = f"{model} blocked: {body.get('promptFeedback', {}).get('blockReason', 'empty')}"
+                        last_error = f"{model} blocked."
                         break
                     rp = cands[0].get("content", {}).get("parts", [])
                     answer = "".join(p.get("text", "") for p in rp if not p.get("thought")).strip()
@@ -329,15 +325,15 @@ def teacher_portrait(state: str = "idle"):
     choice = st.session_state.get("cfg_teacher", "Female")
     name = "Omar" if choice == "Male" else "Noor"
     
-    # Try to load local assets, fallback to Unsplash if missing
-    img_name = "teacher_male.jpg" if choice == "Male" else "teacher_female.jpg"
-    p = ASSETS / img_name
+    # Your exact files
+    img_name = "IMG_6147.jpeg" if choice == "Male" else "IMG_6146.jpeg"
+    p = ROOT / img_name
+    
     if p.is_file():
         b = p.read_bytes()
-        mime = "image/png" if img_name.endswith(".png") else "image/jpeg"
-        img_src = f"data:{mime};base64,{base64.b64encode(b).decode()}"
+        img_src = f"data:image/jpeg;base64,{base64.b64encode(b).decode()}"
     else:
-        img_src = _FALLBACK_MALE if choice == "Male" else _FALLBACK_FEMALE
+        img_src = f"https://via.placeholder.com/460x575/2A221B/D4AF37?text=Missing+{img_name}"
 
     pill = ""
     if state in ["listening", "thinking"]:
@@ -383,7 +379,6 @@ els.forEach((e,k)=>e.classList.toggle('on',k===i));};
     return tpl.replace("__URL__", audio_url).replace("__WORDS__", json.dumps(payload, ensure_ascii=False))
 
 def feedback_html(words, states, rules):
-    # Tilawa-style inline glowing text with correctness indicators
     spans = []
     for i, (word, state) in enumerate(zip(words, states)):
         arabic = _h.escape(str(word.get("ar", "")))
@@ -431,7 +426,7 @@ if sb.button("Go to Ayah", use_container_width=True):
 with sb.expander("⚙️ Settings"):
     st.radio("Teacher", ["Female", "Male"], key="cfg_teacher", horizontal=True)
 
-# Layout Container (mimics mobile app width)
+# Layout Container
 st.markdown('<div style="max-width: 700px; margin: 0 auto; padding-top: 10px;">', unsafe_allow_html=True)
 
 s, a = st.session_state.current_surah, st.session_state.current_ayah
@@ -475,7 +470,6 @@ with t1:
 with t2:
     res = st.session_state.last_analysis.get(key)
     
-    # Text Display (Blurred if not analyzed yet, to encourage memory)
     if not res:
         st.markdown(f'<div class="ayah-text blur-text">{verse}</div>', unsafe_allow_html=True)
     else:
@@ -486,7 +480,6 @@ with t2:
         else:
             st.markdown(f'<div class="ayah-text">{verse}</div>', unsafe_allow_html=True)
 
-    # Native Mic Input
     st.markdown("<div style='text-align:center;color:var(--dim);margin:20px 0'>Tap below and recite from memory</div>", unsafe_allow_html=True)
     
     wav = None
