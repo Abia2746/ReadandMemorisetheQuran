@@ -1,4 +1,4 @@
-# app.py — Al-Mu'allim · Tilawa.ai Ultimate Parity Build
+# app.py — Al-Mu'allim · Ultimate Tilawa Parity Build
 import base64, json, re, time
 import html as _h
 import datetime, math, random, pathlib
@@ -28,7 +28,7 @@ _DEFAULTS = {
     "badges": [], "cfg_teacher": "Female", "cfg_theme": "Night",
     "cfg_style": "Warm & casual", "cfg_level": "Beginner", "cfg_detail": 2,
     "cfg_quality": "Best", "cfg_strict": "Standard", "cfg_gain": 12, "cfg_voice": True,
-    "deep_analysis": False,
+    "deep_analysis": False, "cfg_reciter": "Mishary Alafasy"
 }
 for k, v in _DEFAULTS.items():
     st.session_state.setdefault(k, v)
@@ -95,18 +95,13 @@ def call_gemini(parts, expect_json=False, pro=False):
                 try:
                     body = response.json()
                     cands = body.get("candidates") or []
-                    if not cands:
-                        last_error = f"{model} blocked."
-                        break
+                    if not cands: break
                     rp = cands[0].get("content", {}).get("parts", [])
                     answer = "".join(p.get("text", "") for p in rp if not p.get("thought")).strip()
-                    if not answer:
-                        last_error = f"{model} returned empty."
-                        break
+                    if not answer: break
                     if expect_json:
                         cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", answer, flags=re.IGNORECASE).strip()
-                        try:
-                            return json.loads(cleaned)
+                        try: return json.loads(cleaned)
                         except json.JSONDecodeError:
                             m = re.search(r"\{.*\}", cleaned, re.DOTALL)
                             if m:
@@ -117,7 +112,6 @@ def call_gemini(parts, expect_json=False, pro=False):
                 except Exception as exc:
                     last_error = f"{model} unreadable: {exc}"
                     break
-            last_error = f"{model} ({response.status_code}): {response.text[:200]}"
             if response.status_code in (500, 502, 503, 504) and attempt == 0:
                 time.sleep(1.5)
                 continue
@@ -152,16 +146,17 @@ def fetch_words(s, a):
     except: return []
 
 @st.cache_data(show_spinner=False)
-def fetch_reciter(s, a):
-    url = f"https://everyayah.com/data/Yasser_Ad-Dussary_128kbps/{s:03d}{a:03d}.mp3"
+def fetch_reciter(s, a, choice):
+    if choice == "Yasser Al-Dosari":
+        url = f"https://everyayah.com/data/Yasser_Ad-Dussary_128kbps/{s:03d}{a:03d}.mp3"
+    else:
+        url = f"https://everyayah.com/data/Alafasy_128kbps/{s:03d}{a:03d}.mp3"
+    
     try:
         r = requests.get(url, timeout=30)
-        if r.status_code == 200 and len(r.content) > 2000: return url, r.content, "Sheikh Yasser Al-Dosari"
+        if r.status_code == 200 and len(r.content) > 2000: return url, r.content, choice
     except: pass
-    try:
-        meta = requests.get(f"https://api.alquran.cloud/v1/ayah/{s}:{a}/ar.alafasy", timeout=15).json()["data"]["audio"]
-        return meta, requests.get(meta, timeout=30).content, "Mishary Alafasy"
-    except: return None, None, None
+    return None, None, None
 
 @st.cache_data(show_spinner=False)
 def fetch_ibn_kathir(s, a):
@@ -302,11 +297,20 @@ h1,h2,h3,h4{{font-family:'Cormorant Garamond',serif!important;font-weight:600!im
 div.stButton>button{{background:var(--glow)!important;color:#000!important;border-radius:999px!important;font-weight:600!important;min-height:44px;border:none!important;transition:transform .2s}}
 div.stButton>button:hover{{transform:scale(1.02)}}
 .glass{{background:var(--bg2)!important;border:1px solid var(--rule)!important;border-radius:20px!important;padding:18px 22px;margin:10px 0;box-shadow:0 8px 28px -12px rgba(0,0,0,.4)!important}}
+
+/* Word Cards */
+.word-grid{{display:flex;flex-wrap:wrap;gap:12px;justify-content:center;direction:rtl;padding:10px}}
+.word-card{{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:12px 18px;border-radius:16px;background:var(--bg2);border:1px solid var(--rule);transition:all .3s ease;min-width:100px}}
+.word-card .ar{{font-family:'Amiri Quran',serif;font-size:2.2rem;color:var(--word);line-height:1.4}}
+.word-card .tr{{font-size:0.8rem;color:var(--glow);font-style:italic;margin-top:6px;opacity:0.9}}
+.word-card .en{{font-size:0.9rem;color:var(--dim);margin-top:2px}}
+
+/* Elegant Highlight */
+.word-card.on{{box-shadow:0 0 20px rgba(212,175,55,.4);border-color:var(--glow);transform:translateY(-3px) scale(1.05);background:var(--wash)}}
+.word-card.correct{{border-color:var(--ok);box-shadow:0 0 15px rgba(74,222,128,.2)}}
+.word-card.missed{{border-color:var(--bad);box-shadow:0 0 15px rgba(248,113,113,.2)}}
+
 .ayah-text{{font-family:'Amiri Quran',serif;font-size:3.2rem;line-height:2.4;direction:rtl;text-align:center;padding:20px;letter-spacing:1px;word-wrap:break-word}}
-.ayah-text span{{position:relative;display:inline-block;transition:all .3s;border-radius:8px;padding:0 4px;margin:0 2px}}
-.ayah-text span.highlight{{background:var(--wash);color:var(--glow);text-shadow:0 0 12px var(--wash)}}
-.ayah-text span.correct{{color:var(--ok);border-bottom:2px solid var(--ok)}}
-.ayah-text span.missed{{color:var(--bad);border-bottom:2px solid var(--bad)}}
 .tw-tag{{display:inline-flex;align-items:center;gap:6px;padding:6px 14px;border-radius:999px;background:var(--bg2);border:1px solid var(--rule);font-size:.85rem;font-weight:500;margin:4px}}
 .tw-dot{{width:8px;height:8px;border-radius:50%}}
 .portrait-container{{position:relative;width:100%;max-width:460px;margin:0 auto;border-radius:32px;overflow:hidden;box-shadow:0 0 60px var(--wash);aspect-ratio: 4/5;display:flex;justify-content:center;align-items:center;background:#000}}
@@ -316,8 +320,6 @@ div.stButton>button:hover{{transform:scale(1.02)}}
 .wave-bar span{{display:block;width:3px;background:var(--glow);border-radius:2px;animation:wave 1.2s ease-in-out infinite}}
 .wave-bar span:nth-child(1){{height:8px;animation-delay:0s}} .wave-bar span:nth-child(2){{height:16px;animation-delay:.2s}} .wave-bar span:nth-child(3){{height:10px;animation-delay:.4s}} .wave-bar span:nth-child(4){{height:14px;animation-delay:.1s}} .wave-bar span:nth-child(5){{height:6px;animation-delay:.3s}}
 @keyframes wave{{0%,100%{{transform:scaleY(.5);opacity:.5}}50%{{transform:scaleY(1);opacity:1}}}}
-.recite-btn{{background:linear-gradient(90deg, #D4AF37, #F3E5AB, #D4AF37);background-size:200% auto;color:#000!important;border:none!important;border-radius:999px!important;padding:16px!important;font-size:1.1rem!important;font-weight:700!important;width:100%;animation:shine 3s linear infinite;box-shadow:0 0 20px rgba(212,175,55,.4)}}
-@keyframes shine{{to{{background-position:200% center}}}}
 .blur-text{{filter:blur(12px);user-select:none;opacity:0.6;transition:filter .4s}}
 </style>""", unsafe_allow_html=True)
 
@@ -352,21 +354,28 @@ def _data_uri(b, mime="audio/mpeg"):
 
 def player_html(words, audio_url):
     payload = [{"ar": w.get("ar", ""), "tr": w.get("tr", ""), "en": w.get("en", "")} for w in words]
-    t = {"word": "#E8D5B5", "glow": "#D4AF37", "wash": "rgba(212,175,55,.15)"}
+    t = {"word": "#E8D5B5", "glow": "#D4AF37", "wash": "rgba(212,175,55,.15)", "bg2": "#2A221B", "rule": "rgba(212,175,55,.15)", "dim": "#8A7A66"}
     
     tpl = r"""
 <style>
-body{margin:0;font-family:'Amiri Quran',serif;background:transparent;display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh}
-#text{font-size:2.6rem;line-height:2.2;direction:rtl;text-align:center;color:__WORD__;padding:20px;max-width:900px}
-span{transition:all .2s;display:inline-block;padding:0 4px;border-radius:8px;margin:0 2px}
-span.on{background:__WASH__;color:__GLOW__;text-shadow:0 0 16px __WASH__}
-audio{width:80%;max-width:600px;margin-top:30px;border-radius:999px;outline:none;filter:drop-shadow(0 8px 16px rgba(0,0,0,.4))}
-audio::-webkit-media-controls-panel{background-color:__WASH__}
+body{margin:0;font-family:Inter,system-ui,sans-serif;background:transparent;color:__WORD__}
+#w{display:flex;flex-wrap:wrap;gap:12px;justify-content:center;direction:rtl;padding:10px}
+.word-card{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:12px 18px;border-radius:16px;background:__BG2__;border:1px solid __RULE__;transition:all .3s ease;min-width:100px}
+.word-card .ar{font-family:'Amiri Quran',serif;font-size:2.2rem;color:__WORD__;line-height:1.4}
+.word-card .tr{font-size:0.8rem;color:__GLOW__;font-style:italic;margin-top:6px;opacity:0.9}
+.word-card .en{font-size:0.9rem;color:__DIM__;margin-top:2px}
+.word-card.on{box-shadow:0 0 20px rgba(212,175,55,.4);border-color:__GLOW__;transform:translateY(-3px) scale(1.05);background:__WASH__}
+audio{width:100%;margin-top:20px;border-radius:999px;outline:none;filter:drop-shadow(0 8px 16px rgba(0,0,0,.4))}
+audio::-webkit-media-controls-panel{background-color:__BG2__}
 </style>
-<div id="text"></div><audio id="a" controls src="__URL__"></audio>
+<div id="w"></div><audio id="a" controls src="__URL__"></audio>
 <script>
-const W=__WORDS__,a=document.getElementById('a'),box=document.getElementById('text');
-const els=W.map(w=>{const s=document.createElement('span');s.textContent=w.ar;box.appendChild(s);return s;});
+const W=__WORDS__,a=document.getElementById('a'),box=document.getElementById('w');
+const els=W.map(w=>{
+    const d=document.createElement('div');d.className='word-card';
+    d.innerHTML=`<div class="ar">${w.ar}</div><div class="tr">${w.tr}</div><div class="en">${w.en}</div>`;
+    box.appendChild(d);return d;
+});
 let cum=[]; const L=w=>Math.max(1,(w.ar||'').replace(/[\u064B-\u0652\u0670\u06D6-\u06ED\u0640]/g,'').length);
 function build(){const d=a.duration||1,l=d*.05,sp=d*.88,tot=W.reduce((s,w)=>s+L(w),0);let t=l;
 cum=W.map(w=>{t+=sp*L(w)/tot;return t;});}
@@ -374,17 +383,20 @@ a.onloadedmetadata=build;
 a.ontimeupdate=()=>{if(!cum.length)build();const t=a.currentTime;let i=cum.findIndex(c=>t<c);if(a.ended)i=-1;
 els.forEach((e,k)=>e.classList.toggle('on',k===i));};
 </script>"""
-    for k, v in {"__WORD__": t["word"], "__GLOW__": t["glow"], "__WASH__": t["wash"]}.items():
+    for k, v in {"__WORD__": t["word"], "__GLOW__": t["glow"], "__WASH__": t["wash"], "__BG2__": t["bg2"], "__RULE__": t["rule"], "__DIM__": t["dim"]}.items():
         tpl = tpl.replace(k, v)
     return tpl.replace("__URL__", audio_url).replace("__WORDS__", json.dumps(payload, ensure_ascii=False))
 
 def feedback_html(words, states, rules):
-    spans = []
+    cards = []
     for i, (word, state) in enumerate(zip(words, states)):
         arabic = _h.escape(str(word.get("ar", "")))
+        tr = _h.escape(str(word.get("tr", "")))
+        en = _h.escape(str(word.get("en", "")))
         cls = state if state in ["correct", "missed"] else ""
-        spans.append(f'<span class="{cls}">{arabic}</span>')
-    text = " ".join(spans)
+        cards.append(f'<div class="word-card {cls}"><div class="ar">{arabic}</div><div class="tr">{tr}</div><div class="en">{en}</div></div>')
+    
+    grid = '<div class="word-grid" dir="rtl">' + "".join(cards) + '</div>'
     
     tags = []
     for r in rules:
@@ -394,7 +406,7 @@ def feedback_html(words, states, rules):
         tag = f'<div class="tw-tag"><div class="tw-dot" style="background:{color}"></div>{r.get("rule","")} <span style="color:{color};margin-left:4px">{icon}</span></div>'
         tags.append(tag)
     
-    return f'<div class="ayah-text">{text}</div>' + '<div style="display:flex;flex-wrap:wrap;justify-content:center;margin-top:10px">' + "".join(tags) + '</div>'
+    return grid + '<div style="display:flex;flex-wrap:wrap;justify-content:center;margin-top:15px">' + "".join(tags) + '</div>'
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Main UI
@@ -423,8 +435,17 @@ if sb.button("Go to Ayah", use_container_width=True):
     st.session_state.chat = []
     st.rerun()
 
-with sb.expander("⚙️ Settings"):
-    st.radio("Teacher", ["Female", "Male"], key="cfg_teacher", horizontal=True)
+with sb.expander("⚙️ Teacher Settings"):
+    st.selectbox("Reciter", ["Mishary Alafasy", "Yasser Al-Dosari"], key="cfg_reciter")
+    st.selectbox("Teacher Style", ["Warm & casual", "Classical scholar", "Concise coach"], key="cfg_style")
+    st.selectbox("My Level", ["Beginner", "Intermediate", "Advanced"], key="cfg_level")
+    st.select_slider("Answer Detail", options=[1, 2, 3], value=2, format_func=lambda x: {1: "Short", 2: "Medium", 3: "Detailed"}[x], key="cfg_detail")
+    st.radio("Answer Quality", ["Best", "Fast"], key="cfg_quality", horizontal=True)
+    st.select_slider("Recitation Strictness", options=["Gentle", "Standard", "Strict"], value="Standard", key="cfg_strict")
+    st.slider("Mic Boost (max x)", 1, 30, 12, key="cfg_gain")
+    st.toggle("Spoken Replies", True, key="cfg_voice")
+    st.radio("Study Companion", ["Female", "Male"], key="cfg_teacher", horizontal=True)
+    st.toggle("Per-Letter Tajweed", False, key="deep_analysis")
 
 # Layout Container
 st.markdown('<div style="max-width: 700px; margin: 0 auto; padding-top: 10px;">', unsafe_allow_html=True)
@@ -438,7 +459,7 @@ if not verse:
     st.error("Network error loading Qur'an text.")
     st.stop()
 
-audio_url, ref_mp3, reciter = fetch_reciter(s, a)
+audio_url, ref_mp3, reciter = fetch_reciter(s, a, st.session_state.cfg_reciter)
 tafsir_src = fetch_ibn_kathir(s, a)
 
 # Top Header
@@ -452,9 +473,9 @@ t1, t2, t3 = st.tabs(["Study", "Recite", "Chat"])
 
 # ─── TAB 1: STUDY ───
 with t1:
-    st.markdown("<div style='text-align:center;color:var(--glow);margin-bottom:10px'>Listen to the reference</div>", unsafe_allow_html=True)
+    st.markdown(f"<div style='text-align:center;color:var(--glow);margin-bottom:10px'>Reciter: {reciter}</div>", unsafe_allow_html=True)
     if audio_url and words:
-        components.html(player_html(words, _data_uri(ref_mp3)), height=400)
+        components.html(player_html(words, _data_uri(ref_mp3)), height=420)
     
     st.divider()
     if st.button("📖 Generate Tafsir", use_container_width=True):
