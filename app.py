@@ -28,7 +28,7 @@ _DEFAULTS = {
     "badges": [], "cfg_teacher": "Female", "cfg_theme": "Night",
     "cfg_style": "Warm & casual", "cfg_level": "Beginner", "cfg_detail": 2,
     "cfg_quality": "Best", "cfg_strict": "Standard", "cfg_gain": 12, "cfg_voice": True,
-    "deep_analysis": False, "cfg_reciter": "Mishary Alafasy", "conceal_text": True
+    "deep_analysis": False, "cfg_reciter": "Mishary Alafasy", "mem_step": 0, "mem_listens": 0
 }
 for k, v in _DEFAULTS.items():
     st.session_state.setdefault(k, v)
@@ -324,6 +324,21 @@ div.stButton>button:hover{{transform:scale(1.02)}}
 @keyframes wave{{0%,100%{{transform:scaleY(.5);opacity:.5}}50%{{transform:scaleY(1);opacity:1}}}}
 .blur-text{{filter:blur(12px);user-select:none;opacity:0.6;transition:filter .4s}}
 
+/* 3D Stars Background for Memorization */
+.stars-bg {{
+    position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
+    background: radial-gradient(circle at center, #1A1510 0%, #0a0805 100%);
+    overflow: hidden; z-index: -1; perspective: 1000px;
+}}
+.stars-bg .star {{
+    position: absolute; width: 2px; height: 2px; background: white;
+    border-radius: 50%; box-shadow: 0 0 10px white; animation: moveStars 20s linear infinite;
+}}
+@keyframes moveStars {{
+    from {{ transform: translateZ(0px); }}
+    to {{ transform: translateZ(1000px); }}
+}}
+
 /* Tilawa-style Mic Button */
 .mic-container div[data-testid="stAudioInput"] {{
     background: linear-gradient(135deg, #D4AF37, #F3E5AB, #D4AF37) !important;
@@ -376,13 +391,12 @@ def _data_uri(b, mime="audio/mpeg"):
 
 def player_html(words, audio_url):
     payload = [{"ar": w.get("ar", ""), "tr": w.get("tr", ""), "en": w.get("en", "")} for w in words]
-    t = {"word": "#E8D5B5", "glow": "#D4AF37", "wash": "rgba(212,175,55,.15)", "bg2": "#2A221B", "rule": "rgba(212,175,55,.15)", "dim": "#8A7A66", "bg": "#1A1510"}
+    t = {"word": "#E8D5B5", "glow": "#D4AF37", "wash": "rgba(212,175,55,.15)", "bg2": "#2A221B", "rule": "rgba(212,175,55,.15)", "dim": "#8A7A66"}
     
     tpl = r"""
 <style>
-body{margin:0;font-family:Inter,system-ui,sans-serif;background:transparent;color:__WORD__;padding-bottom:80px;}
-#audio-container{position:fixed;bottom:0;left:0;width:100%;background:rgba(26,21,16,0.95);backdrop-filter:blur(10px);padding:15px 10px;z-index:1000;border-top:1px solid __RULE__;display:flex;justify-content:center;}
-audio{width:100%;max-width:600px;border-radius:999px;outline:none;box-shadow:0 4px 12px rgba(0,0,0,.5);}
+body{margin:0;font-family:Inter,system-ui,sans-serif;background:transparent;color:__WORD__;}
+audio{width:100%;max-width:600px;margin:15px auto 0 auto;border-radius:999px;outline:none;filter:drop-shadow(0 4px 12px rgba(0,0,0,.3));display:block;}
 audio::-webkit-media-controls-panel{background-color:__BG2__;}
 #w{display:flex;flex-wrap:wrap;gap:12px;justify-content:center;direction:rtl;padding:10px;}
 .word-card{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:12px 18px;border-radius:16px;background:__BG2__;border:1px solid __RULE__;transition:all .3s ease;min-width:100px;}
@@ -392,9 +406,7 @@ audio::-webkit-media-controls-panel{background-color:__BG2__;}
 .word-card.on{box-shadow:0 0 20px rgba(212,175,55,.4);border-color:__GLOW__;transform:translateY(-3px) scale(1.05);background:__WASH__;}
 </style>
 <div id="w"></div>
-<div id="audio-container">
-    <audio id="a" controls src="__URL__"></audio>
-</div>
+<audio id="a" controls src="__URL__"></audio>
 <script>
 const W=__WORDS__,a=document.getElementById('a'),box=document.getElementById('w');
 const els=W.map(w=>{
@@ -402,14 +414,27 @@ const els=W.map(w=>{
     d.innerHTML=`<div class="ar">${w.ar}</div><div class="tr">${w.tr}</div><div class="en">${w.en}</div>`;
     box.appendChild(d);return d;
 });
-let cum=[]; const L=w=>Math.max(1,(w.ar||'').replace(/[\u064B-\u0652\u0670\u06D6-\u06ED\u0640]/g,'').length);
-function build(){const d=a.duration||1,l=d*.05,sp=d*.88,tot=W.reduce((s,w)=>s+L(w),0);let t=l;
-cum=W.map(w=>{t+=sp*L(w)/tot;return t;});}
+let cum=[]; 
+const L=w=>Math.max(1,(w.ar||'').replace(/[\u064B-\u0652\u0670\u06D6-\u06ED\u0640]/g,'').length);
+function build(){
+    const d=a.duration||1, l=d*.05, sp=d*.88, tot=W.reduce((s,w)=>s+L(w),0); let t=l;
+    cum=W.map(w=>{
+        let weight = L(w);
+        // Add pause weight for Waqf marks
+        if (/[\u06D6-\u06ED]/.test(w.ar)) weight += 4;
+        t += sp*weight/tot; return t;
+    });
+}
 a.onloadedmetadata=build;
-a.ontimeupdate=()=>{if(!cum.length)build();const t=a.currentTime;let i=cum.findIndex(c=>t<c);if(a.ended)i=-1;
-els.forEach((e,k)=>e.classList.toggle('on',k===i));};
+function updateHighlight(){
+    if(a.paused || a.ended){return;}
+    const t=a.currentTime; let i=cum.findIndex(c=>t<c); if(a.ended)i=-1;
+    els.forEach((e,k)=>e.classList.toggle('on',k===i));
+    requestAnimationFrame(updateHighlight);
+}
+a.addEventListener('play', () => requestAnimationFrame(updateHighlight));
 </script>"""
-    for k, v in {"__WORD__": t["word"], "__GLOW__": t["glow"], "__WASH__": t["wash"], "__BG2__": t["bg2"], "__RULE__": t["rule"], "__DIM__": t["dim"], "__BG__": t["bg"]}.items():
+    for k, v in {"__WORD__": t["word"], "__GLOW__": t["glow"], "__WASH__": t["wash"], "__BG2__": t["bg2"], "__RULE__": t["rule"], "__DIM__": t["dim"]}.items():
         tpl = tpl.replace(k, v)
     return tpl.replace("__URL__", audio_url).replace("__WORDS__", json.dumps(payload, ensure_ascii=False))
 
@@ -459,6 +484,7 @@ ai = sb.number_input("Ayah", 1, 286, st.session_state.current_ayah)
 if sb.button("Go to Ayah", use_container_width=True):
     st.session_state.current_surah, st.session_state.current_ayah = si, ai
     st.session_state.chat = []
+    st.session_state.mem_step = 0
     st.rerun()
 
 with sb.expander("⚙️ Teacher Settings"):
@@ -495,15 +521,15 @@ st.markdown(f"<h2 style='text-align:center;margin-top:-5px'>{ref}</h2>", unsafe_
 # Portrait
 teacher_portrait("idle")
 
-t1, t2, t3 = st.tabs(["Study", "Recite", "Chat"])
+t1, t2, t3 = st.tabs(["Study", "Memorise", "Chat"])
 
 # ─── TAB 1: STUDY ───
 with t1:
     st.markdown(f"<div style='text-align:center;color:var(--glow);margin-bottom:10px'>Reciter: {reciter}</div>", unsafe_allow_html=True)
     if audio_url and words:
-        # Calculate exact height needed based on number of words (approx 3 cards per row)
+        # Exact dynamic height calculation for tight spacing
         rows = math.ceil(len(words) / 3)
-        iframe_height = max(400, rows * 140 + 100)
+        iframe_height = max(250, rows * 130 + 80)
         components.html(player_html(words, _data_uri(ref_mp3)), height=iframe_height, scrolling=False)
     
     st.divider()
@@ -516,71 +542,132 @@ with t1:
     if key in st.session_state.tafsir_text:
         st.markdown(f'<div class="glass">{_h.escape(st.session_state.tafsir_text[key])}</div>', unsafe_allow_html=True)
 
-# ─── TAB 2: RECITE ───
+# ─── TAB 2: MEMORISE (Advanced System) ───
 with t2:
-    res = st.session_state.last_analysis.get(key)
+    st.markdown('<div class="stars-bg"></div>', unsafe_allow_html=True)
     
-    # Tilawa-style toggle
-    st.markdown("<div style='display:flex; justify-content:center; margin-bottom:20px'>", unsafe_allow_html=True)
-    st.toggle("Recite from memory", value=True, key="conceal_text")
-    st.markdown("</div>", unsafe_allow_html=True)
+    # Phase 1: Listen 5 times
+    if st.session_state.mem_step == 0:
+        st.markdown("<div style='text-align:center;color:var(--gold);font-size:1.5rem;margin-bottom:20px'>Step 1: Listen carefully 5 times</div>", unsafe_allow_html=True)
+        if audio_url and words:
+            components.html(player_html(words, _data_uri(ref_mp3)), height=250, scrolling=False)
+        
+        st.markdown(f"<div style='text-align:center;margin-top:20px;color:var(--dim)'>Listen count: {st.session_state.mem_listens} / 5</div>", unsafe_allow_html=True)
+        
+        col1, col2 = st.columns(2)
+        if col1.button("✅ I listened once", use_container_width=True):
+            st.session_state.mem_listens += 1
+            if st.session_state.mem_listens >= 5:
+                st.session_state.mem_step = 1
+                st.session_state.mem_listens = 0
+            st.rerun()
+        if col2.button("Skip to Reciting", use_container_width=True):
+            st.session_state.mem_step = 1
+            st.rerun()
 
-    if not res:
-        if st.session_state.conceal_text:
-            st.markdown(f'<div class="ayah-text blur-text">{verse}</div>', unsafe_allow_html=True)
-        else:
-            st.markdown(f'<div class="ayah-text">{verse}</div>', unsafe_allow_html=True)
-    else:
-        m_ = res.get("match")
-        if m_ and words:
-            st.markdown(feedback_html(words, m_["states"], res.get("rules_check", [])), unsafe_allow_html=True)
+    # Phase 2: English Hints + Recite
+    elif st.session_state.mem_step == 1:
+        st.markdown("<div style='text-align:center;color:var(--gold);font-size:1.5rem;margin-bottom:20px'>Step 2: Recite using English hints</div>", unsafe_allow_html=True)
+        
+        res = st.session_state.last_analysis.get(key)
+        
+        if res:
+            st.markdown(feedback_html(words, res["match"]["states"], res.get("rules_check", [])), unsafe_allow_html=True)
             st.markdown(f"""
-            <div style='display:flex; justify-content:center; margin:30px 0;'>
+            <div style='display:flex; justify-content:center; margin:20px 0;'>
                 <div style='background:var(--wash); border:2px solid var(--glow); border-radius:50%; width:100px; height:100px; display:flex; align-items:center; justify-content:center; flex-direction:column; box-shadow:0 0 30px rgba(212,175,55,0.5)'>
                     <span style='font-size:2rem; font-weight:800; color:var(--glow)'>{res.get('overall_score',0)}%</span>
                 </div>
             </div>
             """, unsafe_allow_html=True)
+            if st.button("Next Step (Repeat x5)", use_container_width=True, type="primary"):
+                st.session_state.mem_step = 2
+                st.rerun()
         else:
-            st.markdown(f'<div class="ayah-text">{verse}</div>', unsafe_allow_html=True)
+            # Show English hints with blank Arabic boxes
+            cards = []
+            for word in words:
+                en = _h.escape(str(word.get("en", "")))
+                cards.append(f'<div class="word-card" style="border-color:var(--rule); background:rgba(255,255,255,0.02)"><div class="ar" style="color:var(--dim); letter-spacing: 5px;">___</div><div class="en">{en}</div></div>')
+            st.markdown('<div class="word-grid" dir="rtl">' + "".join(cards) + '</div>', unsafe_allow_html=True)
 
-    st.markdown("""
-    <div style='text-align:center; color:var(--dim); margin:20px 0 10px; font-size:1.1rem'>
-        🎙️ Tap below and recite from memory
-    </div>
-    """, unsafe_allow_html=True)
-    
-    # Tilawa-style Mic Button (Centered and glowing)
-    st.markdown('<div class="mic-container">', unsafe_allow_html=True)
-    wav = None
-    if hasattr(st, "audio_input"):
-        clip = st.audio_input("Recite", label_visibility="collapsed")
-        if clip: wav = boost(_valid_wav(clip.getvalue()))[0]
-    else:
-        m = mic_recorder(start_prompt="🎙️ Tap to recite", stop_prompt="⏹️ Send", key="recite", just_once=True, format="wav")
-        if m: wav = boost(m["bytes"])[0]
-    st.markdown('</div>', unsafe_allow_html=True)
-    
-    if wav and ref_mp3:
-        teacher_portrait("thinking")
-        with st.spinner("Analyzing your recitation..."):
-            try:
-                heard = transcribe(wav, arabic=True)
-                if not heard: st.warning("I couldn't hear the recitation.")
-                else:
-                    rules = tajweed_rules(verse)
-                    r = analyse(verse, ref_mp3, wav, reciter, rules, heard)
-                    r["match"] = match_report([w["ar"] for w in words], heard)
-                    st.session_state.last_analysis[key] = r
-            except Exception as e:
-                st.error(f"Analysis error: {e}")
-        teacher_portrait("idle")
-        st.rerun()
-    
-    if res:
-        if st.button("Try Again", use_container_width=True, type="primary"):
-            st.session_state.last_analysis.pop(key, None)
+            st.markdown("<div style='text-align:center; color:var(--dim); margin:20px 0; font-size:1.1rem'>🎙️ Recite the verse</div>", unsafe_allow_html=True)
+            
+            st.markdown('<div class="mic-container">', unsafe_allow_html=True)
+            wav = None
+            if hasattr(st, "audio_input"):
+                clip = st.audio_input("Recite", label_visibility="collapsed")
+                if clip: wav = boost(_valid_wav(clip.getvalue()))[0]
+            st.markdown('</div>', unsafe_allow_html=True)
+            
+            if wav and ref_mp3:
+                teacher_portrait("thinking")
+                with st.spinner("Analyzing..."):
+                    try:
+                        heard = transcribe(wav, arabic=True)
+                        if heard:
+                            rules = tajweed_rules(verse)
+                            r = analyse(verse, ref_mp3, wav, reciter, rules, heard)
+                            r["match"] = match_report([w["ar"] for w in words], heard)
+                            st.session_state.last_analysis[key] = r
+                    except Exception as e: st.error(e)
+                teacher_portrait("idle")
+                st.rerun()
+
+    # Phase 3: Repeat x5
+    elif st.session_state.mem_step == 2:
+        st.markdown("<div style='text-align:center;color:var(--gold);font-size:1.5rem;margin-bottom:20px'>Step 3: Repeat x5 (Audio only)</div>", unsafe_allow_html=True)
+        if audio_url:
+            components.html(player_html(words, _data_uri(ref_mp3)), height=100, scrolling=False)
+        
+        st.markdown(f"<div style='text-align:center;margin-top:20px;color:var(--dim)'>Repeats: {st.session_state.mem_listens} / 5</div>", unsafe_allow_html=True)
+        col1, col2 = st.columns(2)
+        if col1.button("✅ Repeated once", use_container_width=True):
+            st.session_state.mem_listens += 1
+            if st.session_state.mem_listens >= 5:
+                st.session_state.mem_step = 3
+                st.session_state.mem_listens = 0
             st.rerun()
+        if col2.button("Next Step (Blind)", use_container_width=True):
+            st.session_state.mem_step = 3
+            st.rerun()
+
+    # Phase 4: Final Blind Round
+    elif st.session_state.mem_step == 3:
+        st.markdown("<div style='text-align:center;color:var(--gold);font-size:1.5rem;margin-bottom:20px'>Step 4: Final Blind Recitation</div>", unsafe_allow_html=True)
+        
+        res = st.session_state.last_analysis.get(key)
+        if res:
+            st.markdown(feedback_html(words, res["match"]["states"], res.get("rules_check", [])), unsafe_allow_html=True)
+            if st.button("Restart Memorisation", use_container_width=True):
+                st.session_state.mem_step = 0
+                st.session_state.last_analysis.pop(key, None)
+                st.rerun()
+        else:
+            cards = []
+            for word in words:
+                cards.append(f'<div class="word-card" style="border-color:var(--rule); background:rgba(255,255,255,0.02)"><div class="ar" style="color:var(--dim); letter-spacing: 5px;">___</div></div>')
+            st.markdown('<div class="word-grid" dir="rtl">' + "".join(cards) + '</div>', unsafe_allow_html=True)
+
+            st.markdown("<div style='text-align:center; color:var(--dim); margin:20px 0; font-size:1.1rem'>🎙️ Final blind recitation</div>", unsafe_allow_html=True)
+            st.markdown('<div class="mic-container">', unsafe_allow_html=True)
+            wav = None
+            if hasattr(st, "audio_input"):
+                clip = st.audio_input("Recite", label_visibility="collapsed")
+                if clip: wav = boost(_valid_wav(clip.getvalue()))[0]
+            st.markdown('</div>', unsafe_allow_html=True)
+            
+            if wav and ref_mp3:
+                with st.spinner("Analyzing final round..."):
+                    try:
+                        heard = transcribe(wav, arabic=True)
+                        if heard:
+                            rules = tajweed_rules(verse)
+                            r = analyse(verse, ref_mp3, wav, reciter, rules, heard)
+                            r["match"] = match_report([w["ar"] for w in words], heard)
+                            st.session_state.last_analysis[key] = r
+                    except Exception as e: st.error(e)
+                st.rerun()
 
 # ─── TAB 3: CHAT ───
 with t3:
