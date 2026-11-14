@@ -28,7 +28,7 @@ _DEFAULTS = {
     "badges": [], "cfg_teacher": "Female", "cfg_theme": "Night",
     "cfg_style": "Warm & casual", "cfg_level": "Beginner", "cfg_detail": 2,
     "cfg_quality": "Best", "cfg_strict": "Standard", "cfg_gain": 12, "cfg_voice": True,
-    "deep_analysis": False, "cfg_reciter": "Mishary Alafasy"
+    "deep_analysis": False, "cfg_reciter": "Mishary Alafasy", "conceal_text": True
 }
 for k, v in _DEFAULTS.items():
     st.session_state.setdefault(k, v)
@@ -313,14 +313,36 @@ div.stButton>button:hover{{transform:scale(1.02)}}
 .ayah-text{{font-family:'Amiri Quran',serif;font-size:3.2rem;line-height:2.4;direction:rtl;text-align:center;padding:20px;letter-spacing:1px;word-wrap:break-word}}
 .tw-tag{{display:inline-flex;align-items:center;gap:6px;padding:6px 14px;border-radius:999px;background:var(--bg2);border:1px solid var(--rule);font-size:.85rem;font-weight:500;margin:4px}}
 .tw-dot{{width:8px;height:8px;border-radius:50%}}
-.portrait-container{{position:relative;width:100%;max-width:460px;margin:0 auto;border-radius:32px;overflow:hidden;box-shadow:0 0 60px var(--wash);aspect-ratio: 4/5;display:flex;justify-content:center;align-items:center;background:#000}}
-.portrait-img{{width:100%;height:100%;object-fit:cover;object-position:center 15%;transition:filter .5s;opacity:0.85}}
+
+/* Portrait */
+.portrait-container{{position:relative;width:100%;max-width:380px;margin:0 auto 20px;border-radius:32px;overflow:hidden;box-shadow:0 0 40px var(--wash);aspect-ratio: 3/4;background:#000}}
+.portrait-img{{width:100%;height:100%;object-fit:cover;object-position:center 25%;opacity:0.9}}
 .listening-pill{{position:absolute;top:24px;left:50%;transform:translateX(-50%);background:rgba(20,15,10,.7);backdrop-filter:blur(12px);border:1px solid var(--rule);border-radius:999px;padding:10px 20px;display:flex;align-items:center;gap:12px;color:var(--word);font-weight:500;z-index:10;box-shadow:0 8px 32px rgba(0,0,0,.5)}}
 .wave-bar{{display:flex;gap:3px;align-items:center;height:16px}}
 .wave-bar span{{display:block;width:3px;background:var(--glow);border-radius:2px;animation:wave 1.2s ease-in-out infinite}}
 .wave-bar span:nth-child(1){{height:8px;animation-delay:0s}} .wave-bar span:nth-child(2){{height:16px;animation-delay:.2s}} .wave-bar span:nth-child(3){{height:10px;animation-delay:.4s}} .wave-bar span:nth-child(4){{height:14px;animation-delay:.1s}} .wave-bar span:nth-child(5){{height:6px;animation-delay:.3s}}
 @keyframes wave{{0%,100%{{transform:scaleY(.5);opacity:.5}}50%{{transform:scaleY(1);opacity:1}}}}
 .blur-text{{filter:blur(12px);user-select:none;opacity:0.6;transition:filter .4s}}
+
+/* Tilawa-style Mic Button */
+.mic-container div[data-testid="stAudioInput"] {{
+    background: linear-gradient(135deg, #D4AF37, #F3E5AB, #D4AF37) !important;
+    border-radius: 999px !important;
+    padding: 12px 24px !important;
+    box-shadow: 0 0 30px rgba(212,175,55,0.5) !important;
+    animation: pulseGold 2s infinite !important;
+    border: none !important;
+    width: 100% !important;
+}}
+.mic-container div[data-testid="stAudioInput"] * {{
+    color: black !important;
+    font-weight: 700 !important;
+}}
+@keyframes pulseGold {{
+    0% {{ box-shadow: 0 0 20px rgba(212,175,55,0.4); }}
+    50% {{ box-shadow: 0 0 40px rgba(212,175,55,0.8); }}
+    100% {{ box-shadow: 0 0 20px rgba(212,175,55,0.4); }}
+}}
 </style>""", unsafe_allow_html=True)
 
 def teacher_portrait(state: str = "idle"):
@@ -335,7 +357,7 @@ def teacher_portrait(state: str = "idle"):
         b = p.read_bytes()
         img_src = f"data:image/jpeg;base64,{base64.b64encode(b).decode()}"
     else:
-        img_src = f"https://via.placeholder.com/460x575/2A221B/D4AF37?text=Missing+{img_name}"
+        img_src = f"https://via.placeholder.com/380x506/2A221B/D4AF37?text=Missing+{img_name}"
 
     pill = ""
     if state in ["listening", "thinking"]:
@@ -354,21 +376,25 @@ def _data_uri(b, mime="audio/mpeg"):
 
 def player_html(words, audio_url):
     payload = [{"ar": w.get("ar", ""), "tr": w.get("tr", ""), "en": w.get("en", "")} for w in words]
-    t = {"word": "#E8D5B5", "glow": "#D4AF37", "wash": "rgba(212,175,55,.15)", "bg2": "#2A221B", "rule": "rgba(212,175,55,.15)", "dim": "#8A7A66"}
+    t = {"word": "#E8D5B5", "glow": "#D4AF37", "wash": "rgba(212,175,55,.15)", "bg2": "#2A221B", "rule": "rgba(212,175,55,.15)", "dim": "#8A7A66", "bg": "#1A1510"}
     
     tpl = r"""
 <style>
-body{margin:0;font-family:Inter,system-ui,sans-serif;background:transparent;color:__WORD__}
-#w{display:flex;flex-wrap:wrap;gap:12px;justify-content:center;direction:rtl;padding:10px}
-.word-card{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:12px 18px;border-radius:16px;background:__BG2__;border:1px solid __RULE__;transition:all .3s ease;min-width:100px}
-.word-card .ar{font-family:'Amiri Quran',serif;font-size:2.2rem;color:__WORD__;line-height:1.4}
-.word-card .tr{font-size:0.8rem;color:__GLOW__;font-style:italic;margin-top:6px;opacity:0.9}
-.word-card .en{font-size:0.9rem;color:__DIM__;margin-top:2px}
-.word-card.on{box-shadow:0 0 20px rgba(212,175,55,.4);border-color:__GLOW__;transform:translateY(-3px) scale(1.05);background:__WASH__}
-audio{width:100%;margin-top:20px;border-radius:999px;outline:none;filter:drop-shadow(0 8px 16px rgba(0,0,0,.4))}
-audio::-webkit-media-controls-panel{background-color:__BG2__}
+body{margin:0;font-family:Inter,system-ui,sans-serif;background:transparent;color:__WORD__;padding-bottom:80px;}
+#audio-container{position:fixed;bottom:0;left:0;width:100%;background:rgba(26,21,16,0.95);backdrop-filter:blur(10px);padding:15px 10px;z-index:1000;border-top:1px solid __RULE__;display:flex;justify-content:center;}
+audio{width:100%;max-width:600px;border-radius:999px;outline:none;box-shadow:0 4px 12px rgba(0,0,0,.5);}
+audio::-webkit-media-controls-panel{background-color:__BG2__;}
+#w{display:flex;flex-wrap:wrap;gap:12px;justify-content:center;direction:rtl;padding:10px;}
+.word-card{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:12px 18px;border-radius:16px;background:__BG2__;border:1px solid __RULE__;transition:all .3s ease;min-width:100px;}
+.word-card .ar{font-family:'Amiri Quran',serif;font-size:2.2rem;color:__WORD__;line-height:1.4;}
+.word-card .tr{font-size:0.8rem;color:__GLOW__;font-style:italic;margin-top:6px;opacity:0.9;}
+.word-card .en{font-size:0.9rem;color:__DIM__;margin-top:2px;}
+.word-card.on{box-shadow:0 0 20px rgba(212,175,55,.4);border-color:__GLOW__;transform:translateY(-3px) scale(1.05);background:__WASH__;}
 </style>
-<div id="w"></div><audio id="a" controls src="__URL__"></audio>
+<div id="w"></div>
+<div id="audio-container">
+    <audio id="a" controls src="__URL__"></audio>
+</div>
 <script>
 const W=__WORDS__,a=document.getElementById('a'),box=document.getElementById('w');
 const els=W.map(w=>{
@@ -383,7 +409,7 @@ a.onloadedmetadata=build;
 a.ontimeupdate=()=>{if(!cum.length)build();const t=a.currentTime;let i=cum.findIndex(c=>t<c);if(a.ended)i=-1;
 els.forEach((e,k)=>e.classList.toggle('on',k===i));};
 </script>"""
-    for k, v in {"__WORD__": t["word"], "__GLOW__": t["glow"], "__WASH__": t["wash"], "__BG2__": t["bg2"], "__RULE__": t["rule"], "__DIM__": t["dim"]}.items():
+    for k, v in {"__WORD__": t["word"], "__GLOW__": t["glow"], "__WASH__": t["wash"], "__BG2__": t["bg2"], "__RULE__": t["rule"], "__DIM__": t["dim"], "__BG__": t["bg"]}.items():
         tpl = tpl.replace(k, v)
     return tpl.replace("__URL__", audio_url).replace("__WORDS__", json.dumps(payload, ensure_ascii=False))
 
@@ -475,7 +501,10 @@ t1, t2, t3 = st.tabs(["Study", "Recite", "Chat"])
 with t1:
     st.markdown(f"<div style='text-align:center;color:var(--glow);margin-bottom:10px'>Reciter: {reciter}</div>", unsafe_allow_html=True)
     if audio_url and words:
-        components.html(player_html(words, _data_uri(ref_mp3)), height=420)
+        # Calculate exact height needed based on number of words (approx 3 cards per row)
+        rows = math.ceil(len(words) / 3)
+        iframe_height = max(400, rows * 140 + 100)
+        components.html(player_html(words, _data_uri(ref_mp3)), height=iframe_height, scrolling=False)
     
     st.divider()
     if st.button("📖 Generate Tafsir", use_container_width=True):
@@ -491,25 +520,46 @@ with t1:
 with t2:
     res = st.session_state.last_analysis.get(key)
     
+    # Tilawa-style toggle
+    st.markdown("<div style='display:flex; justify-content:center; margin-bottom:20px'>", unsafe_allow_html=True)
+    st.toggle("Recite from memory", value=True, key="conceal_text")
+    st.markdown("</div>", unsafe_allow_html=True)
+
     if not res:
-        st.markdown(f'<div class="ayah-text blur-text">{verse}</div>', unsafe_allow_html=True)
+        if st.session_state.conceal_text:
+            st.markdown(f'<div class="ayah-text blur-text">{verse}</div>', unsafe_allow_html=True)
+        else:
+            st.markdown(f'<div class="ayah-text">{verse}</div>', unsafe_allow_html=True)
     else:
         m_ = res.get("match")
         if m_ and words:
             st.markdown(feedback_html(words, m_["states"], res.get("rules_check", [])), unsafe_allow_html=True)
-            st.markdown(f"<div style='text-align:center;color:var(--glow);font-size:1.2rem;margin:20px 0'>Score: {res.get('overall_score',0)}%</div>", unsafe_allow_html=True)
+            st.markdown(f"""
+            <div style='display:flex; justify-content:center; margin:30px 0;'>
+                <div style='background:var(--wash); border:2px solid var(--glow); border-radius:50%; width:100px; height:100px; display:flex; align-items:center; justify-content:center; flex-direction:column; box-shadow:0 0 30px rgba(212,175,55,0.5)'>
+                    <span style='font-size:2rem; font-weight:800; color:var(--glow)'>{res.get('overall_score',0)}%</span>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
         else:
             st.markdown(f'<div class="ayah-text">{verse}</div>', unsafe_allow_html=True)
 
-    st.markdown("<div style='text-align:center;color:var(--dim);margin:20px 0'>Tap below and recite from memory</div>", unsafe_allow_html=True)
+    st.markdown("""
+    <div style='text-align:center; color:var(--dim); margin:20px 0 10px; font-size:1.1rem'>
+        🎙️ Tap below and recite from memory
+    </div>
+    """, unsafe_allow_html=True)
     
+    # Tilawa-style Mic Button (Centered and glowing)
+    st.markdown('<div class="mic-container">', unsafe_allow_html=True)
     wav = None
     if hasattr(st, "audio_input"):
         clip = st.audio_input("Recite", label_visibility="collapsed")
         if clip: wav = boost(_valid_wav(clip.getvalue()))[0]
     else:
-        m = mic_recorder(start_prompt="🎙️ Tap to talk", stop_prompt="⏹️ Send", key="recite", just_once=True, format="wav")
+        m = mic_recorder(start_prompt="🎙️ Tap to recite", stop_prompt="⏹️ Send", key="recite", just_once=True, format="wav")
         if m: wav = boost(m["bytes"])[0]
+    st.markdown('</div>', unsafe_allow_html=True)
     
     if wav and ref_mp3:
         teacher_portrait("thinking")
