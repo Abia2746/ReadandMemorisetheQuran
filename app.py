@@ -53,7 +53,7 @@ def fetch_audio(s, a, folder):
     if r.status_code != 200 or len(r.content) < 2000: raise RuntimeError("Audio not available.")
     return r.content
 
-# ───────────────────────────── AI (Dynamic Model Fetcher) ─────────────────────────────
+# ───────────────────────────── AI (Dynamic Model) ─────────────────────────────
 def api_key():
     try: return st.secrets["GEMINI_API_KEY"]
     except: return os.environ.get("GEMINI_API_KEY", "")
@@ -62,14 +62,21 @@ def get_best_model(k):
     try:
         r = requests.get(GEMINI, headers={"x-goog-api-key": k}, params={"pageSize": 100}, timeout=10).json()
         models = [m["name"].split("/")[-1] for m in r.get("models", []) if "generateContent" in m.get("supportedGenerationMethods", [])]
-        # Look for the newest flash models first
-        for pref in ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash-latest", "gemini-1.5-flash"]:
+        
+        # Prioritize the latest models mentioned in the API error message
+        for pref in ["gemini-3.8-flash", "gemini-3.5-flash", "gemini-2.5-flash", "gemini-1.5-flash-latest"]:
             if pref in models: return pref
-        # Fallback to any model containing "flash"
-        for m in models:
-            if "flash" in m: return m
-    except: pass
-    return "gemini-2.5-flash" # Absolute fallback
+            
+        # Dynamic fallback: sort by highest version number for any "flash" model
+        flash_models = [m for m in models if "flash" in m and "image" not in m and "tts" not in m]
+        if flash_models:
+            def ver(m):
+                match = re.search(r'(\d+\.\d+)', m)
+                return float(match.group(1)) if match else 0.0
+            return sorted(flash_models, key=ver, reverse=True)[0]
+            
+    except Exception: pass
+    return "gemini-3.8-flash" 
 
 def analyse_recitation_fast(wav_bytes, words, strictness, teacher_gender):
     k = api_key()
@@ -121,15 +128,21 @@ body{margin:0;background:transparent;color:#E8D5B5;font-family:Inter,sans-serif;
 .glass-card{background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.05); border-radius: 16px;}
 .blur-text{filter: blur(12px); opacity: 0.3; transition: all 0.5s ease; user-select: none; pointer-events: none;}
 
-/* Minimalist to Premium Highlight */
-.word-span{display: inline-flex; flex-direction: column; align-items: center; transition: all 0.2s ease; padding: 6px 12px; border-radius: 12px; border: 1px solid transparent;}
+/* Tilawa.ai Style Aesthetic Highlight */
+.word-span{
+  display: inline-flex; flex-direction: column; align-items: center; 
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); 
+  padding: 6px 12px; border-radius: 16px; border: 1px solid transparent;
+}
 .word-active{
-  background: rgba(212, 175, 55, 0.15);
-  border: 1px solid rgba(212, 175, 55, 0.5);
-  box-shadow: 0 0 20px rgba(212, 175, 55, 0.3);
-  transform: scale(1.1);
+  background: linear-gradient(135deg, rgba(212, 175, 55, 0.25), rgba(212, 175, 55, 0.05));
+  border: 1px solid rgba(212, 175, 55, 0.6);
+  box-shadow: 0 0 30px rgba(212, 175, 55, 0.3), inset 0 0 10px rgba(212, 175, 55, 0.1);
+  transform: scale(1.08) translateY(-2px);
+  backdrop-filter: blur(8px);
   z-index: 10;
 }
+.word-active .ar-text { color: #FFF; text-shadow: 0 0 15px rgba(212,175,55,0.9); }
 .word-good{color: #4ade80; text-shadow: 0 0 15px rgba(74, 222, 128, 0.6);}
 .word-missed{color: #f87171; text-shadow: 0 0 15px rgba(248, 113, 113, 0.6);}
 
@@ -170,6 +183,8 @@ function App(){
    }
  };
 
+ const isBlind = D.mode === 'blind' && !D.states;
+
  return h('div',{className:'p-4 max-w-5xl mx-auto flex flex-col gap-4'},
    
    // Header Bar
@@ -190,7 +205,7 @@ function App(){
    h('div',{className:'glass rounded-3xl p-6 relative flex flex-col'},
      
      // Scrollable Arabic Container (FORCED RTL)
-     h('div',{ref:containerRef, dir:'rtl', className:'max-h-[40vh] overflow-y-auto pr-2 flex flex-wrap justify-center gap-y-4 gap-x-2 z-10 ' + (D.mode==='blind' && !D.states ? 'blur-text' : '')},
+     h('div',{ref:containerRef, dir:'rtl', className:'max-h-[40vh] overflow-y-auto pr-2 flex flex-wrap justify-center gap-y-4 gap-x-2 z-10'},
        D.words.map((w, i) => {
          const isActive = activeWord === i;
          const isGood = D.states && D.states[i] === 'good';
@@ -202,11 +217,14 @@ function App(){
          else if (isActive) cls += 'word-active ';
 
          return h('div', {key:i, className:cls},
-           h('span', {className:'ar-text', dangerouslySetInnerHTML:{__html: parseTajweed(w.ar)}}),
-           // Transliteration
-           (D.mode !== 'blind' || D.states) && w.tr ? h('span',{className:'text-[11px] italic text-[#D4AF37] mt-1 font-semibold'}, w.tr) : null,
-           // English Hints
-           (D.mode === 'hints' || D.mode === 'full') ? h('span',{className:'text-[11px] text-[#a8987f] text-center max-w-[120px] mt-1'}, w.en) : null
+           // Arabic (Blurred only if blind)
+           h('span', {className:'ar-text ' + (isBlind ? 'blur-text' : ''), dangerouslySetInnerHTML:{__html: parseTajweed(w.ar)}}),
+           
+           // Transliteration (ALWAYS VISIBLE)
+           w.tr ? h('span',{className:'text-[11px] italic text-[#D4AF37] mt-1 font-semibold'}, w.tr) : null,
+           
+           // English Hints (ALWAYS VISIBLE)
+           w.en ? h('span',{className:'text-[11px] text-[#a8987f] text-center max-w-[120px] mt-1'}, w.en) : null
          )
        })
      ),
@@ -279,7 +297,7 @@ def embed_bg(html):
 
 def player(words, mode, states=None, audio=None, feedback="", meta={}):
     data = json.dumps({"words": words, "mode": mode, "states": states, "audio": audio, "feedback": feedback, "meta": meta}, ensure_ascii=False).replace("</", "<\\/")
-    h = 600 # Taller iframe to prevent clipping and allow inner scrolling
+    h = 600 
     embed = PLAYER_HTML.replace("__DATA__", data)
     components.html(embed, height=h, scrolling=False)
 
