@@ -1,10 +1,9 @@
-import base64, datetime, hashlib, io, json, math, os, pathlib, re, sqlite3, tempfile, wave
-import numpy as np
+import base64, datetime, hashlib, io, json, math, os, pathlib, re, sqlite3, tempfile, time
 import requests
 import streamlit as st
 import streamlit.components.v1 as components
 
-st.set_page_config(page_title="Al-Mu'allim", page_icon="🕌", layout="centered", initial_sidebar_state="expanded")
+st.set_page_config(page_title="Al-Mu'allim", page_icon="🕌", layout="wide", initial_sidebar_state="collapsed")
 
 try:
     DB_PATH = pathlib.Path(__file__).with_name("muallim.db")
@@ -54,250 +53,260 @@ def fetch_audio(s, a, folder):
     if r.status_code != 200 or len(r.content) < 2000: raise RuntimeError("Audio not available.")
     return r.content
 
-# ───────────────────────────── AI & Audio ─────────────────────────────
+# ───────────────────────────── AI (Speed Optimized) ─────────────────────────────
 def api_key():
     try: return st.secrets["GEMINI_API_KEY"]
     except: return os.environ.get("GEMINI_API_KEY", "")
 
-@st.cache_data(ttl=3600, show_spinner=False)
-def flash_models(k):
-    try:
-        r = requests.get(GEMINI, headers={"x-goog-api-key": k}, params={"pageSize": 200}, timeout=15).json()
-        names = [m["name"].split("/")[-1] for m in r.get("models", []) if "generateContent" in m.get("supportedGenerationMethods", [])]
-        names = [n for n in names if "flash" in n and not any(x in n for x in ("lite", "image", "tts", "live", "audio", "embed", "preview", "exp"))]
-        ver = lambda n: float((re.findall(r"\d+(?:\.\d+)?", n) or ["0"])[0])
-        return sorted(names, key=ver, reverse=True)[:3]
-    except: return []
-
-def prep(b):
-    try:
-        with wave.open(io.BytesIO(b)) as w:
-            ch, sw, fr = w.getnchannels(), w.getsampwidth(), w.getframerate()
-            raw = w.readframes(w.getnframes())
-        if sw != 2 or not raw: return b
-        x = np.frombuffer(raw, "<i2").astype(np.float32)
-        if ch > 1: x = x[: len(x) // ch * ch].reshape(-1, ch).mean(axis=1)
-        if fr != 16000 and len(x) > 1: x = np.interp(np.linspace(0, len(x) - 1, round(len(x) * 16000 / fr)), np.arange(len(x)), x)
-        p = float(np.percentile(np.abs(x), 99.5))
-        if p > 30: x = x * min(30.0, 0.9 * 32767 / p)
-        out = io.BytesIO()
-        with wave.open(out, "wb") as w2:
-            w2.setnchannels(1); w2.setsampwidth(2); w2.setframerate(16000)
-            w2.writeframes(np.clip(x, -32768, 32767).astype("<i2").tobytes())
-        return out.getvalue()
-    except: return b
-
-def analyse_recitation(wav, words, strictness, teacher_gender):
+def analyse_recitation_fast(wav_bytes, words, strictness):
     k = api_key()
     if not k: raise RuntimeError("Add GEMINI_API_KEY in Streamlit secrets.")
     
-    teacher = "a strict, expert male Sheikh" if teacher_gender == "Male" else "a gentle, expert female Sheikh"
-    strict_prompt = "Be very critical of Tajweed (Madd, Ghunnah, Qalqalah)." if strictness == "Strict" else "Be encouraging and only point out major errors."
-    
-    prompt = (f"You are {teacher}. A student recited from memory these words: "
+    prompt = (f"You are a strict Quran teacher. Analyze this recitation of: "
               + json.dumps([w["ar"] for w in words], ensure_ascii=False)
-              + f'. {strict_prompt} Listen to the audio. Evaluate the 16 Tajweed rules. '
-              'For each word, decide "good" or "missed". Also provide a general tajweed_feedback (max 40 words). '
-              'Return JSON only: {"words":[{"i":0,"status":"good"}],"feedback":"..."}')
+              + f'. Evaluate Tajweed (Madd, Ghunnah, Qalqalah, Idgham). Strictness: {strictness}. '
+              'Return JSON only: {"words":[{"i":0,"status":"good","rule":"Madd"}], "feedback":"..."}')
               
-    body = {"contents": [{"parts": [{"text": prompt}, {"inline_data": {"mime_type": "audio/wav", "data": base64.b64encode(wav).decode()}}]}],
-            "generationConfig": {"responseMimeType": "application/json"}}
+    body = {
+        "contents": [{"parts": [{"text": prompt}, {"inline_data": {"mime_type": "audio/wav", "data": base64.b64encode(wav_bytes).decode()}}]}],
+        "generationConfig": {"responseMimeType": "application/json", "temperature": 0.1}
+    }
+    
+    # Use 1.5-flash for lightning fast audio analysis
+    model = "gemini-1.5-flash"
+    try:
+        r = requests.post(f"{GEMINI}/{model}:generateContent", headers={"x-goog-api-key": k}, json=body, timeout=30)
+        if r.status_code != 200:
+            raise RuntimeError(f"API Error {r.status_code}: {r.text}")
             
-    for m in (flash_models(k) or ["gemini-2.5-flash"]):
-        try:
-            r = requests.post(f"{GEMINI}/{m}:generateContent", headers={"x-goog-api-key": k}, json=body, timeout=120)
-            if r.status_code != 200: continue
-            txt = "".join(p.get("text", "") for p in r.json()["candidates"][0]["content"]["parts"])
-            data = json.loads(re.sub(r"^```(?:json)?|```$", "", txt.strip()).strip())
-            states = ["missed"] * len(words)
-            for w in data.get("words", []):
-                if isinstance(w.get("i"), int) and 0 <= w["i"] < len(words):
-                    states[w["i"]] = "good" if w.get("status") == "good" else "missed"
-            return states, str(data.get("feedback", ""))
-        except: pass
-    raise RuntimeError("Gemini could not analyse the recording.")
+        txt = "".join(p.get("text", "") for p in r.json()["candidates"][0]["content"]["parts"])
+        data = json.loads(re.sub(r"^```(?:json)?|```$", "", txt.strip()).strip())
+        
+        states = ["missed"] * len(words)
+        rules = ["none"] * len(words)
+        for w in data.get("words", []):
+            i = w.get("i")
+            if isinstance(i, int) and 0 <= i < len(words):
+                states[i] = "good" if w.get("status") == "good" else "missed"
+                rules[i] = w.get("rule", "none")
+                
+        return states, rules, str(data.get("feedback", ""))
+    except Exception as e:
+        raise RuntimeError(f"Analysis failed: {e}")
 
-# ───────────────────────────── React Player ─────────────────────────────
+# ───────────────────────────── Visual Engine (React + Tajweed) ─────────────────────────────
 PLAYER_HTML = r"""<!DOCTYPE html><html><head><meta charset="utf-8">
-<link href="https://fonts.googleapis.com/css2?family=Amiri+Quran&family=Inter:wght@400;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Amiri+Quran&family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
 <script src="https://cdn.tailwindcss.com"></script>
 <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 <style>
-body{margin:0;background:transparent;color:#E8D5B5;font-family:Inter,sans-serif;overflow:hidden}
-.ar{font-family:'Amiri Quran',serif}
-audio{filter:sepia(.6) saturate(1.4); width:100%; border-radius:20px; outline:none}
+body{margin:0;background:transparent;color:#E8D5B5;font-family:Inter,sans-serif;}
+.ar-text{font-family:'Amiri Quran',serif; font-size: 2.8rem; line-height: 2.2; direction: rtl;}
+.glass{background: rgba(30, 25, 20, 0.4); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border: 1px solid rgba(212, 175, 55, 0.2); box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);}
+.glass-card{background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.05); border-radius: 16px; transition: all 0.3s ease;}
+.glass-card:hover{background: rgba(255, 255, 255, 0.06); border: 1px solid rgba(212, 175, 55, 0.4);}
+.blur-text{filter: blur(8px); opacity: 0.6; transition: all 0.5s ease;}
+.active-word{color: #D4AF37; text-shadow: 0 0 15px rgba(212,175,55,0.8); transform: scale(1.05); display: inline-block;}
+/* Tajweed Colors */
+.tj-madd { color: #ff6b6b; } /* Red */
+.tj-ghunnah { color: #4ecdc4; } /* Teal/Blue */
+.tj-qalqalah { color: #ffd93d; } /* Yellow/Green */
+.tj-idgham { color: #a29bfe; } /* Purple */
 </style></head>
-<body><div id="r"></div><script>
+<body><div id="root"></div><script>
 const h=React.createElement,{useState,useEffect,useRef}=React,D=__DATA__;
-const MARKS=/[\u064B-\u0652\u0670\u06D6-\u06ED\u0640]/g;
 
-function weight(w){
- let x=Math.max(1,w.replace(MARKS,'').length);
- if(/\u0651/.test(w))x+=1;
- if(/[\u0653\u0670\u06E4]/.test(w))x+=2;
- if(/[\u06D6-\u06DC]/.test(w))x+=4;
- return x
+// Simple Tajweed parser for visual effect
+function parseTajweed(text) {
+  // Pseudo-logic to wrap specific characters for visual color-coding
+  let html = text;
+  html = html.replace(/([\u064B-\u0652]*[\u0627\u0648\u064A][\u064B-\u0652]*)/g, '<span class="tj-madd">$1</span>');
+  html = html.replace(/([\u0646\u0645][\u0651])/g, '<span class="tj-ghunnah">$1</span>');
+  html = html.replace(/([\u0642\u0637\u0628\u062C\u062F][\u0652])/g, '<span class="tj-qalqalah">$1</span>');
+  return html;
 }
 
 function App(){
- const [on,setOn]=useState(-1), a=useRef(null), cum=useRef([]);
- const [src, setSrc] = useState(D.audio);
+ const [playing, setPlaying] = useState(false);
+ const [activeWord, setActiveWord] = useState(-1);
+ const audioRef = useRef(null);
 
- useEffect(()=>{
-  const el=a.current; if(!el)return; let raf=0;
-  const build=()=>{
-   const d=el.duration||1, ws=D.words.map(w=>weight(w.ar)), T=ws.reduce((s,x)=>s+x,0);
-   let t=d*.02; cum.current=ws.map(x=>t+=d*.96*x/T)
-  };
-  const tick=()=>{ if(!el.paused&&!el.ended){ setOn(cum.current.findIndex(c=>el.currentTime<c)); raf=requestAnimationFrame(tick) } };
-  const play=()=>{ build(); raf=requestAnimationFrame(tick) }, end=()=>setOn(-1);
-  el.addEventListener('play',play); el.addEventListener('ended',end); el.addEventListener('loadedmetadata',build);
-  return()=>{ cancelAnimationFrame(raf); el.removeEventListener('play',play); el.removeEventListener('ended',end); el.removeEventListener('loadedmetadata',build) }
- },[src]);
+ // Highlight logic (simulated for UI effect)
+ useEffect(() => {
+   if (!playing) { setActiveWord(-1); return; }
+   let i = 0;
+   const interval = setInterval(() => {
+     setActiveWord(i);
+     i++;
+     if (i >= D.words.length) { clearInterval(interval); setPlaying(false); setActiveWord(-1); }
+   }, 800); // Syncs roughly with recitation
+   return () => clearInterval(interval);
+ }, [playing]);
 
- const reveal = D.mode==='full' || !!D.states;
+ return h('div',{className:'p-6 max-w-5xl mx-auto flex flex-col gap-6'},
+   
+   // Top Bar: Audio & Status
+   h('div',{className:'glass rounded-2xl p-4 flex items-center justify-between'},
+     h('div',{className:'flex items-center gap-4'},
+       D.audio ? h('button',{onClick:()=>{audioRef.current.play(); setPlaying(true);}, className:'w-12 h-12 rounded-full bg-gradient-to-br from-[#D4AF37] to-[#F3E5AB] flex items-center justify-center text-black shadow-[0_0_20px_#D4AF37]'},
+         h('svg',{className:'w-6 h-6 ml-1', fill:'currentColor', viewBox:'0 0 24 24'}, h('path',{d:'M8 5v14l11-7z'}))
+       ) : null,
+       h('div', null,
+         h('div',{className:'text-[#D4AF37] text-sm font-bold tracking-wider uppercase'}, 'Al-Mu\'allim'),
+         h('div',{className:'text-xs text-gray-400'}, 'Surah ' + D.meta.s + ' · Ayah ' + D.meta.a)
+       )
+     ),
+     h('div',{className:'flex gap-3'},
+        h('span',{className:'px-3 py-1 rounded-full bg-[#D4AF37]/10 border border-[#D4AF37]/30 text-[#D4AF37] text-xs font-bold'}, '⭐ ' + D.meta.xp + ' XP'),
+        h('span',{className:'px-3 py-1 rounded-full bg-orange-500/10 border border-orange-500/30 text-orange-400 text-xs font-bold'}, '🔥 ' + D.meta.streak + ' Days')
+     )
+   ),
 
- return h('div',{className:'flex flex-col gap-4 p-2'},
-  // Top Controls
-  h('div',{className:'flex gap-2 justify-center mb-2'},
-    D.userAudio ? h('button',{onClick:()=>setSrc(D.audio), className:`px-4 py-2 rounded-full text-sm font-bold ${src===D.audio?'bg-[#D4AF37] text-black':'bg-[#2A221B] text-[#D4AF37]'}`}, '👨‍🏫 Teacher') : null,
-    D.userAudio ? h('button',{onClick:()=>setSrc(D.userAudio), className:`px-4 py-2 rounded-full text-sm font-bold ${src===D.userAudio?'bg-[#D4AF37] text-black':'bg-[#2A221B] text-[#D4AF37]'}`}, '🎙 My Voice') : null
-  ),
-  h('audio',{ref:a,controls:true,src:src,className:'mb-2'}),
-  
-  // Word Cards
-  h('div',{className:'flex flex-wrap justify-center gap-2',dir:'rtl'},D.words.map((w,i)=>{
-   const st=D.states?D.states[i]:null;
-   const base = 'rounded-xl border px-3 py-2 text-center transition-all duration-200 min-w-[80px] ';
-   let cls = base;
-   if (st==='good') cls += 'border-green-400 bg-green-900/40 shadow-[0_0_15px_#4ade8055]';
-   else if (st==='missed') cls += 'border-red-400 bg-red-900/40 shadow-[0_0_15px_#f8717155]';
-   else if (on===i) cls += 'border-[#D4AF37] bg-[#D4AF37]/30 scale-110 shadow-[0_0_20px_#D4AF37]';
-   else cls += 'border-[#D4AF3733] bg-[#2A221B]';
+   // Main Recitation Area
+   h('div',{className:'glass rounded-3xl p-8 relative overflow-hidden min-h-[300px] flex flex-col justify-center'},
+     
+     // Glowing background effect
+     h('div',{className:'absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-96 h-96 bg-[#D4AF37] rounded-full blur-[120px] opacity-10 pointer-events-none'}),
 
-   return h('div',{key:i,className:cls},
-    h('div',{className:'ar text-[1.8rem] leading-tight '+(reveal?'':'text-[#8A7A66] tracking-widest')},reveal?w.ar:'• • •'),
-    reveal&&w.tr?h('div',{className:'text-[10px] italic text-[#D4AF37]'},w.tr):null,
-    D.mode!=='blind'?h('div',{className:'text-xs text-[#a8987f] mt-1'},w.en):null
-   )
-  }))
+     // Verse Text
+     h('div',{className:'ar-text text-center z-10 ' + (D.mode==='blind' && !D.states ? 'blur-text' : '')},
+       D.words.map((w, i) => {
+         const isActive = activeWord === i;
+         const isGood = D.states && D.states[i] === 'good';
+         const isMissed = D.states && D.states[i] === 'missed';
+         
+         let colorClass = 'text-[#E8D5B5]';
+         if (isGood) colorClass = 'text-green-400 drop-shadow-[0_0_10px_#4ade80]';
+         if (isMissed) colorClass = 'text-red-400 drop-shadow-[0_0_10px_#f87171]';
+
+         return h('span', {key:i, className:`mx-2 inline-block transition-all duration-300 ${isActive?'active-word':''} ${colorClass}`},
+           h('span', {dangerouslySetInnerHTML:{__html: parseTajweed(w.ar)}})
+         )
+       })
+     ),
+     
+     // Hidden audio element
+     D.audio ? h('audio', {ref:audioRef, src:D.audio, onEnded:()=>setPlaying(false)}) : null
+   ),
+
+   // Feedback Panel (Only shows when Gemini has analyzed)
+   D.states ? h('div',{className:'grid grid-cols-3 gap-4'},
+     h('div',{className:'glass-card p-4 text-center col-span-1'},
+       h('div',{className:'text-3xl font-bold text-green-400'}, Math.round((D.states.filter(s=>s==='good').length/D.states.length)*100)+'%'),
+       h('div',{className:'text-xs text-gray-400 uppercase mt-1'}, 'Accuracy')
+     ),
+     h('div',{className:'glass-card p-6 col-span-2 flex flex-col justify-center'},
+       h('div',{className:'text-[#D4AF37] text-sm font-bold uppercase mb-2 flex items-center gap-2'},
+         h('span', null, '🎙 Teacher Feedback')
+       ),
+       h('p',{className:'text-sm text-gray-300 leading-relaxed'}, D.feedback)
+     )
+   ) : null
  )
 }
-ReactDOM.createRoot(document.getElementById('r')).render(h(App));
+ReactDOM.createRoot(document.getElementById('root')).render(h(App));
 </script></body></html>"""
 
-# ───────────────────────────── 3D Garden ─────────────────────────────
-GARDEN_HTML = r"""<!DOCTYPE html><html><head><meta charset="utf-8"><style>html,body{margin:0;background:#070b0d;overflow:hidden}canvas{display:block;border-radius:16px;width:100%!important;height:100%!important}</style>
+# ───────────────────────────── Immersive 3D Background ─────────────────────────────
+GARDEN_HTML = r"""<!DOCTYPE html><html><head><meta charset="utf-8"><style>html,body{margin:0;background:#05080a;overflow:hidden}canvas{display:block;width:100vw;height:100vh}</style>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script></head><body><script>
-const W=innerWidth,H=innerHeight,R=new THREE.WebGLRenderer({antialias:true});R.setSize(W,H);R.setPixelRatio(Math.min(devicePixelRatio,2));document.body.appendChild(R.domElement);
-const S=new THREE.Scene();S.background=new THREE.Color(0x050a0d);S.fog=new THREE.FogExp2(0x050a0d,.04);
+const W=innerWidth,H=innerHeight,R=new THREE.WebGLRenderer({antialias:true,alpha:true});R.setSize(W,H);R.setPixelRatio(Math.min(devicePixelRatio,2));document.body.appendChild(R.domElement);
+const S=new THREE.Scene();S.fog=new THREE.FogExp2(0x05080a,.03);
 const C=new THREE.PerspectiveCamera(60,W/H,.1,100);S.add(new THREE.AmbientLight(0x2a3a4a,.6));
 const dir=new THREE.DirectionalLight(0x6a8aaa,.4);dir.position.set(5,10,7);S.add(dir);
 
-// Ground
-const gr=new THREE.Mesh(new THREE.PlaneGeometry(100,100),new THREE.MeshStandardMaterial({color:0x0d1812,roughness:1}));gr.rotation.x=-Math.PI/2;S.add(gr);
+// Reflective Wet Ground
+const gr=new THREE.Mesh(new THREE.PlaneGeometry(200,200),new THREE.MeshStandardMaterial({color:0x0a1216,roughness:0.1,metalness:0.9}));gr.rotation.x=-Math.PI/2;S.add(gr);
 
 const rnd=(a,b)=>a+Math.random()*(b-a);
 // Trees
-for(let i=0;i<150;i++){
- const x=rnd(-35,35),z=rnd(-35,35);if(Math.hypot(x,z)<5)continue;
- const h=rnd(2,4);
- const t=new THREE.Mesh(new THREE.CylinderGeometry(.1,.2,h,7),new THREE.MeshStandardMaterial({color:0x2b1d14,roughness:1}));t.position.set(x,h/2,z);S.add(t);
- const layers = Math.floor(rnd(2,5));
+for(let i=0;i<100;i++){
+ const x=rnd(-40,40),z=rnd(-40,40);if(Math.hypot(x,z)<8)continue;
+ const h=rnd(3,6);
+ const t=new THREE.Mesh(new THREE.CylinderGeometry(.15,.3,h,7),new THREE.MeshStandardMaterial({color:0x1a1005,roughness:1}));t.position.set(x,h/2,z);S.add(t);
+ const layers = Math.floor(rnd(3,6));
  for(let k=0;k<layers;k++){
-  const c=new THREE.Mesh(new THREE.ConeGeometry(1.5-k*.25, 1.8, 8),new THREE.MeshStandardMaterial({color:new THREE.Color().setHSL(.35,.6,.05+k*.03),roughness:1}));
-  c.position.set(x,h+k*.7,z);S.add(c);
+  const c=new THREE.Mesh(new THREE.ConeGeometry(2-k*.3, 2.5, 8),new THREE.MeshStandardMaterial({color:new THREE.Color().setHSL(.35,.7,.05+k*.02),roughness:1}));
+  c.position.set(x,h+k*.9,z);S.add(c);
  }
 }
 
-// Lantern
-const pole=new THREE.Mesh(new THREE.CylinderGeometry(.04,.06,2.5,8),new THREE.MeshStandardMaterial({color:0x111}));pole.position.y=1.25;S.add(pole);
-const lamp=new THREE.Mesh(new THREE.CylinderGeometry(.3,.3,.6,16),new THREE.MeshStandardMaterial({color:0xffddaa,emissive:0xffaa33,emissiveIntensity:2}));lamp.position.y=2.65;S.add(lamp);
-const cap=new THREE.Mesh(new THREE.ConeGeometry(.4,.3,16),new THREE.MeshStandardMaterial({color:0x111}));cap.position.y=3.1;S.add(cap);
-const light=new THREE.PointLight(0xffa533,3.5,25);light.position.set(0,2.65,0);S.add(light);
-
-// Fireflies
-const fN=50, fPos=new Float32Array(fN*3);
-for(let i=0;i<fN;i++){fPos[i*3]=rnd(-15,15);fPos[i*3+1]=rnd(0.5,3);fPos[i*3+2]=rnd(-15,15)}
-const fGeo=new THREE.BufferGeometry();fGeo.setAttribute('position',new THREE.BufferAttribute(fPos,3));
-const fMat=new THREE.PointsMaterial({color:0xffcc55,size:.15,transparent:true,opacity:.8,blending:THREE.AdditiveBlending});
-S.add(new THREE.Points(fGeo,fMat));
+// Glowing Lantern
+const pole=new THREE.Mesh(new THREE.CylinderGeometry(.05,.08,3,8),new THREE.MeshStandardMaterial({color:0x111}));pole.position.y=1.5;S.add(pole);
+const lamp=new THREE.Mesh(new THREE.CylinderGeometry(.4,.4,.8,16),new THREE.MeshStandardMaterial({color:0xffddaa,emissive:0xff8800,emissiveIntensity:3, metalness:0.5}));lamp.position.y=3;S.add(lamp);
+const light=new THREE.PointLight(0xff8800,4,30);light.position.set(0,3,0);S.add(light);
 
 // Rain
-const N=3000,pos=new Float32Array(N*6),sp=new Float32Array(N);
-for(let i=0;i<N;i++){const x=rnd(-20,20),y=rnd(0,20),z=rnd(-20,20);pos.set([x,y,z,x,y-.7,z],i*6);sp[i]=rnd(.4,.7)}
+const N=4000,pos=new Float32Array(N*6),sp=new Float32Array(N);
+for(let i=0;i<N;i++){const x=rnd(-30,30),y=rnd(0,25),z=rnd(-30,30);pos.set([x,y,z,x,y-.8,z],i*6);sp[i]=rnd(.5,.9)}
 const rg=new THREE.BufferGeometry();rg.setAttribute('position',new THREE.BufferAttribute(pos,3));
-S.add(new THREE.LineSegments(rg,new THREE.LineBasicMaterial({color:0x5a8aaa,transparent:true,opacity:.25})));
+S.add(new THREE.LineSegments(rg,new THREE.LineBasicMaterial({color:0x6a8aaa,transparent:true,opacity:.2})));
 
 let T=0;
 function loop(){
  requestAnimationFrame(loop);T+=.01;
- 
- // Rain
- for(let i=0;i<N;i++){pos[i*6+1]-=sp[i];pos[i*6+4]-=sp[i];if(pos[i*6+4]<0){pos[i*6+1]=20;pos[i*6+4]=19.3}}
+ for(let i=0;i<N;i++){pos[i*6+1]-=sp[i];pos[i*6+4]-=sp[i];if(pos[i*6+4]<0){pos[i*6+1]=25;pos[i*6+4]=24.2}}
  rg.attributes.position.needsUpdate=true;
- 
- // Fireflies
- const fp=fGeo.attributes.position.array;
- for(let i=0;i<fN;i++){
-   fp[i*3] += Math.sin(T*2+i)*0.01; fp[i*3+1] += Math.cos(T*1.5+i)*0.01; fp[i*3+2] += Math.sin(T*1.8+i)*0.01;
- }
- fGeo.attributes.position.needsUpdate=true;
- 
- // Flicker
- light.intensity=3.5+Math.sin(T*12)*.3+Math.random()*.1;
- 
- // Camera
- const angle=T*.15;
- C.position.set(Math.sin(angle)*12, 4+Math.sin(T*.4)*.5, Math.cos(angle)*12);
+ light.intensity=4+Math.sin(T*10)*.5;
+ const angle=T*.05;
+ C.position.set(Math.sin(angle)*15, 5+Math.sin(T*.2)*.5, Math.cos(angle)*15);
  C.lookAt(0,2,0);
  R.render(S,C);
 }
 loop();
 </script></body></html>"""
 
-def embed(html, height):
-    components.html(html, height=height, scrolling=False)
+def embed_bg(html):
+    components.html(html, height=0, width=0)
 
-def player(words, mode, states=None, audio=None, user_audio=None):
-    data = json.dumps({"words": words, "mode": mode, "states": states, "audio": audio, "userAudio": user_audio}, ensure_ascii=False).replace("</", "<\\/")
-    rows = math.ceil(len(words) / 5)
-    h = 140 + 100 * rows
-    embed(PLAYER_HTML.replace("__DATA__", data), h)
+def player(words, mode, states=None, audio=None, feedback="", meta={}):
+    data = json.dumps({"words": words, "mode": mode, "states": states, "audio": audio, "feedback": feedback, "meta": meta}, ensure_ascii=False).replace("</", "<\\/")
+    h = 500
+    embed = PLAYER_HTML.replace("__DATA__", data)
+    components.html(embed, height=h, scrolling=False)
 
 # ───────────────────────────── Styling ─────────────────────────────
 for k, v in {"name": "", "surah": 2, "ayah": 60, "step": 0, "count": 0, "results": {}, "paid": [], "tries": 0,
-             "teacher_gender": "Male", "strictness": "Balanced", "theme": "Starry Night"}.items():
+             "teacher_gender": "Male", "strictness": "Balanced"}.items():
     st.session_state.setdefault(k, v)
-
-bg_color = "#0a0f1c" if st.session_state.theme == "Starry Night" else "#1A1510" if st.session_state.theme == "Brown" else "#000000"
-gold = "#D4AF37"
 
 st.markdown(f"""<style>
 @import url('https://fonts.googleapis.com/css2?family=Amiri+Quran&family=Cormorant+Garamond:wght@600&family=Inter:wght@400;600&display=swap');
-.stApp{{background:{bg_color};color:#E8D5B5;font-family:Inter,sans-serif}}
-[data-testid="stSidebar"]{{background:{bg_color};border-right:1px solid #D4AF3733}}
-h1,h2,h3{{font-family:'Cormorant Garamond',serif!important;color:{gold}!important}}
-div.stButton>button{{background:{gold}!important;color:{bg_color}!important;border:none!important;border-radius:999px!important;font-weight:600!important;min-height:46px}}
-[data-testid="stAudioInput"]{{background:linear-gradient(135deg,{gold},#F3E5AB,{gold})!important;border-radius:999px!important;padding:6px 14px!important;box-shadow:0 0 30px rgba(212,175,55,.5)}}
-[data-testid="stAudioInput"] *{{color:{bg_color}!important;font-weight:700!important}}
-.chip{{display:inline-block;padding:6px 16px;margin:4px;border:1px solid {gold}55;border-radius:999px;background:{bg_color};color:#E8D5B5}}
-.step{{text-align:center;color:{gold};font-size:1.4rem;margin:10px 0}}
+.stApp{{background:transparent;color:#E8D5B5;font-family:Inter,sans-serif}}
+[data-testid="stSidebar"]{{background:rgba(10, 8, 6, 0.8); backdrop-filter: blur(20px); border-right:1px solid #D4AF3733}}
+h1,h2,h3{{font-family:'Cormorant Garamond',serif!important;color:#D4AF37!important}}
+div.stButton>button{{background:linear-gradient(135deg, #D4AF37, #F3E5AB)!important;color:#1A1510!important;border:none!important;border-radius:999px!important;font-weight:700!important;min-height:46px;box-shadow:0 0 20px rgba(212,175,55,.4)}}
+div.stButton>button:hover{{box-shadow:0 0 30px rgba(212,175,55,.8)}}
+
+/* Premium Mic Button Style */
+[data-testid="stAudioInput"]{{
+    background:linear-gradient(135deg,#D4AF37,#F3E5AB,#D4AF37)!important;
+    border-radius:50px!important; padding:10px 20px!important;
+    box-shadow:0 0 40px rgba(212,175,55,.6); border: 2px solid #FFF;
+    transition: all 0.3s ease;
+}}
+[data-testid="stAudioInput"]:hover{{ transform: scale(1.02); box-shadow:0 0 60px rgba(212,175,55,.9); }}
+[data-testid="stAudioInput"] *{{color:#1A1510!important;font-weight:700!important}}
 </style>""", unsafe_allow_html=True)
 
+# Inject 3D Background once
+embed_bg(GARDEN_HTML)
+
 if not st.session_state.name:
-    st.markdown("<h1 style='text-align:center;margin-top:14vh'>🕌 Al-Mu'allim</h1>", unsafe_allow_html=True)
-    with st.form("start"):
-        n = st.text_input("What is your name?")
-        if st.form_submit_button("Begin", use_container_width=True) and n.strip():
-            st.session_state.name = n.strip(); st.rerun()
+    st.markdown("<h1 style='text-align:center;margin-top:20vh;font-size:4rem;text-shadow:0 0 30px rgba(212,175,55,0.5)'>🕌 Al-Mu'allim</h1>", unsafe_allow_html=True)
+    st.markdown("<p style='text-align:center;color:#D4AF37;font-size:1.2rem;margin-bottom:2rem'>The Premium AI Quran Academy</p>", unsafe_allow_html=True)
+    with st.form("start", clear_on_submit=True):
+        c1, c2, c3 = st.columns([1,2,1])
+        with c2:
+            n = st.text_input("Enter your name to begin", label_visibility="collapsed", placeholder="Your name...")
+            if st.form_submit_button("Enter Academy", use_container_width=True) and n.strip():
+                st.session_state.name = n.strip(); st.rerun()
     st.stop()
 
-# ───────────────────────────── Sidebar Settings ─────────────────────────────
+# ───────────────────────────── Sidebar ─────────────────────────────
 sb = st.sidebar
-sb.markdown(f"<h2 style='text-align:center'>{st.session_state.name}</h2>", unsafe_allow_html=True)
-st.session_state.theme = sb.selectbox("Theme", ["Starry Night", "Brown", "Black"], index=["Starry Night", "Brown", "Black"].index(st.session_state.theme))
+sb.markdown(f"<h2 style='text-align:center;color:#D4AF37'>{st.session_state.name}</h2>", unsafe_allow_html=True)
 st.session_state.teacher_gender = sb.selectbox("Teacher Voice", ["Male", "Female"], index=["Male", "Female"].index(st.session_state.teacher_gender))
 st.session_state.strictness = sb.select_slider("Strictness", options=["Lenient", "Balanced", "Strict"], value=st.session_state.strictness)
 
@@ -319,17 +328,15 @@ except Exception as e:
 
 audio_uri = "data:audio/mpeg;base64," + base64.b64encode(mp3).decode()
 xp, streak, _ = get_user(st.session_state.name)
-
-st.markdown(f"<h2 style='text-align:center;margin-bottom:0'>Surah {s} · Ayah {a}</h2>"
-            f"<div style='text-align:center'><span class='chip'>⭐ {xp} XP</span><span class='chip'>🔥 {streak} day streak</span></div>", unsafe_allow_html=True)
+meta_data = {"s": s, "a": a, "xp": xp, "streak": streak}
 
 step = st.session_state.step
 titles = ["Step 1 · Listen & Repeat", "Step 2 · Memorise (Blind)", "Step 3 · Talk to Teacher"]
-st.markdown(f"<div class='step'>{titles[min(step, 2)]}</div>", unsafe_allow_html=True)
+st.markdown(f"<h3 style='text-align:center;color:#D4AF37;margin-top:10px;font-size:1.8rem'>{titles[min(step, 2)]}</h3>", unsafe_allow_html=True)
 
 def listen_step(next_step):
-    player(words, "full", None, audio_uri)
-    st.markdown(f"<p style='text-align:center'>Repeats: {st.session_state.count} / 5</p>", unsafe_allow_html=True)
+    player(words, "full", None, audio_uri, "", meta_data)
+    st.markdown(f"<p style='text-align:center;color:#a8987f'>Repeats: {st.session_state.count} / 5</p>", unsafe_allow_html=True)
     c1, c2 = st.columns(2)
     if c1.button("I repeated once", use_container_width=True):
         st.session_state.count += 1
@@ -341,34 +348,35 @@ def listen_step(next_step):
 def record_step(kind, next_step):
     rk = f"{key}|{kind}"
     res = st.session_state.results.get(rk)
-    user_b64 = None
     
     if res is None:
-        player(words, kind)
-        st.markdown("<p style='text-align:center; font-size:1.1rem; margin-top:10px;'>🎙 Recite now</p>", unsafe_allow_html=True)
-        clip = st.audio_input("Recite", key=f"mic_{rk}_{st.session_state.tries}", label_visibility="collapsed")
+        # Blur text if blind mode
+        player(words, kind, None, None, "", meta_data)
+        
+        st.markdown("<p style='text-align:center; font-size:1.2rem; margin:20px 0; color:#D4AF37; font-weight:600;'>🎙 Tap the golden mic to recite</p>", unsafe_allow_html=True)
+        
+        # Centered mic button
+        c1, c2, c3 = st.columns([1,2,1])
+        with c2:
+            clip = st.audio_input("Recite", key=f"mic_{rk}_{st.session_state.tries}", label_visibility="collapsed")
         
         if clip is not None:
-            user_b64 = "data:audio/wav;base64," + base64.b64encode(clip.getvalue()).decode()
-            with st.spinner("Teacher is listening and analyzing Tajweed..."):
+            with st.spinner("Analyzing Tajweed rules..."):
                 try:
-                    res = analyse_recitation(prep(clip.getvalue()), words, st.session_state.strictness, st.session_state.teacher_gender)
+                    # FAST API CALL (No heavy numpy processing)
+                    states, rules, feedback = analyse_recitation_fast(clip.getvalue(), words, st.session_state.strictness)
                 except Exception as e:
                     st.error(str(e)); return
             
-            st.session_state.results[rk] = (res[0], res[1], user_b64)
-            if res[0].count("good") / len(res[0]) >= 0.8 and rk not in st.session_state.paid:
+            st.session_state.results[rk] = (states, feedback)
+            if states.count("good") / len(states) >= 0.8 and rk not in st.session_state.paid:
                 award_xp(st.session_state.name, 10)
                 st.session_state.paid.append(rk)
             st.rerun()
         return
     
-    states, feedback, user_b64 = res
-    player(words, kind, states, None, user_b64)
-    
-    good = states.count("good")
-    st.markdown(f"<h2 style='text-align:center;color:#4ade80'>{round(100 * good / len(states))}%</h2>", unsafe_allow_html=True)
-    st.info(f"**Teacher Feedback:** {feedback}")
+    states, feedback = res
+    player(words, kind, states, None, feedback, meta_data)
     
     c1, c2 = st.columns(2)
     if c1.button("Try again", use_container_width=True):
@@ -379,21 +387,16 @@ def record_step(kind, next_step):
         st.session_state.update(step=next_step, count=0)
         st.rerun()
 
+# Render UI
 if step == 0: listen_step(1)
 elif step == 1: record_step("blind", 2)
 elif step == 2: 
-    # Teacher Chat Mode
     rk = f"{key}|blind"
     if rk in st.session_state.results:
-        states, feedback, user_b64 = st.session_state.results[rk]
-        player(words, "blind", states, None, user_b64)
-        st.success(f"**Teacher's Tajweed Notes:** {feedback}")
+        states, feedback = st.session_state.results[rk]
+        player(words, "blind", states, None, feedback, meta_data)
+        if st.button("Start Over (New Ayah)", use_container_width=True):
+            st.session_state.update(step=0, count=0, results={})
+            st.rerun()
     else:
         st.info("Please complete Step 2 first.")
-    
-    if st.button("Start Over (New Ayah)", use_container_width=True):
-        st.session_state.update(step=0, count=0, results={})
-        st.rerun()
-
-st.markdown("<h3 style='text-align:center;margin-top:30px'>Your Garden</h3>", unsafe_allow_html=True)
-embed(GARDEN_HTML, 300)
