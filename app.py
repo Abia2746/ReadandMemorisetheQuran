@@ -1,4 +1,4 @@
-# app.py — Al-Mu'allim · React UI + Native Streamlit Mic + 3D Garden
+# app.py — Al-Mu'allim · Full UI + Sidebar Settings + Dynamic Data
 import streamlit as st
 import streamlit.components.v1 as components
 import requests
@@ -13,40 +13,69 @@ API_URL = "https://generativelanguage.googleapis.com/v1beta/models"
 
 st.set_page_config(layout="wide", page_title="Al-Mu'allim", page_icon="🕌")
 
-# Hide Streamlit padding so the UI fills the screen
+# Hide Streamlit default padding, but KEEP the sidebar
 st.markdown("""
     <style>
         .block-container { padding: 0 !important; max-width: 100% !important; }
         header { display: none !important; }
         #MainMenu {visibility: hidden;}
         footer {visibility: hidden;}
+        [data-testid="stSidebar"] { background-color: #110D09 !important; }
+        [data-testid="stSidebar"] * { color: #E8D5B5 !important; }
     </style>
 """, unsafe_allow_html=True)
 
-# --- DATA ---
-words = [
-  { "ar": "وَإِذِ", "tr": "wa-idh", "en": "And when" },
-  { "ar": "اسْتَقَىٰ", "tr": "is'tasqā", "en": "asked for water" },
-  { "ar": "مُوسَىٰ", "tr": "mūsā", "en": "Musa" },
-  { "ar": "لِقَوْمِهِ", "tr": "liqawmihi", "en": "for his people" },
-  { "ar": "اضْرِب", "tr": "iḍrib", "en": "Strike" },
-  { "ar": "بِعَصَاكَ", "tr": "bi'aṣāka", "en": "with your staff" },
-  { "ar": "الْحَجَرَ", "tr": "al-ḥajara", "en": "the stone" },
-]
+# --- SIDEBAR SETTINGS ---
+with st.sidebar:
+    st.markdown("### ⚙️ Settings")
+    surah = st.number_input("Surah", 1, 114, 2)
+    ayah = st.number_input("Ayah", 1, 286, 60)
+    teacher = st.radio("Teacher", ["Female", "Male"])
+    st.divider()
+    st.markdown("**How to use:**")
+    st.markdown("1. Read the English.")
+    st.markdown("2. Tap the mic below and recite from memory.")
+    st.markdown("3. Watch the Arabic reveal and turn green/red.")
+
+# --- FETCH QURAN DATA ---
+@st.cache_data(show_spinner=False)
+def fetch_verse_and_words(s, a):
+    try:
+        # Fetch Uthmani text
+        v_res = requests.get(f"https://api.alquran.cloud/v1/ayah/{s}:{a}/quran-uthmani", timeout=15).json()
+        verse_text = v_res["data"]["text"]
+        
+        # Fetch word-by-word
+        w_res = requests.get(f"https://api.quran.com/api/v4/verses/by_key/{s}:{a}", params={"words": "true", "word_fields": "text_uthmani", "language": "en"}, timeout=20).json()
+        words = [{"ar": w["text_uthmani"], "en": (w.get("translation") or {}).get("text", ""), "tr": (w.get("transliteration") or {}).get("text") or ""} for w in w_res["verse"]["words"] if w.get("char_type_name") == "word"]
+        
+        return verse_text, words
+    except Exception as e:
+        return "", []
+
+verse_text, words = fetch_verse_and_words(surah, ayah)
+
+if not words:
+    st.error("Could not load Quran data. Check your connection.")
+    st.stop()
+
+# --- TEACHER IMAGE ---
+img_name = "IMG_6147.jpeg" if teacher == "Male" else "IMG_6146.jpeg"
+teacher_img = f"https://raw.githubusercontent.com/Abia2746/ReadandMemoriseTheQuran/main/{img_name}"
 
 # --- SESSION STATE ---
 if "analysis" not in st.session_state:
     st.session_state.analysis = None
 
 # --- GEMINI LOGIC ---
-def analyze_recitation(audio_bytes):
+def analyze_recitation(audio_bytes, expected_words):
     if not GEMINI_API_KEY:
         return {"error": "Gemini API key missing in Streamlit secrets."}
     
     b64_audio = base64.b64encode(audio_bytes).decode("utf-8")
     
     prompt = f"""You are an expert Tajweed teacher.
-The expected words are: {json.dumps([w["ar"] for w in words])}
+The expected words are: {json.dumps(expected_words)}
 Listen to the student's recitation. Compare it word by word.
 Return JSON ONLY (no markdown, no extra text): 
 {{"score": int, "words": [{{"word": "arabic_word_here", "status": "good" | "missed" | "close"}}], "summary": "Short feedback"}}"""
@@ -77,12 +106,12 @@ Return JSON ONLY (no markdown, no extra text):
             
     return {"error": "Failed to analyze audio with Gemini."}
 
-# --- PREPARE VARIABLES ---
+# --- PREPARE VARIABLES FOR REACT ---
 analysis_json = json.dumps(st.session_state.analysis) if st.session_state.analysis else "null"
-teacher_img = "https://raw.githubusercontent.com/Abia2746/ReadandMemoriseTheQuran/main/IMG_6146.jpeg"
 words_json = json.dumps(words)
+verse_json = json.dumps(verse_text)
 
-# --- THE REACT UI (Using raw string to avoid Python f-string errors) ---
+# --- THE REACT UI ---
 html_code = r"""
 <!DOCTYPE html>
 <html lang="en" class="dark">
@@ -112,6 +141,7 @@ html_code = r"""
     const { useState, useEffect, useRef } = React;
     const mockWords = __WORDS__;
     const analysis = __ANALYSIS__;
+    const fullVerse = __VERSE__;
 
     function Garden() {
       const mountRef = useRef(null);
@@ -190,7 +220,7 @@ html_code = r"""
           <div className="max-w-2xl mx-auto px-4 mt-6">
             <div className="text-center mb-6">
               <p className="text-[#8A7A66] text-sm tracking-widest uppercase mb-1">Surah</p>
-              <h1 className="text-3xl font-serif text-[#D4AF37]">Al-Baqarah · Ayah 60</h1>
+              <h1 className="text-3xl font-serif text-[#D4AF37]">Surah {__SURAH__} · Ayah {__AYAH__}</h1>
             </div>
 
             <div className="flex justify-center mb-6">
@@ -224,17 +254,15 @@ html_code = r"""
 
                 return (
                   <div key={idx} className={`flex flex-col items-center justify-center p-4 min-w-[100px] rounded-2xl border transition-all duration-300 ${borderClass} ${bgClass}`}>
-                    
-                    {/* ENGLISH IS PROMINENT */}
-                    <div className={`text-xl font-bold text-[#E8D5B5] ${!hasAnalysis ? 'mb-2' : 'mb-1 opacity-50'}`}>
+                    {/* English (Hints) */}
+                    <div className={`text-lg font-bold text-[#E8D5B5] ${!hasAnalysis ? 'mb-2' : 'mb-1 opacity-50'}`}>
                       {word.en}
                     </div>
                     
-                    {/* ARABIC IS HIDDEN UNTIL ANALYZED */}
+                    {/* Arabic (Hidden until analyzed) */}
                     <div className={`font-arabic text-4xl mb-1 text-[#D4AF37] leading-relaxed transition-opacity duration-500 ${hasAnalysis ? 'opacity-100' : 'opacity-0 h-0 overflow-hidden'}`}>
                       {word.ar}
                     </div>
-
                   </div>
                 );
               })}
@@ -257,10 +285,13 @@ html_code = r"""
 </html>
 """
 
-# Inject variables safely (bypasses Python f-string limits)
+# Inject variables safely
 html_code = html_code.replace("__WORDS__", words_json)
 html_code = html_code.replace("__ANALYSIS__", analysis_json)
+html_code = html_code.replace("__VERSE__", verse_json)
 html_code = html_code.replace("__TEACHER_IMG__", teacher_img)
+html_code = html_code.replace("__SURAH__", str(surah))
+html_code = html_code.replace("__AYAH__", str(ayah))
 
 # 1. Render the Vercel-style UI
 components.html(html_code, height=1000, scrolling=True)
@@ -277,7 +308,8 @@ with col2:
     if audio_value is not None:
         if st.button("Analyze My Recitation", use_container_width=True, type="primary"):
             with st.spinner("Listening to your voice..."):
-                result = analyze_recitation(audio_value.getvalue())
+                expected_arabic = [w["ar"] for w in words]
+                result = analyze_recitation(audio_value.getvalue(), expected_arabic)
                 
                 if "error" in result:
                     st.error(result["error"])
