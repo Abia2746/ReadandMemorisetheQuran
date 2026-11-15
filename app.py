@@ -54,7 +54,7 @@ def fetch_audio(s, a, folder):
     if r.status_code != 200 or len(r.content) < 2000: raise RuntimeError("Audio not available.")
     return r.content
 
-# ───────────────────────────── AI ─────────────────────────────
+# ───────────────────────────── AI (Stable Models) ─────────────────────────────
 def api_key():
     try: return st.secrets["GEMINI_API_KEY"]
     except: return os.environ.get("GEMINI_API_KEY", "")
@@ -63,25 +63,30 @@ def analyse_recitation_fast(audio_bytes, mime_type, words, strictness, teacher_g
     k = api_key()
     if not k: raise RuntimeError("Add GEMINI_API_KEY in Streamlit secrets.")
     
+    # Gemini API has a 20MB limit for inline data. 10MB is a safe threshold for audio.
+    if len(audio_bytes) > 10_000_000:
+        raise RuntimeError("Audio recording is too long. Please record under 30 seconds.")
+
     teacher = "a strict male Sheikh" if teacher_gender == "Male" else "a gentle female Sheikh"
     
     prompt = (f"You are {teacher}. Analyze this recitation of: "
               + json.dumps([w["ar"] for w in words], ensure_ascii=False)
               + f'. Evaluate Tajweed (Madd, Ghunnah, Qalqalah, Idgham). Strictness: {strictness}. '
-              'Return a JSON object with this exact format: {"words":[{"i":0,"status":"good","rule":"Madd"}], "feedback":"..."}')
+              'Return JSON only: {"words":[{"i":0,"status":"good","rule":"Madd"}], "feedback":"..."}')
               
     body = {
         "contents": [{"parts": [{"text": prompt}, {"inline_data": {"mime_type": mime_type, "data": base64.b64encode(audio_bytes).decode()}}]}],
-        "generationConfig": {"temperature": 0.1}
+        "generationConfig": {"responseMimeType": "application/json", "temperature": 0.1}
     }
     
-    # Try multiple models to guarantee success
-    models_to_try = ["gemini-1.5-flash", "gemini-2.0-flash", "gemini-3.8-flash"]
+    # Actual currently supported models
+    models_to_try = ["gemini-2.0-flash", "gemini-1.5-flash-latest", "gemini-1.5-flash"]
     err = ""
     
     for model in models_to_try:
         try:
-            r = requests.post(f"{GEMINI}/{model}:generateContent", headers={"x-goog-api-key": k}, json=body, timeout=(10, 30))
+            # Using a 45-second timeout per model
+            r = requests.post(f"{GEMINI}/{model}:generateContent", headers={"x-goog-api-key": k}, json=body, timeout=45)
             if r.status_code != 200:
                 err = f"{model}: {r.status_code}"
                 continue
@@ -110,7 +115,7 @@ def analyse_recitation_fast(audio_bytes, mime_type, words, strictness, teacher_g
         except Exception as e:
             err = f"{model}: {str(e)}"
             
-    raise RuntimeError(f"Analysis failed: {err}")
+    raise RuntimeError(f"Analysis failed after trying all models. {err}")
 
 # ───────────────────────────── Visual Engine (React) ─────────────────────────────
 PLAYER_HTML = r"""<!DOCTYPE html><html><head><meta charset="utf-8">
@@ -387,26 +392,21 @@ def record_step(kind, next_step):
             clip = st.audio_input("Recite", key=f"mic_{rk}_{st.session_state.tries}", label_visibility="collapsed")
         
         if clip is not None:
-            # Playback for the user to hear themselves
             st.audio(clip)
-            
             if st.button("Submit for Analysis", type="primary", use_container_width=True):
-                if len(clip.getvalue()) > 10_000_000:
-                    st.error("Audio is too long. Please record a shorter segment (under 30 seconds).")
-                else:
-                    with st.spinner("Analyzing Tajweed rules..."):
-                        try:
-                            # Pass the correct MIME type from the browser!
-                            mime = clip.type or "audio/webm"
-                            states, rules, feedback = analyse_recitation_fast(clip.getvalue(), mime, words, st.session_state.strictness, st.session_state.teacher_gender)
-                            
-                            st.session_state.results[rk] = (states, feedback)
-                            if states.count("good") / len(states) >= 0.8 and rk not in st.session_state.paid:
-                                award_xp(st.session_state.name, 10)
-                                st.session_state.paid.append(rk)
-                            st.rerun()
-                        except Exception as e:
-                            st.error(str(e))
+                with st.spinner("Analyzing Tajweed rules..."):
+                    try:
+                        # Pass the correct MIME type from the browser!
+                        mime = clip.type or "audio/webm"
+                        states, rules, feedback = analyse_recitation_fast(clip.getvalue(), mime, words, st.session_state.strictness, st.session_state.teacher_gender)
+                        
+                        st.session_state.results[rk] = (states, feedback)
+                        if states.count("good") / len(states) >= 0.8 and rk not in st.session_state.paid:
+                            award_xp(st.session_state.name, 10)
+                            st.session_state.paid.append(rk)
+                        st.rerun()
+                    except Exception as e:
+                        st.error(str(e))
         return
     
     states, feedback = res
