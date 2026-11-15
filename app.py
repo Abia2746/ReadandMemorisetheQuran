@@ -1,4 +1,4 @@
-# app.py — Al-Mu'allim · The Absolute Premium Build (Fixed Audio & UI)
+# app.py — Al-Mu'allim · Ultimate Premium Layout
 import base64, json, re, time
 import html as _h
 import datetime, math, pathlib
@@ -228,7 +228,7 @@ def render_premium_player(words, audio_b64, teacher_img, analysis):
         }}
         a.addEventListener('play', () => requestAnimationFrame(update));
     </script></body></html>"""
-    components.html(html, height=600, scrolling=True)
+    components.html(html, height=450, scrolling=True)
 
 def render_3d_garden():
     html = """
@@ -242,17 +242,14 @@ def render_3d_garden():
         scene.add(new THREE.AmbientLight(0xffffff, 0.3));
         const dirLight = new THREE.DirectionalLight(0xffeedd, 0.8); dirLight.position.set(10, 20, 10); scene.add(dirLight);
         
-        // Ground
         const ground = new THREE.Mesh(new THREE.PlaneGeometry(100, 100), new THREE.MeshStandardMaterial({color: 0x0a0a0a, roughness: 0.1, metalness: 0.9}));
         ground.rotation.x = -Math.PI / 2; scene.add(ground);
         
-        // Rain
         const rainCount = 5000; const rainGeo = new THREE.BufferGeometry(); const rainPos = new Float32Array(rainCount * 3);
         for(let i=0; i<rainCount*3; i+=3){ rainPos[i]=(Math.random()-0.5)*60; rainPos[i+1]=Math.random()*40; rainPos[i+2]=(Math.random()-0.5)*60; }
         rainGeo.setAttribute('position', new THREE.BufferAttribute(rainPos, 3));
         const rain = new THREE.Points(rainGeo, new THREE.PointsMaterial({color: 0x88bbff, size: 0.1, transparent: true, opacity: 0.4})); scene.add(rain);
         
-        // Better Trees
         for(let i=0; i<25; i++){ 
             const x = (Math.random()-0.5)*50; const z = (Math.random()-0.5)*50 - 10;
             const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.4, 4), new THREE.MeshStandardMaterial({color: 0x221100})); 
@@ -261,7 +258,6 @@ def render_3d_garden():
             leaves.position.set(x, 5, z); scene.add(leaves);
         }
         
-        // Glowing Lantern
         const lantern = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 1.5, 8), new THREE.MeshStandardMaterial({color: 0xffaa00, emissive: 0xffaa00, emissiveIntensity: 3})); 
         lantern.position.set(0, 1.5, 0); scene.add(lantern);
         const pointLight = new THREE.PointLight(0xffaa00, 3, 25); pointLight.position.set(0, 2, 0); scene.add(pointLight);
@@ -322,43 +318,40 @@ if not verse or not words:
 img_name = "IMG_6147.jpeg" if st.session_state.cfg_teacher == "Male" else "IMG_6146.jpeg"
 teacher_img = f"https://raw.githubusercontent.com/Abia2746/ReadandMemoriseTheQuran/main/{img_name}"
 audio_b64 = base64.b64encode(ref_mp3).decode("utf-8") if ref_mp3 else ""
-
 analysis = st.session_state.last_analysis.get(key, None)
 
-if audio_b64:
-    render_premium_player(words, audio_b64, teacher_img, analysis)
-
-# 2. RECITE BUTTON ON MAIN SCREEN
-st.markdown("<h3 style='text-align:center;color:#D4AF37;margin-top:10px;'>🎙️ Recite the Ayah</h3>", unsafe_allow_html=True)
-st.markdown("<p style='text-align:center;color:#8A7A66;font-size:0.9rem;'>Recite from memory. The cards above will turn green/red.</p>", unsafe_allow_html=True)
-
-col1, col2, col3 = st.columns([1, 2, 1])
-with col2:
-    audio_val = st.audio_input("Record", label_visibility="collapsed")
-    if audio_val and ref_mp3:
-        if st.button("Analyze Recitation", use_container_width=True, type="primary"):
-            with st.spinner("Listening to your voice..."):
-                res = analyze_recitation(audio_val.getvalue(), [w["ar"] for w in words], ref_mp3)
-                if "error" in res: st.error(res["error"])
-                else:
-                    st.session_state.last_analysis[key] = res
-                    if res.get("overall_score", 0) >= 80:
-                        add_xp(st.session_state.user_name, 10)
-                        st.balloons()
-                    st.rerun()
-
-st.divider()
-
-# 3. TABS (Memorise & Study)
-t1, t2 = st.tabs(["Memorise (Hifz)", "Study"])
+# 2. TABS AT THE VERY TOP TO PREVENT SCROLLING
+t1, t2, t3 = st.tabs(["🎧 Listen & Recite", "🧠 Hifz (Memorise)", "🕌 Garden"])
 
 with t1:
+    if audio_b64:
+        render_premium_player(words, audio_b64, teacher_img, analysis)
+    
+    st.markdown("<h3 style='text-align:center;color:#D4AF37;margin-top:10px;'>🎙️ Recite the Ayah</h3>", unsafe_allow_html=True)
+    st.markdown("<p style='text-align:center;color:#8A7A66;font-size:0.9rem;'>Recite from memory. The cards above will turn green/red.</p>", unsafe_allow_html=True)
+    
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        audio_val = st.audio_input("Record", label_visibility="collapsed", key="mic_main")
+        if audio_val and ref_mp3:
+            if st.button("Analyze Recitation", use_container_width=True, type="primary", key="btn_main"):
+                with st.spinner("Listening to your voice..."):
+                    res = analyze_recitation(audio_val.getvalue(), [w["ar"] for w in words], ref_mp3)
+                    if "error" in res: st.error(res["error"])
+                    else:
+                        st.session_state.last_analysis[key] = res
+                        if res.get("overall_score", 0) >= 80:
+                            add_xp(st.session_state.user_name, 10)
+                            st.balloons()
+                        st.rerun()
+
+with t2:
     st.markdown(f"<h4 style='text-align:center;'>Step {st.session_state.mem_step + 1} of 4</h4>", unsafe_allow_html=True)
     
     if st.session_state.mem_step == 0:
         st.info("Step 1: Listen to the reference 5 times.")
         if ref_mp3: st.audio(ref_mp3, format="audio/mp3")
-        if st.button("✅ I listened once", use_container_width=True):
+        if st.button("✅ I listened once", use_container_width=True, key="btn_mem_0"):
             st.session_state.mem_listens += 1
             if st.session_state.mem_listens >= 5:
                 st.session_state.mem_step = 1
@@ -373,9 +366,9 @@ with t1:
             with cols[i]:
                 st.markdown(f"<div style='background:#2A221B;border:1px solid #D4AF37;border-radius:15px;padding:10px;text-align:center;'><div style='color:#E8D5B5;font-weight:bold;'>{w['en']}</div></div>", unsafe_allow_html=True)
         
-        audio_val = st.audio_input("Record step 2", label_visibility="collapsed")
+        audio_val = st.audio_input("Record step 2", label_visibility="collapsed", key="mic_mem_1")
         if audio_val and ref_mp3:
-            if st.button("Analyze Hifz Chunk", use_container_width=True, type="primary"):
+            if st.button("Analyze Hifz Chunk", use_container_width=True, type="primary", key="btn_mem_1"):
                 with st.spinner("Analyzing..."):
                     res = analyze_recitation(audio_val.getvalue(), [w["ar"] for w in words], ref_mp3)
                     if "error" in res: st.error(res["error"])
@@ -386,14 +379,14 @@ with t1:
 
     elif st.session_state.mem_step == 2:
         st.success("Masha'Allah! You passed this chunk.")
-        if st.button("Next Step (Repeat x5)", use_container_width=True, type="primary"):
+        if st.button("Next Step (Repeat x5)", use_container_width=True, type="primary", key="btn_mem_2"):
             st.session_state.mem_step = 3
             st.rerun()
 
     elif st.session_state.mem_step == 3:
         st.info("Step 3: Repeat x5 without looking at the Arabic.")
         if ref_mp3: st.audio(ref_mp3, format="audio/mp3")
-        if st.button("✅ I repeated once", use_container_width=True):
+        if st.button("✅ I repeated once", use_container_width=True, key="btn_mem_3"):
             st.session_state.mem_listens += 1
             if st.session_state.mem_listens >= 5:
                 st.session_state.mem_step = 4
@@ -405,16 +398,16 @@ with t1:
         if st.session_state.show_reward:
             st.balloons()
             st.markdown("<h3 style='text-align:center;color:#D4AF37'>Alhamdulillah!</h3>", unsafe_allow_html=True)
-            if st.button("Complete Ritual", use_container_width=True, type="primary"):
+            if st.button("Complete Ritual", use_container_width=True, type="primary", key="btn_mem_4"):
                 st.session_state.show_reward = False
                 st.session_state.mem_step = 0
                 add_xp(st.session_state.user_name, 20)
                 st.rerun()
         else:
             st.info("Step 4: Final Blind Recitation.")
-            audio_val = st.audio_input("Record final", label_visibility="collapsed")
+            audio_val = st.audio_input("Record final", label_visibility="collapsed", key="mic_mem_4")
             if audio_val and ref_mp3:
-                if st.button("Analyze Final", use_container_width=True, type="primary"):
+                if st.button("Analyze Final", use_container_width=True, type="primary", key="btn_mem_4_2"):
                     with st.spinner("Analyzing..."):
                         res = analyze_recitation(audio_val.getvalue(), [w["ar"] for w in words], ref_mp3)
                         if "error" in res: st.error(res["error"])
@@ -423,11 +416,6 @@ with t1:
                             st.session_state.show_reward = True
                             st.rerun()
 
-with t2:
-    st.markdown(f"<div style='direction:rtl; font-family:Amiri Quran; font-size:2.5rem; text-align:center; color:#D4AF37; padding:20px;'>{verse}</div>", unsafe_allow_html=True)
-    st.markdown(f"<div style='text-align:center; color:#8A7A66; margin-top:10px;'>Translation: {requests.get(f'https://api.alquran.cloud/v1/ayah/{s}:{a}/en.sahih').json()['data']['text']}</div>", unsafe_allow_html=True)
-
-# ─── 3D GARDEN ───
-st.divider()
-st.markdown("<h4 style='text-align:center;color:#D4AF37'>Your Private Garden</h4>", unsafe_allow_html=True)
-render_3d_garden()
+with t3:
+    st.markdown("<h3 style='text-align:center;color:#D4AF37'>Your Private Garden</h3>", unsafe_allow_html=True)
+    render_3d_garden()
