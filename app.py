@@ -1,4 +1,5 @@
-import base64, datetime, hashlib, io, json, math, os, pathlib, re, sqlite3, tempfile, time
+import base64, datetime, hashlib, io, json, math, os, pathlib, re, sqlite3, tempfile, time, wave
+import numpy as np
 import requests
 import streamlit as st
 import streamlit.components.v1 as components
@@ -53,6 +54,32 @@ def fetch_audio(s, a, folder):
     if r.status_code != 200 or len(r.content) < 2000: raise RuntimeError("Audio not available.")
     return r.content
 
+# ───────────────────────────── Audio Compression (Prevents Timeouts) ─────────────────────────────
+def prep_audio(b):
+    """Converts heavy mic audio into a tiny, fast-processing 16kHz mono WAV."""
+    try:
+        with wave.open(io.BytesIO(b)) as w:
+            ch, sw, fr = w.getnchannels(), w.getsampwidth(), w.getframerate()
+            raw = w.readframes(w.getnframes())
+        if sw != 2 or not raw: return b
+        
+        x = np.frombuffer(raw, "<i2").astype(np.float32)
+        if ch > 1:
+            x = x[: len(x) // ch * ch].reshape(-1, ch).mean(axis=1)
+        if fr != 16000 and len(x) > 1:
+            x = np.interp(np.linspace(0, len(x) - 1, round(len(x) * 16000 / fr)), np.arange(len(x)), x)
+            
+        p = float(np.percentile(np.abs(x), 99.5))
+        if p > 30: x = x * min(30.0, 0.9 * 32767 / p)
+        
+        out = io.BytesIO()
+        with wave.open(out, "wb") as w2:
+            w2.setnchannels(1); w2.setsampwidth(2); w2.setframerate(16000)
+            w2.writeframes(np.clip(x, -32768, 32767).astype("<i2").tobytes())
+        return out.getvalue()
+    except Exception:
+        return b
+
 # ───────────────────────────── AI (Dynamic Model) ─────────────────────────────
 def api_key():
     try: return st.secrets["GEMINI_API_KEY"]
@@ -63,20 +90,18 @@ def get_best_model(k):
         r = requests.get(GEMINI, headers={"x-goog-api-key": k}, params={"pageSize": 100}, timeout=10).json()
         models = [m["name"].split("/")[-1] for m in r.get("models", []) if "generateContent" in m.get("supportedGenerationMethods", [])]
         
-        # Prioritize the latest models mentioned in the API error message
+        # Prioritize the latest models
         for pref in ["gemini-3.8-flash", "gemini-3.5-flash", "gemini-2.5-flash", "gemini-1.5-flash-latest"]:
             if pref in models: return pref
             
-        # Dynamic fallback: sort by highest version number for any "flash" model
         flash_models = [m for m in models if "flash" in m and "image" not in m and "tts" not in m]
         if flash_models:
             def ver(m):
                 match = re.search(r'(\d+\.\d+)', m)
                 return float(match.group(1)) if match else 0.0
             return sorted(flash_models, key=ver, reverse=True)[0]
-            
     except Exception: pass
-    return "gemini-3.8-flash" 
+    return "gemini-3.8-flash"
 
 def analyse_recitation_fast(wav_bytes, words, strictness, teacher_gender):
     k = api_key()
@@ -96,7 +121,8 @@ def analyse_recitation_fast(wav_bytes, words, strictness, teacher_gender):
     }
     
     try:
-        r = requests.post(f"{GEMINI}/{model}:generateContent", headers={"x-goog-api-key": k}, json=body, timeout=60)
+        # INCREASED TIMEOUT TO 120 SECONDS
+        r = requests.post(f"{GEMINI}/{model}:generateContent", headers={"x-goog-api-key": k}, json=body, timeout=120)
         if r.status_code != 200:
             raise RuntimeError(f"API Error {r.status_code}: {r.text}")
             
@@ -392,7 +418,8 @@ def record_step(kind, next_step):
         if clip is not None:
             with st.spinner("Analyzing Tajweed rules..."):
                 try:
-                    states, rules, feedback = analyse_recitation_fast(clip.getvalue(), words, st.session_state.strictness, st.session_state.teacher_gender)
+                    # Compress audio using numpy first to avoid timeout, then send
+                    states, rules, feedback = analyse_recitation_fast(prep_audio(clip.getvalue()), words, st.session_state.strictness, st.session_state.teacher_gender)
                 except Exception as e:
                     st.error(str(e)); return
             
