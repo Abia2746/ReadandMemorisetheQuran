@@ -3,7 +3,7 @@ import requests
 import streamlit as st
 import streamlit.components.v1 as components
 
-st.set_page_config(page_title="Al-Mu'allim", page_icon="🕌", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="Al-Mu'allim", page_icon="🕌", layout="wide", initial_sidebar_state="expanded")
 
 try:
     DB_PATH = pathlib.Path(__file__).with_name("muallim.db")
@@ -53,31 +53,29 @@ def fetch_audio(s, a, folder):
     if r.status_code != 200 or len(r.content) < 2000: raise RuntimeError("Audio not available.")
     return r.content
 
-# ───────────────────────────── AI ─────────────────────────────
+# ───────────────────────────── AI (Dynamic Model Fetcher) ─────────────────────────────
 def api_key():
     try: return st.secrets["GEMINI_API_KEY"]
     except: return os.environ.get("GEMINI_API_KEY", "")
 
-def get_working_model(k):
-    # Dynamically find a working Flash model from the latest generation
+def get_best_model(k):
     try:
         r = requests.get(GEMINI, headers={"x-goog-api-key": k}, params={"pageSize": 100}, timeout=10).json()
         models = [m["name"].split("/")[-1] for m in r.get("models", []) if "generateContent" in m.get("supportedGenerationMethods", [])]
-        # Prefer the newest flash models
-        for pref in ["gemini-3.8-flash", "gemini-2.5-flash", "gemini-2.0-flash"]:
+        # Look for the newest flash models first
+        for pref in ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash-latest", "gemini-1.5-flash"]:
             if pref in models: return pref
-        # Fallback to any flash model
+        # Fallback to any model containing "flash"
         for m in models:
-            if "flash" in m and "image" not in m and "tts" not in m:
-                return m
+            if "flash" in m: return m
     except: pass
-    return "gemini-2.5-flash" # Hard fallback
+    return "gemini-2.5-flash" # Absolute fallback
 
 def analyse_recitation_fast(wav_bytes, words, strictness, teacher_gender):
     k = api_key()
     if not k: raise RuntimeError("Add GEMINI_API_KEY in Streamlit secrets.")
     
-    model = get_working_model(k)
+    model = get_best_model(k)
     teacher = "a strict male Sheikh" if teacher_gender == "Male" else "a gentle female Sheikh"
     
     prompt = (f"You are {teacher}. Analyze this recitation of: "
@@ -118,14 +116,23 @@ PLAYER_HTML = r"""<!DOCTYPE html><html><head><meta charset="utf-8">
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 <style>
 body{margin:0;background:transparent;color:#E8D5B5;font-family:Inter,sans-serif;}
-.ar-text{font-family:'Amiri Quran',serif; font-size: 2.4rem; line-height: 2.2; direction: rtl;}
-.glass{background: rgba(30, 25, 20, 0.6); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); border: 1px solid rgba(212, 175, 55, 0.15); box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.4);}
+.ar-text{font-family:'Amiri Quran',serif; font-size: 2.2rem; line-height: 2.4; direction: rtl;}
+.glass{background: rgba(30, 25, 20, 0.5); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); border: 1px solid rgba(212, 175, 55, 0.15); box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.4);}
 .glass-card{background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.05); border-radius: 16px;}
-.blur-text{filter: blur(10px); opacity: 0.4; transition: all 0.5s ease; user-select: none;}
-.word-span{display: inline-block; transition: all 0.2s ease; padding: 0 4px; border-radius: 8px;}
-.word-active{background: rgba(212, 175, 55, 0.2); color: #D4AF37; text-shadow: 0 0 15px rgba(212,175,55,0.8); transform: scale(1.05);}
-.word-good{color: #4ade80; text-shadow: 0 0 10px rgba(74, 222, 128, 0.5);}
-.word-missed{color: #f87171; text-shadow: 0 0 10px rgba(248, 113, 113, 0.5);}
+.blur-text{filter: blur(12px); opacity: 0.3; transition: all 0.5s ease; user-select: none; pointer-events: none;}
+
+/* Minimalist to Premium Highlight */
+.word-span{display: inline-flex; flex-direction: column; align-items: center; transition: all 0.2s ease; padding: 6px 12px; border-radius: 12px; border: 1px solid transparent;}
+.word-active{
+  background: rgba(212, 175, 55, 0.15);
+  border: 1px solid rgba(212, 175, 55, 0.5);
+  box-shadow: 0 0 20px rgba(212, 175, 55, 0.3);
+  transform: scale(1.1);
+  z-index: 10;
+}
+.word-good{color: #4ade80; text-shadow: 0 0 15px rgba(74, 222, 128, 0.6);}
+.word-missed{color: #f87171; text-shadow: 0 0 15px rgba(248, 113, 113, 0.6);}
+
 /* Custom Scrollbar */
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
@@ -156,7 +163,7 @@ function App(){
    const idx = Math.floor(pct * D.words.length);
    setActiveWord(idx);
    
-   // Auto-scroll active word into view
+   // Auto-scroll active word into view smoothly
    if (containerRef.current) {
      const activeEl = containerRef.current.querySelector('.word-active');
      if (activeEl) activeEl.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
@@ -179,9 +186,11 @@ function App(){
      )
    ),
 
-   // Main Recitation Area (Scrollable)
+   // Main Recitation Area
    h('div',{className:'glass rounded-3xl p-6 relative flex flex-col'},
-     h('div',{ref:containerRef, className:'max-h-[45vh] overflow-y-auto pr-2 flex flex-wrap justify-center gap-y-6 gap-x-2 z-10 ' + (D.mode==='blind' && !D.states ? 'blur-text' : '')},
+     
+     // Scrollable Arabic Container (FORCED RTL)
+     h('div',{ref:containerRef, dir:'rtl', className:'max-h-[40vh] overflow-y-auto pr-2 flex flex-wrap justify-center gap-y-4 gap-x-2 z-10 ' + (D.mode==='blind' && !D.states ? 'blur-text' : '')},
        D.words.map((w, i) => {
          const isActive = activeWord === i;
          const isGood = D.states && D.states[i] === 'good';
@@ -192,17 +201,17 @@ function App(){
          else if (isMissed) cls += 'word-missed ';
          else if (isActive) cls += 'word-active ';
 
-         return h('div', {key:i, className:'flex flex-col items-center'},
-           h('span', {className:'ar-text ' + cls, dangerouslySetInnerHTML:{__html: parseTajweed(w.ar)}}),
-           // Show transliteration if hints mode or full mode
-           (D.mode !== 'blind' || D.states) && w.tr ? h('span',{className:'text-[10px] italic text-[#D4AF37] mt-1'}, w.tr) : null,
-           // Show English if hints mode
-           (D.mode === 'hints' || D.mode === 'full') ? h('span',{className:'text-xs text-[#a8987f] text-center max-w-[100px] mt-1'}, w.en) : null
+         return h('div', {key:i, className:cls},
+           h('span', {className:'ar-text', dangerouslySetInnerHTML:{__html: parseTajweed(w.ar)}}),
+           // Transliteration
+           (D.mode !== 'blind' || D.states) && w.tr ? h('span',{className:'text-[11px] italic text-[#D4AF37] mt-1 font-semibold'}, w.tr) : null,
+           // English Hints
+           (D.mode === 'hints' || D.mode === 'full') ? h('span',{className:'text-[11px] text-[#a8987f] text-center max-w-[120px] mt-1'}, w.en) : null
          )
        })
      ),
      
-     // Hidden audio for syncing
+     // Audio Player
      D.audio ? h('audio', {ref:audioRef, src:D.audio, controls:true, onTimeUpdate:handleTimeUpdate, className:'w-full mt-6 rounded-full outline-none sepia-[.6] saturate-150'}) : null
    ),
 
@@ -270,7 +279,7 @@ def embed_bg(html):
 
 def player(words, mode, states=None, audio=None, feedback="", meta={}):
     data = json.dumps({"words": words, "mode": mode, "states": states, "audio": audio, "feedback": feedback, "meta": meta}, ensure_ascii=False).replace("</", "<\\/")
-    h = 520 # Increased height to accommodate scrollable area and controls
+    h = 600 # Taller iframe to prevent clipping and allow inner scrolling
     embed = PLAYER_HTML.replace("__DATA__", data)
     components.html(embed, height=h, scrolling=False)
 
