@@ -1,20 +1,17 @@
-# app.py — Al-Mu'allim · The Ultimate Hybrid Build (Streamlit + React 3D)
+# app.py — Al-Mu'allim · The Absolute Premium Build
 import base64, json, re, time
 import html as _h
-import datetime, math, random, pathlib
-import io, threading, wave, os, sqlite3
+import datetime, math, pathlib
+import io, wave, os, sqlite3
 import numpy as np
-from streamlit.runtime.scriptrunner import add_script_run_ctx, get_script_run_ctx
 import requests
 import streamlit as st
 import streamlit.components.v1 as components
-from streamlit_mic_recorder import mic_recorder
 
 # ──────────────────────────────────────────────────────────────────────────────
 # CONFIG & DATABASE
 # ──────────────────────────────────────────────────────────────────────────────
 API = "https://generativelanguage.googleapis.com/v1beta/models"
-VOICE_ID = "pNInz6obpgDQGcFmaJgB"
 ROOT = pathlib.Path(__file__).parent
 DB_PATH = "al_muallim_master.db"
 
@@ -64,13 +61,13 @@ _DEFAULTS = {
     "current_surah": 2, "current_ayah": 60,
     "chat": [], "tafsir_text": {}, "last_analysis": {},
     "cfg_teacher": "Female", "cfg_gain": 12, "cfg_reciter": "Mishary Alafasy",
-    "mem_step": 0, "mem_listens": 0, "mem_chunk": 0, "show_reward": False
+    "mem_step": 0, "mem_listens": 0, "show_reward": False
 }
 for k, v in _DEFAULTS.items():
     st.session_state.setdefault(k, v)
 
 # ──────────────────────────────────────────────────────────────────────────────
-# HELPERS (API & AUDIO)
+# HELPERS & API
 # ──────────────────────────────────────────────────────────────────────────────
 def get_secret(name, default=""):
     try:
@@ -105,55 +102,8 @@ def call_gemini(parts, expect_json=False, pro=False):
     except Exception as e:
         raise RuntimeError(f"AI Error: {str(e)}")
 
-def _valid_wav(data):
-    try:
-        with wave.open(io.BytesIO(data), "rb") as wf:
-            channels, width, rate = wf.getnchannels(), wf.getsampwidth(), wf.getframerate()
-            frames = wf.readframes(wf.getnframes())
-        if not frames: raise ValueError("Empty recording.")
-        if width == 1: samples = (np.frombuffer(frames, dtype=np.uint8).astype(np.float32) - 128) * 256
-        elif width == 2: samples = np.frombuffer(frames, dtype="<i2").astype(np.float32)
-        elif width == 4: samples = np.frombuffer(frames, dtype="<i4").astype(np.float32) / 65536
-        if channels > 1: samples = samples[:(len(samples)//channels)*channels].reshape(-1, channels).mean(axis=1)
-        if rate != 16000 and len(samples):
-            samples = np.interp(np.linspace(0, len(samples)-1, max(1, round(len(samples) * 16000 / rate))), np.arange(len(samples)), samples)
-        samples = np.clip(samples, -32768, 32767).astype("<i2")
-        out = io.BytesIO()
-        with wave.open(out, "wb") as wf:
-            wf.setnchannels(1); wf.setsampwidth(2); wf.setframerate(16000); wf.writeframes(samples.tobytes())
-        return out.getvalue()
-    except Exception: raise ValueError("Invalid audio.")
-
-def boost(wav_bytes):
-    try:
-        with wave.open(io.BytesIO(wav_bytes)) as w:
-            ch, sw, fr = w.getnchannels(), w.getsampwidth(), w.getframerate()
-            raw = w.readframes(w.getnframes())
-        if sw != 2: return wav_bytes
-        x = np.frombuffer(raw, dtype=np.int16).astype(np.float32)
-        peak = float(np.percentile(np.abs(x), 99.5))
-        if peak < 30: return wav_bytes
-        y = np.clip(x * min(float(st.session_state.get("cfg_gain", 12)), 0.9 * 32767 / peak), -32768, 32767).astype(np.int16)
-        out = io.BytesIO()
-        with wave.open(out, "wb") as w2:
-            w2.setnchannels(ch); w2.setsampwidth(2); w2.setframerate(fr); w2.writeframes(y.tobytes())
-        return out.getvalue()
-    except: return wav_bytes
-
-def transcribe(wav):
-    prompt = "Transcribe this Quran recitation exactly as spoken, in Arabic script. Preserve mistakes. Return [inaudible] if empty."
-    try:
-        prepared = _valid_wav(wav)
-        result = call_gemini([{"text": prompt}, audio_part(prepared, "audio/wav")], pro=False).strip()
-        if result and "[inaudible]" not in result.lower(): return result
-    except: pass
-    return ""
-
 def analyze_recitation(audio_bytes, expected_words, ref_audio_bytes):
-    wav = _valid_wav(audio_bytes)
-    heard = transcribe(wav)
-    if not heard: return {"error": "I couldn't hear the recitation. Try again."}
-    
+    wav = audio_bytes
     prompt = f"""You are an expert Tajweed teacher.
 Expected Arabic words: {json.dumps(expected_words)}
 The student recited the audio attached.
@@ -162,7 +112,7 @@ Return JSON ONLY:
 {{"overall_score": int, "words": [{{"word": "arabic_word", "status": "good" | "missed"}}], "summary": "Short feedback"}}"""
     
     try:
-        res = call_gemini([{"text": prompt}, {"text": "Ref:"}, audio_part(ref_audio_bytes, "audio/mpeg"), {"text": "Student:"}, audio_part(wav, "audio/wav")], expect_json=True, pro=True)
+        res = call_gemini([{"text": prompt}, {"text": "Ref:"}, audio_part(ref_audio_bytes, "audio/mpeg"), {"text": "Student:"}, audio_part(wav, "audio/webm")], expect_json=True, pro=True)
         return res
     except Exception as e:
         return {"error": str(e)}
@@ -189,7 +139,7 @@ def fetch_reciter(s, a, choice):
     return None, None
 
 # ──────────────────────────────────────────────────────────────────────────────
-# UI THEME & COMPONENTS
+# PREMIUM REACT COMPONENTS
 # ──────────────────────────────────────────────────────────────────────────────
 def apply_theme():
     st.markdown("""<style>
@@ -198,52 +148,108 @@ html,body,.stApp { background-color: #1A1510 !important; color: #E8D5B5 !importa
 h1,h2,h3,h4 { color: #D4AF37 !important; font-family: serif !important; }
 [data-testid="stSidebar"] { background-color: #110D09 !important; border-right: 1px solid #D4AF37; }
 .stButton>button { background: #D4AF37 !important; color: #000 !important; border-radius: 999px !important; font-weight: bold !important; }
-div[data-testid="stAudioInput"] { background: linear-gradient(135deg, #D4AF37, #F3E5AB) !important; border-radius: 999px !important; padding: 10px !important; }
+/* Style the native Streamlit mic to match the gold theme */
+div[data-testid="stAudioInput"] { background: linear-gradient(135deg, #D4AF37, #F3E5AB) !important; border-radius: 999px !important; padding: 10px !important; box-shadow: 0 0 20px rgba(212,175,55,0.4) !important; }
 </style>""", unsafe_allow_html=True)
+
+def render_premium_player(words, audio_b64, teacher_img):
+    html = f"""
+    <!DOCTYPE html><html><head><style>
+    body {{ background: transparent; color: #E8D5B5; margin: 0; font-family: 'Inter', sans-serif; }}
+    .header {{ text-align: center; margin-bottom: 20px; }}
+    .portrait {{ width: 120px; height: 150px; border-radius: 20px; border: 2px solid #D4AF37; object-fit: cover; margin: 0 auto; display: block; box-shadow: 0 0 30px rgba(212,175,55,0.2); }}
+    #w {{ display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; direction: rtl; padding: 10px; }}
+    .card {{ display: flex; flex-direction: column; align-items: center; padding: 12px 18px; border-radius: 16px; background: #2A221B; border: 1px solid rgba(212,175,55,.15); transition: all .3s; min-width: 110px; text-align: center; }}
+    .ar {{ font-family: 'Amiri Quran', serif; font-size: 2.2rem; color: #E8D5B5; line-height: 1.4; }}
+    .tr {{ font-size: 0.8rem; color: #D4AF37; font-style: italic; margin-top: 6px; }}
+    .en {{ font-size: 0.9rem; color: #8A7A66; margin-top: 2px; }}
+    .card.on {{ box-shadow: 0 0 20px rgba(212,175,55,.4); border-color: #D4AF37; transform: translateY(-3px) scale(1.05); background: rgba(212,175,55,.15); }}
+    audio {{ width: 100%; max-width: 600px; margin: 20px auto; border-radius: 999px; display: block; outline: none; }}
+    </style></head><body>
+    
+    <div class="header">
+        <img src="{teacher_img}" class="portrait" alt="Teacher">
+        <h2 style="color: #D4AF37; margin-top: 10px;">Surah {st.session_state.current_surah} · Ayah {st.session_state.current_ayah}</h2>
+    </div>
+
+    <div id="w"></div>
+    <audio id="a" controls src="data:audio/mpeg;base64,{audio_b64}"></audio>
+    
+    <script>
+        const W = {json.dumps(words)};
+        const box = document.getElementById('w'); const a = document.getElementById('a');
+        const els = W.map(w => {{
+            const d = document.createElement('div'); d.className = 'card';
+            d.innerHTML = `<div class="ar">${{w.ar}}</div><div class="tr">${{w.tr}}</div><div class="en">${{w.en}}</div>`;
+            box.appendChild(d); return d;
+        }});
+        
+        let cum = [];
+        function build() {{
+            const d = a.duration || 1; let total = 0;
+            const weights = W.map(w => {{
+                let weight = Math.max(1, (w.ar||'').replace(/[\\u064B-\\u0652\\u0670\\u06D6-\\u06ED\\u0640]/g,'').length);
+                if (/[آإأٱ]/.test(w.ar)) weight += 3; // Madd
+                if (/[\\u0651]/.test(w.ar)) weight += 2; // Shaddah
+                if (/[\\u06D6-\\u06ED]/.test(w.ar)) weight += 5; // Waqf
+                total += weight; return weight;
+            }});
+            let cur = d * 0.05; const sp = d * 0.90;
+            cum = weights.map(w => {{ cur += (w/total)*sp; return cum; }});
+        }}
+        a.onloadedmetadata = build;
+        function update() {{
+            if (a.paused || a.ended) return;
+            const t = a.currentTime; let idx = cum.findIndex(c => t < c);
+            if (a.ended) idx = -1;
+            els.forEach((e, k) => e.classList.toggle('on', k === idx));
+            requestAnimationFrame(update);
+        }}
+        a.addEventListener('play', () => requestAnimationFrame(update));
+    </script></body></html>"""
+    components.html(html, height=650, scrolling=True)
 
 def render_3d_garden():
     html = """
     <!DOCTYPE html><html><head><style>body{margin:0;overflow:hidden;background:#0a0805;border-radius:20px;}</style>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script></head><body>
     <script>
-        const scene = new THREE.Scene(); scene.fog = new THREE.FogExp2(0x0a0805, 0.05);
-        const camera = new THREE.PerspectiveCamera(60, window.innerWidth/window.innerHeight, 0.1, 1000); camera.position.set(0, 5, 15);
+        const scene = new THREE.Scene(); scene.fog = new THREE.FogExp2(0x0a0805, 0.06);
+        const camera = new THREE.PerspectiveCamera(60, window.innerWidth/window.innerHeight, 0.1, 1000); camera.position.set(0, 4, 12);
         const renderer = new THREE.WebGLRenderer({antialias:true, alpha:true}); renderer.setSize(window.innerWidth, window.innerHeight); document.body.appendChild(renderer.domElement);
-        scene.add(new THREE.AmbientLight(0xffffff, 0.5));
-        const dirLight = new THREE.DirectionalLight(0xffeedd, 1); dirLight.position.set(10, 20, 10); scene.add(dirLight);
-        const ground = new THREE.Mesh(new THREE.PlaneGeometry(100, 100), new THREE.MeshStandardMaterial({color: 0x1a2020, roughness: 0.1, metalness: 0.8}));
+        
+        scene.add(new THREE.AmbientLight(0xffffff, 0.3));
+        const dirLight = new THREE.DirectionalLight(0xffeedd, 0.8); dirLight.position.set(10, 20, 10); scene.add(dirLight);
+        
+        // Ground
+        const ground = new THREE.Mesh(new THREE.PlaneGeometry(100, 100), new THREE.MeshStandardMaterial({color: 0x0a0a0a, roughness: 0.1, metalness: 0.9}));
         ground.rotation.x = -Math.PI / 2; scene.add(ground);
-        const rainCount = 3000; const rainGeo = new THREE.BufferGeometry(); const rainPos = new Float32Array(rainCount * 3);
+        
+        // Rain
+        const rainCount = 5000; const rainGeo = new THREE.BufferGeometry(); const rainPos = new Float32Array(rainCount * 3);
         for(let i=0; i<rainCount*3; i+=3){ rainPos[i]=(Math.random()-0.5)*60; rainPos[i+1]=Math.random()*40; rainPos[i+2]=(Math.random()-0.5)*60; }
         rainGeo.setAttribute('position', new THREE.BufferAttribute(rainPos, 3));
-        const rain = new THREE.Points(rainGeo, new THREE.PointsMaterial({color: 0xaaccff, size: 0.15, transparent: true, opacity: 0.6})); scene.add(rain);
-        for(let i=0; i<15; i++){ const tree = new THREE.Mesh(new THREE.ConeGeometry(1.5, 6, 8), new THREE.MeshStandardMaterial({color: 0x0a2a1a})); tree.position.set((Math.random()-0.5)*40, 3, (Math.random()-0.5)*40 - 10); scene.add(tree); }
-        const lantern = new THREE.Mesh(new THREE.BoxGeometry(1, 1.5, 1), new THREE.MeshStandardMaterial({color: 0x332200, emissive: 0xffaa00, emissiveIntensity: 2})); lantern.position.set(0, 2, 0); scene.add(lantern);
-        const pointLight = new THREE.PointLight(0xffaa00, 2, 20); pointLight.position.set(0, 2, 0); scene.add(pointLight);
+        const rain = new THREE.Points(rainGeo, new THREE.PointsMaterial({color: 0x88bbff, size: 0.1, transparent: true, opacity: 0.4})); scene.add(rain);
+        
+        // Better Trees (Cylinder trunk + Cone leaves)
+        for(let i=0; i<25; i++){ 
+            const x = (Math.random()-0.5)*50; const z = (Math.random()-0.5)*50 - 10;
+            const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.4, 4), new THREE.MeshStandardMaterial({color: 0x221100})); 
+            trunk.position.set(x, 2, z); scene.add(trunk);
+            const leaves = new THREE.Mesh(new THREE.ConeGeometry(2, 5, 8), new THREE.MeshStandardMaterial({color: 0x051a0a})); 
+            leaves.position.set(x, 5, z); scene.add(leaves);
+        }
+        
+        // Glowing Lantern
+        const lantern = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 1.5, 8), new THREE.MeshStandardMaterial({color: 0xffaa00, emissive: 0xffaa00, emissiveIntensity: 3})); 
+        lantern.position.set(0, 1.5, 0); scene.add(lantern);
+        const pointLight = new THREE.PointLight(0xffaa00, 3, 25); pointLight.position.set(0, 2, 0); scene.add(pointLight);
+        
         let time = 0; const animate = () => { requestAnimationFrame(animate); time += 0.01;
-            const pos = rain.geometry.attributes.position.array; for(let i=1; i<rainCount*3; i+=3){ pos[i] -= 0.5; if(pos[i]<0) pos[i]=40; } rain.geometry.attributes.position.needsUpdate = true;
-            camera.position.x = Math.sin(time*0.2)*5; camera.position.z = Math.cos(time*0.2)*5 + 10; camera.lookAt(0,2,0); renderer.render(scene, camera);
+            const pos = rain.geometry.attributes.position.array; for(let i=1; i<rainCount*3; i+=3){ pos[i] -= 0.6; if(pos[i]<0) pos[i]=40; } rain.geometry.attributes.position.needsUpdate = true;
+            camera.position.x = Math.sin(time*0.1)*4; camera.position.z = Math.cos(time*0.1)*4 + 12; camera.lookAt(0,2,0); renderer.render(scene, camera);
         }; animate();
     </script></body></html>"""
-    components.html(html, height=250)
-
-def render_canvas():
-    html = """
-    <div style="text-align:center; color:#D4AF37; font-family:'Amiri Quran', serif; font-size:2rem;">اْلحَمْدُ لِلّٰهِ</div>
-    <p style="text-align:center; color:#8A7A66; font-size:0.9rem;">Trace the words to claim your XP.</p>
-    <canvas id="c" width="400" height="150" style="background:#2A221B; border:2px solid #D4AF37; border-radius:20px; width:100%; cursor:crosshair; touch-action:none;"></canvas>
-    <div style="text-align:center; margin-top:10px;"><button onclick="clearCanvas()" style="background:transparent; color:#D4AF37; border:1px solid #D4AF37; padding:6px 12px; border-radius:999px;">Retry</button></div>
-    <script>
-        const canvas = document.getElementById('c'); const ctx = canvas.getContext('2d');
-        let isDrawing = false; ctx.lineWidth = 4; ctx.lineCap = 'round'; ctx.strokeStyle = '#D4AF37';
-        canvas.addEventListener('mousedown', start); canvas.addEventListener('mousemove', draw); canvas.addEventListener('mouseup', stop);
-        canvas.addEventListener('touchstart', start, {passive:false}); canvas.addEventListener('touchmove', draw, {passive:false}); canvas.addEventListener('touchend', stop);
-        function getPos(e){ const rect = canvas.getBoundingClientRect(); const cx = e.touches ? e.touches[0].clientX : e.clientX; const cy = e.touches ? e.touches[0].clientY : e.clientY; return {x: cx - rect.left, y: cy - rect.top}; }
-        function start(e){ e.preventDefault(); isDrawing = true; ctx.beginPath(); const p = getPos(e); ctx.moveTo(p.x, p.y); }
-        function draw(e){ e.preventDefault(); if(!isDrawing) return; const p = getPos(e); ctx.lineTo(p.x, p.y); ctx.stroke(); }
-        function stop(e){ e.preventDefault(); isDrawing = false; }
-        function clearCanvas(){ ctx.clearRect(0,0,canvas.width,canvas.height); }
-    </script>"""
     components.html(html, height=250)
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -291,25 +297,29 @@ if not verse or not words:
     st.error("Could not load Quran data.")
     st.stop()
 
-st.markdown(f"<h2 style='text-align:center; margin-top: 10px;'>Surah {s} · Ayah {a}</h2>", unsafe_allow_html=True)
+# 1. PREMIUM PLAYER (Includes Teacher, Arabic, English, Transliteration, and Glowing Audio)
+img_name = "IMG_6147.jpeg" if st.session_state.cfg_teacher == "Male" else "IMG_6146.jpeg"
+teacher_img = f"https://raw.githubusercontent.com/Abia2746/ReadandMemoriseTheQuran/main/{img_name}"
+audio_b64 = base64.b64encode(ref_mp3).decode("utf-8") if ref_mp3 else ""
+
+if audio_b64:
+    render_premium_player(words, audio_b64, teacher_img)
+
+st.divider()
 
 t1, t2 = st.tabs(["Study", "Memorise (Hifz)"])
 
 # ─── TAB 1: STUDY ───
 with t1:
-    st.markdown(f"<div style='text-align:center;color:#8A7A66;margin-bottom:10px'>Reciter: {st.session_state.cfg_reciter}</div>", unsafe_allow_html=True)
-    if ref_mp3:
-        st.audio(ref_mp3, format="audio/mp3")
-    
-    st.divider()
     st.markdown(f"<div style='direction:rtl; font-family:Amiri Quran; font-size:2.5rem; text-align:center; color:#D4AF37; padding:20px;'>{verse}</div>", unsafe_allow_html=True)
+    st.markdown(f"<div style='text-align:center; color:#8A7A66; margin-top:10px;'>Translation: {requests.get(f'https://api.alquran.cloud/v1/ayah/{s}:{a}/en.sahih').json()['data']['text']}</div>", unsafe_allow_html=True)
 
 # ─── TAB 2: MEMORISE (4-Step System) ───
 with t2:
     st.markdown(f"<h3 style='text-align:center;'>Step {st.session_state.mem_step + 1} of 4</h3>", unsafe_allow_html=True)
     
     if st.session_state.mem_step == 0:
-        st.info("Step 1: Listen to the reference recitation 5 times.")
+        st.info("Step 1: Listen to the reference 5 times.")
         if ref_mp3: st.audio(ref_mp3, format="audio/mp3")
         
         if st.button("✅ I listened once", use_container_width=True):
@@ -321,12 +331,15 @@ with t2:
         st.caption(f"Listens: {st.session_state.mem_listens}/5")
         
     elif st.session_state.mem_step == 1:
-        st.info("Step 2: Recite using the English hints.")
-        cols = st.columns(len(words) if len(words) < 5 else 5)
-        for i, w in enumerate(words[:5]):
+        st.info("Step 2: Recite using the English hints. Tap the Mic below.")
+        
+        # Show English hints
+        cols = st.columns(3)
+        for i, w in enumerate(words[:3]): 
             with cols[i]:
                 st.markdown(f"<div style='background:#2A221B;border:1px solid #D4AF37;border-radius:15px;padding:10px;text-align:center;'><div style='color:#E8D5B5;font-weight:bold;'>{w['en']}</div></div>", unsafe_allow_html=True)
         
+        # Native Mic Input (Styled to match)
         audio_val = st.audio_input("Record your recitation", label_visibility="collapsed")
         if audio_val and ref_mp3:
             if st.button("Analyze", use_container_width=True, type="primary"):
@@ -363,7 +376,23 @@ with t2:
         if st.session_state.show_reward:
             st.balloons()
             st.markdown("<h3 style='text-align:center;color:#D4AF37'>Alhamdulillah!</h3>", unsafe_allow_html=True)
-            render_canvas()
+            
+            # Canvas
+            canvas_html = """
+            <div style="text-align:center; color:#D4AF37; font-family:'Amiri Quran', serif; font-size:2rem;">اْلحَمْدُ لِلّٰهِ</div>
+            <canvas id="c" width="400" height="150" style="background:#2A221B; border:2px solid #D4AF37; border-radius:20px; width:100%; cursor:crosshair; touch-action:none;"></canvas>
+            <script>
+                const canvas = document.getElementById('c'); const ctx = canvas.getContext('2d');
+                let isDrawing = false; ctx.lineWidth = 4; ctx.lineCap = 'round'; ctx.strokeStyle = '#D4AF37';
+                canvas.addEventListener('mousedown', start); canvas.addEventListener('mousemove', draw); canvas.addEventListener('mouseup', stop);
+                canvas.addEventListener('touchstart', start, {passive:false}); canvas.addEventListener('touchmove', draw, {passive:false}); canvas.addEventListener('touchend', stop);
+                function getPos(e){ const rect = canvas.getBoundingClientRect(); const cx = e.touches ? e.touches[0].clientX : e.clientX; const cy = e.touches ? e.touches[0].clientY : e.clientY; return {x: cx - rect.left, y: cy - rect.top}; }
+                function start(e){ e.preventDefault(); isDrawing = true; ctx.beginPath(); const p = getPos(e); ctx.moveTo(p.x, p.y); }
+                function draw(e){ e.preventDefault(); if(!isDrawing) return; const p = getPos(e); ctx.lineTo(p.x, p.y); ctx.stroke(); }
+                function stop(e){ e.preventDefault(); isDrawing = false; }
+            </script>"""
+            components.html(canvas_html, height=200)
+            
             if st.button("Complete Ritual", use_container_width=True, type="primary"):
                 st.session_state.show_reward = False
                 st.session_state.mem_step = 0
