@@ -26,7 +26,7 @@ st.markdown("""
 # --- DATA ---
 words = [
   { "ar": "وَإِذِ", "tr": "wa-idh", "en": "And when" },
-  { "ar": "اسْتَسْقَىٰ", "tr": "is'tasqā", "en": "asked for water" },
+  { "ar": "اسْتَقَىٰ", "tr": "is'tasqā", "en": "asked for water" },
   { "ar": "مُوسَىٰ", "tr": "mūsā", "en": "Musa" },
   { "ar": "لِقَوْمِهِ", "tr": "liqawmihi", "en": "for his people" },
   { "ar": "اضْرِب", "tr": "iḍrib", "en": "Strike" },
@@ -77,11 +77,13 @@ Return JSON ONLY (no markdown, no extra text):
             
     return {"error": "Failed to analyze audio with Gemini."}
 
-# --- THE REACT UI ---
+# --- PREPARE VARIABLES ---
 analysis_json = json.dumps(st.session_state.analysis) if st.session_state.analysis else "null"
 teacher_img = "https://raw.githubusercontent.com/Abia2746/ReadandMemoriseTheQuran/main/IMG_6146.jpeg"
+words_json = json.dumps(words)
 
-html_code = f"""
+# --- THE REACT UI (Using raw string to avoid Python f-string errors) ---
+html_code = r"""
 <!DOCTYPE html>
 <html lang="en" class="dark">
 <head>
@@ -94,31 +96,31 @@ html_code = f"""
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
   <link href="https://fonts.googleapis.com/css2?family=Amiri+Quran&display=swap" rel="stylesheet">
   <style>
-    body {{ background-color: #1A1510; color: #E8D5B5; margin: 0; overflow-x: hidden; }}
-    .font-arabic {{ font-family: 'Amiri Quran', serif; }}
-    ::-webkit-scrollbar {{ width: 0px; background: transparent; }}
+    body { background-color: #1A1510; color: #E8D5B5; margin: 0; overflow-x: hidden; }
+    .font-arabic { font-family: 'Amiri Quran', serif; }
+    ::-webkit-scrollbar { width: 0px; background: transparent; }
   </style>
   <script>
-    tailwind.config = {{
-      theme: {{ extend: {{ fontFamily: {{ arabic: ['"Amiri Quran"', 'serif'] }} }} }}
-    }}
+    tailwind.config = {
+      theme: { extend: { fontFamily: { arabic: ['"Amiri Quran"', 'serif'] } } }
+    }
   </script>
 </head>
 <body>
   <div id="root"></div>
   <script type="text/babel">
-    const {{ useState, useEffect, useRef }} = React;
-    const mockWords = {json.dumps(words)};
-    const analysis = {analysis_json}; // Injected from Python
+    const { useState, useEffect, useRef } = React;
+    const mockWords = __WORDS__;
+    const analysis = __ANALYSIS__;
 
-    function Garden() {{
+    function Garden() {
       const mountRef = useRef(null);
-      useEffect(() => {{
+      useEffect(() => {
         const scene = new THREE.Scene();
         scene.fog = new THREE.FogExp2(0x0a0805, 0.05);
         const camera = new THREE.PerspectiveCamera(60, mountRef.current.clientWidth / mountRef.current.clientHeight, 0.1, 1000);
         camera.position.set(0, 5, 15);
-        const renderer = new THREE.WebGLRenderer({{ antialias: true, alpha: true }});
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
         renderer.setSize(mountRef.current.clientWidth, mountRef.current.clientHeight);
         mountRef.current.appendChild(renderer.domElement);
         scene.add(new THREE.AmbientLight(0xffffff, 0.5));
@@ -126,29 +128,29 @@ html_code = f"""
         dirLight.position.set(10, 20, 10);
         scene.add(dirLight);
         
-        const ground = new THREE.Mesh(new THREE.PlaneGeometry(100, 100), new THREE.MeshStandardMaterial({{ color: 0x1a2020, roughness: 0.1, metalness: 0.8 }}));
+        const ground = new THREE.Mesh(new THREE.PlaneGeometry(100, 100), new THREE.MeshStandardMaterial({ color: 0x1a2020, roughness: 0.1, metalness: 0.8 }));
         ground.rotation.x = -Math.PI / 2;
         scene.add(ground);
         
         const rainCount = 3000;
         const rainGeo = new THREE.BufferGeometry();
         const rainPositions = new Float32Array(rainCount * 3);
-        for(let i=0; i<rainCount*3; i+=3) {{
+        for(let i=0; i<rainCount*3; i+=3) {
           rainPositions[i] = (Math.random() - 0.5) * 60;
           rainPositions[i+1] = Math.random() * 40;
           rainPositions[i+2] = (Math.random() - 0.5) * 60;
-        }}
+        }
         rainGeo.setAttribute('position', new THREE.BufferAttribute(rainPositions, 3));
-        const rain = new THREE.Points(rainGeo, new THREE.PointsMaterial({{ color: 0xaaccff, size: 0.15, transparent: true, opacity: 0.6 }}));
+        const rain = new THREE.Points(rainGeo, new THREE.PointsMaterial({ color: 0xaaccff, size: 0.15, transparent: true, opacity: 0.6 }));
         scene.add(rain);
         
-        for(let i=0; i<15; i++) {{
-          const tree = new THREE.Mesh(new THREE.ConeGeometry(1.5, 6, 8), new THREE.MeshStandardMaterial({{ color: 0x0a2a1a, roughness: 1 }}));
+        for(let i=0; i<15; i++) {
+          const tree = new THREE.Mesh(new THREE.ConeGeometry(1.5, 6, 8), new THREE.MeshStandardMaterial({ color: 0x0a2a1a, roughness: 1 }));
           tree.position.set((Math.random()-0.5)*40, 3, (Math.random()-0.5)*40 - 10);
           scene.add(tree);
-        }}
+        }
         
-        const lantern = new THREE.Mesh(new THREE.BoxGeometry(1, 1.5, 1), new THREE.MeshStandardMaterial({{ color: 0x332200, emissive: 0xffaa00, emissiveIntensity: 2 }}));
+        const lantern = new THREE.Mesh(new THREE.BoxGeometry(1, 1.5, 1), new THREE.MeshStandardMaterial({ color: 0x332200, emissive: 0xffaa00, emissiveIntensity: 2 }));
         lantern.position.set(0, 2, 0);
         scene.add(lantern);
         const pointLight = new THREE.PointLight(0xffaa00, 2, 20);
@@ -156,27 +158,27 @@ html_code = f"""
         scene.add(pointLight);
         
         let time = 0; let animationFrameId;
-        const animate = () => {{
+        const animate = () => {
           animationFrameId = requestAnimationFrame(animate);
           time += 0.01;
           const positions = rain.geometry.attributes.position.array;
-          for(let i=1; i<rainCount*3; i+=3) {{
+          for(let i=1; i<rainCount*3; i+=3) {
             positions[i] -= 0.5;
             if(positions[i] < 0) positions[i] = 40;
-          }}
+          }
           rain.geometry.attributes.position.needsUpdate = true;
           camera.position.x = Math.sin(time * 0.2) * 5;
           camera.position.z = Math.cos(time * 0.2) * 5 + 10;
           camera.lookAt(0, 2, 0);
           renderer.render(scene, camera);
-        }};
+        };
         animate();
-        return () => {{ cancelAnimationFrame(animationFrameId); if (mountRef.current) mountRef.current.removeChild(renderer.domElement); }};
-      }}, []);
-      return <div ref={{mountRef}} className="w-full h-[300px] rounded-2xl overflow-hidden border border-[#D4AF37]/30 shadow-[0_0_30px_rgba(212,175,55,0.15)] bg-black" />;
-    }}
+        return () => { cancelAnimationFrame(animationFrameId); if (mountRef.current) mountRef.current.removeChild(renderer.domElement); };
+      }, []);
+      return <div ref={mountRef} className="w-full h-[300px] rounded-2xl overflow-hidden border border-[#D4AF37]/30 shadow-[0_0_30px_rgba(212,175,55,0.15)] bg-black" />;
+    }
 
-    function App() {{
+    function App() {
       const hasAnalysis = analysis && analysis.words;
 
       return (
@@ -193,48 +195,49 @@ html_code = f"""
 
             <div className="flex justify-center mb-6">
               <div className="relative w-32 h-40 rounded-3xl overflow-hidden shadow-[0_0_40px_rgba(212,175,55,0.15)] border border-[#D4AF37]/30">
-                <img src="{teacher_img}" alt="Teacher" className="w-full h-full object-cover opacity-80" />
+                <img src="__TEACHER_IMG__" alt="Teacher" className="w-full h-full object-cover opacity-80" />
               </div>
             </div>
 
-            {{hasAnalysis && (
+            {hasAnalysis && (
               <div className="text-center mb-6 bg-[#2A221B] p-4 rounded-2xl border border-[#D4AF37]/50">
-                <h2 className="text-2xl font-bold text-[#D4AF37]">Score: {{analysis.score}}%</h2>
-                <p className="text-[#8A7A66] mt-2">{{analysis.summary}}</p>
+                <h2 className="text-2xl font-bold text-[#D4AF37]">Score: {analysis.score}%</h2>
+                <p className="text-[#8A7A66] mt-2">{analysis.summary}</p>
               </div>
-            )}}
+            )}
 
-            {/* THE WORD CARDS */}
             <div className="flex flex-wrap gap-3 justify-center mb-8" dir="rtl">
-              {{mockWords.map((word, idx) => {{
+              {mockWords.map((word, idx) => {
                 let borderClass = 'border-[#D4AF37]/10';
                 let bgClass = 'bg-[#2A221B]';
                 
-                if (hasAnalysis) {{
+                if (hasAnalysis) {
                   const result = analysis.words.find((w) => w.word === word.ar || w.word.includes(word.ar));
-                  if (result) {{
-                    if (result.status === 'good') {{ borderClass = 'border-green-500'; bgClass = 'bg-green-500/10'; }}
-                    if (result.status === 'missed') {{ borderClass = 'border-red-500'; bgClass = 'bg-red-500/10'; }}
-                    if (result.status === 'close') {{ borderClass = 'border-yellow-500'; bgClass = 'bg-yellow-500/10'; }}
-                  }} else {{
+                  if (result) {
+                    if (result.status === 'good') { borderClass = 'border-green-500'; bgClass = 'bg-green-500/10'; }
+                    if (result.status === 'missed') { borderClass = 'border-red-500'; bgClass = 'bg-red-500/10'; }
+                    if (result.status === 'close') { borderClass = 'border-yellow-500'; bgClass = 'bg-yellow-500/10'; }
+                  } else {
                      borderClass = 'border-red-500'; bgClass = 'bg-red-500/10';
-                  }}
-                }}
+                  }
+                }
 
                 return (
-                  <div key={{idx}} className={{`flex flex-col items-center justify-center p-4 min-w-[100px] rounded-2xl border transition-all duration-300 ${{borderClass}} ${{bgClass}}`}}>
-                    {/* SHOW ENGLISH PROMINENTLY UNTIL ANALYZED */}
-                    <div className={{`text-xl font-bold text-[#E8D5B5] ${{!hasAnalysis ? 'mb-2' : 'mb-1 opacity-50'}}`}}>
-                      {{word.en}}
+                  <div key={idx} className={`flex flex-col items-center justify-center p-4 min-w-[100px] rounded-2xl border transition-all duration-300 ${borderClass} ${bgClass}`}>
+                    
+                    {/* ENGLISH IS PROMINENT */}
+                    <div className={`text-xl font-bold text-[#E8D5B5] ${!hasAnalysis ? 'mb-2' : 'mb-1 opacity-50'}`}>
+                      {word.en}
                     </div>
                     
-                    {/* HIDE ARABIC UNTIL ANALYZED */}
-                    <div className={{`font-arabic text-4xl mb-1 text-[#D4AF37] leading-relaxed transition-opacity duration-500 ${{hasAnalysis ? 'opacity-100' : 'opacity-0 h-0 overflow-hidden'}}`}}>
-                      {{word.ar}}
+                    {/* ARABIC IS HIDDEN UNTIL ANALYZED */}
+                    <div className={`font-arabic text-4xl mb-1 text-[#D4AF37] leading-relaxed transition-opacity duration-500 ${hasAnalysis ? 'opacity-100' : 'opacity-0 h-0 overflow-hidden'}`}>
+                      {word.ar}
                     </div>
+
                   </div>
                 );
-              }})}}
+              })}
             </div>
 
             <div className="mb-10">
@@ -246,13 +249,18 @@ html_code = f"""
           </div>
         </div>
       );
-    }}
+    }
     const root = ReactDOM.createRoot(document.getElementById('root'));
     root.render(<App />);
   </script>
 </body>
 </html>
 """
+
+# Inject variables safely (bypasses Python f-string limits)
+html_code = html_code.replace("__WORDS__", words_json)
+html_code = html_code.replace("__ANALYSIS__", analysis_json)
+html_code = html_code.replace("__TEACHER_IMG__", teacher_img)
 
 # 1. Render the Vercel-style UI
 components.html(html_code, height=1000, scrolling=True)
