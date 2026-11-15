@@ -1,492 +1,283 @@
-# app.py — Al-Mu'allim · Ultimate Streamlit Build
-import base64, json, re, time
-import html as _h
-import datetime, math, random, pathlib
-import io, threading, wave, os
-import numpy as np
-from streamlit.runtime.scriptrunner import add_script_run_ctx, get_script_run_ctx
-import requests
+# app.py — Al-Mu'allim · React UI + Native Streamlit Mic + 3D Garden
 import streamlit as st
 import streamlit.components.v1 as components
-from streamlit_mic_recorder import mic_recorder
+import requests
+import json
+import base64
+import os
+import re
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Constants & Config
-# ──────────────────────────────────────────────────────────────────────────────
-API = "https://generativelanguage.googleapis.com/v1beta/models"
-VOICE_ID = "pNInz6obpgDQGcFmaJgB"
-ROOT = pathlib.Path(__file__).parent
+# --- CONFIGURATION ---
+GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY", os.getenv("GEMINI_API_KEY", ""))
+API_URL = "https://generativelanguage.googleapis.com/v1beta/models"
 
 st.set_page_config(layout="wide", page_title="Al-Mu'allim", page_icon="🕌")
 
-_DEFAULTS = {
-    "user_name": "", "app_phase": "onboarding",
-    "current_surah": 2, "current_ayah": 60,
-    "listens": {}, "chat": [], "tafsir_text": {}, "last_analysis": {},
-    "lessons": {}, "coach": [],
-    "xp": 0, "streak": 0, "last_day": None, "perfect_ayahs": 0, "total_listens": 0,
-    "badges": [], "cfg_teacher": "Female", "cfg_theme": "Night",
-    "cfg_style": "Warm & casual", "cfg_level": "Beginner", "cfg_detail": 2,
-    "cfg_quality": "Best", "cfg_strict": "Standard", "cfg_gain": 12, "cfg_voice": True,
-    "deep_analysis": False, "cfg_reciter": "Mishary Alafasy", "conceal_text": True
-}
-for k, v in _DEFAULTS.items():
-    st.session_state.setdefault(k, v)
+# Hide Streamlit padding so the UI fills the screen
+st.markdown("""
+    <style>
+        .block-container { padding: 0 !important; max-width: 100% !important; }
+        header { display: none !important; }
+        #MainMenu {visibility: hidden;}
+        footer {visibility: hidden;}
+    </style>
+""", unsafe_allow_html=True)
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Helpers (API, Audio, Text)
-# ──────────────────────────────────────────────────────────────────────────────
-def get_secret(name, default=""):
-    try:
-        value = st.secrets.get(name, default)
-        if value: return str(value)
-    except Exception: pass
-    return os.getenv(name, default)
+# --- DATA ---
+words = [
+  { "ar": "وَإِذِ", "tr": "wa-idh", "en": "And when" },
+  { "ar": "اسْتَسْقَىٰ", "tr": "is'tasqā", "en": "asked for water" },
+  { "ar": "مُوسَىٰ", "tr": "mūsā", "en": "Musa" },
+  { "ar": "لِقَوْمِهِ", "tr": "liqawmihi", "en": "for his people" },
+  { "ar": "اضْرِب", "tr": "iḍrib", "en": "Strike" },
+  { "ar": "بِعَصَاكَ", "tr": "bi'aṣāka", "en": "with your staff" },
+  { "ar": "الْحَجَرَ", "tr": "al-ḥajara", "en": "the stone" },
+]
 
-def audio_part(b, mime):
-    return {"inline_data": {"mime_type": mime, "data": base64.b64encode(b).decode()}}
+# --- SESSION STATE ---
+if "analysis" not in st.session_state:
+    st.session_state.analysis = None
 
-@st.cache_data(ttl=3600, show_spinner=False)
-def list_models():
-    api_key = get_secret("GEMINI_API_KEY")
-    if not api_key: return ["gemini-2.5-flash"]
-    try:
-        r = requests.get(API, headers={"x-goog-api-key": api_key}, params={"pageSize": 200}, timeout=15)
-        r.raise_for_status()
-        bad = ("image", "tts", "live", "embed", "audio", "robotics", "computer")
-        names = []
-        for model in r.json().get("models", []):
-            name = model.get("name", "").split("/")[-1]
-            if name and "generateContent" in model.get("supportedGenerationMethods", []) and not any(x in name.lower() for x in bad):
-                names.append(name)
-        return names or ["gemini-2.5-flash"]
-    except Exception:
-        return ["gemini-2.5-flash"]
-
-def pick_models(pro):
-    ms = list_models()
-    def version(name):
-        nums = re.findall(r"\d+(?:\.\d+)?", name)
-        return tuple(float(x) for x in nums[:2]) if nums else (0.0,)
-    pro_models = sorted([m for m in ms if "pro" in m.lower()], key=version, reverse=True)
-    flash_models = sorted([m for m in ms if "flash" in m.lower() and "lite" not in m.lower()], key=version, reverse=True)
-    lite_models = sorted([m for m in ms if "lite" in m.lower()], key=version, reverse=True)
-    ordered = (pro_models[:2] + flash_models[:3] + lite_models[:1]) if pro else (flash_models[:3] + pro_models[:1] + lite_models[:1])
-    return list(dict.fromkeys(ordered)) or ["gemini-2.5-flash"]
-
-def call_gemini(parts, expect_json=False, pro=False):
-    api_key = get_secret("GEMINI_API_KEY")
-    if not api_key: raise RuntimeError("Gemini API key missing.")
+# --- GEMINI LOGIC ---
+def analyze_recitation(audio_bytes):
+    if not GEMINI_API_KEY:
+        return {"error": "Gemini API key missing in Streamlit secrets."}
     
-    headers = {"x-goog-api-key": api_key, "Content-Type": "application/json"}
-    payload = {"contents": [{"parts": parts}]}
-    if expect_json: payload["generationConfig"] = {"responseMimeType": "application/json"}
+    b64_audio = base64.b64encode(audio_bytes).decode("utf-8")
     
-    last_error = "No model available."
-    for model in pick_models(pro):
-        for attempt in range(2):
-            try:
-                response = requests.post(f"{API}/{model}:generateContent", json=payload, headers=headers, timeout=(30, 300))
-            except requests.RequestException as exc:
-                last_error = f"Network error ({model}): {exc}"
-                break
+    prompt = f"""You are an expert Tajweed teacher.
+The expected words are: {json.dumps([w["ar"] for w in words])}
+Listen to the student's recitation. Compare it word by word.
+Return JSON ONLY (no markdown, no extra text): 
+{{"score": int, "words": [{{"word": "arabic_word_here", "status": "good" | "missed" | "close"}}], "summary": "Short feedback"}}"""
+
+    payload = {
+        "contents": [{
+            "parts": [
+                {"text": prompt},
+                {"inline_data": {"mime_type": "audio/webm", "data": b64_audio}}
+            ]
+        }],
+        "generationConfig": {"responseMimeType": "application/json"}
+    }
+    
+    headers = {"Content-Type": "application/json"}
+    
+    for model in ["gemini-1.5-pro", "gemini-1.5-flash"]:
+        try:
+            response = requests.post(f"{API_URL}/{model}:generateContent?key={GEMINI_API_KEY}", json=payload, headers=headers, timeout=60)
             if response.status_code == 200:
-                try:
-                    body = response.json()
-                    cands = body.get("candidates") or []
-                    if not cands: break
-                    rp = cands[0].get("content", {}).get("parts", [])
-                    answer = "".join(p.get("text", "") for p in rp if not p.get("thought")).strip()
-                    if not answer: break
-                    if expect_json:
-                        cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", answer, flags=re.IGNORECASE).strip()
-                        try: return json.loads(cleaned)
-                        except json.JSONDecodeError:
-                            m = re.search(r"\{.*\}", cleaned, re.DOTALL)
-                            if m:
-                                try: return json.loads(m.group(0))
-                                except: pass
-                            raise RuntimeError("Invalid JSON response.")
-                    return answer
-                except Exception as exc:
-                    last_error = f"{model} unreadable: {exc}"
-                    break
-            if response.status_code in (500, 502, 503, 504) and attempt == 0:
-                time.sleep(1.5)
-                continue
-            break
-    raise RuntimeError("AI Error: " + last_error)
-
-def speak(text):
-    if not text: return None
-    try:
-        r = requests.post(
-            f"https://api.elevenlabs.io/v1/text-to-speech/{VOICE_ID}",
-            headers={"Accept": "audio/mpeg", "Content-Type": "application/json", "xi-api-key": get_secret("ELEVENLABS_API_KEY")},
-            json={"text": text[:1500], "model_id": "eleven_multilingual_v2", "voice_settings": {"stability": .6, "similarity_boost": .8}},
-            timeout=60,
-        )
-        if r.status_code == 200: return r.content
-    except: pass
-    return None
-
-@st.cache_data(show_spinner=False)
-def fetch_verse(s, a):
-    try:
-        r = requests.get(f"https://api.alquran.cloud/v1/ayah/{s}:{a}/quran-uthmani", timeout=15).json()
-        return r["data"]["text"]
-    except: return ""
-
-@st.cache_data(show_spinner=False)
-def fetch_words(s, a):
-    try:
-        r = requests.get(f"https://api.quran.com/api/v4/verses/by_key/{s}:{a}", params={"words": "true", "word_fields": "text_uthmani", "language": "en"}, timeout=20).json()
-        return [{"ar": w["text_uthmani"], "en": (w.get("translation") or {}).get("text", ""), "tr": (w.get("transliteration") or {}).get("text") or ""} for w in r["verse"]["words"] if w.get("char_type_name") == "word"]
-    except: return []
-
-@st.cache_data(show_spinner=False)
-def fetch_reciter(s, a, choice):
-    if choice == "Yasser Al-Dosari":
-        url = f"https://everyayah.com/data/Yasser_Ad-Dussary_128kbps/{s:03d}{a:03d}.mp3"
-    else:
-        url = f"https://everyayah.com/data/Alafasy_128kbps/{s:03d}{a:03d}.mp3"
-    
-    try:
-        r = requests.get(url, timeout=30)
-        if r.status_code == 200 and len(r.content) > 2000: return url, r.content, choice
-    except: pass
-    return None, None, None
-
-@st.cache_data(show_spinner=False)
-def fetch_ibn_kathir(s, a):
-    try:
-        r = requests.get(f"https://api.quran.com/api/v4/tafsirs/169/by_ayah/{s}:{a}", timeout=20).json()
-        return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", r["tafsir"]["text"])).strip()[:7000]
-    except: return ""
-
-@st.cache_data(show_spinner=False)
-def fetch_translation(s, a):
-    try: return requests.get(f"https://api.alquran.cloud/v1/ayah/{s}:{a}/en.sahih", timeout=15).json()["data"]["text"]
-    except: return ""
-
-def _valid_wav(data):
-    try:
-        with wave.open(io.BytesIO(data), "rb") as wf:
-            channels, width, rate = wf.getnchannels(), wf.getsampwidth(), wf.getframerate()
-            frames = wf.readframes(wf.getnframes())
-        if not frames: raise ValueError("Empty recording.")
-        if width == 1: samples = (np.frombuffer(frames, dtype=np.uint8).astype(np.float32) - 128) * 256
-        elif width == 2: samples = np.frombuffer(frames, dtype="<i2").astype(np.float32)
-        elif width == 4: samples = np.frombuffer(frames, dtype="<i4").astype(np.float32) / 65536
-        else: raise ValueError("Unsupported WAV.")
-        if channels > 1: samples = samples[:(len(samples)//channels)*channels].reshape(-1, channels).mean(axis=1)
-        if rate != 16000 and len(samples):
-            samples = np.interp(np.linspace(0, len(samples)-1, max(1, round(len(samples) * 16000 / rate))), np.arange(len(samples)), samples)
-        samples = np.clip(samples, -32768, 32767).astype("<i2")
-        out = io.BytesIO()
-        with wave.open(out, "wb") as wf:
-            wf.setnchannels(1); wf.setsampwidth(2); wf.setframerate(16000); wf.writeframes(samples.tobytes())
-        return out.getvalue()
-    except wave.Error as exc: raise ValueError("Unsupported mic container.") from exc
-
-def boost(wav_bytes):
-    try:
-        with wave.open(io.BytesIO(wav_bytes)) as w:
-            ch, sw, fr = w.getnchannels(), w.getsampwidth(), w.getframerate()
-            raw = w.readframes(w.getnframes())
-        if sw != 2: return wav_bytes, 1.0
-        x = np.frombuffer(raw, dtype=np.int16).astype(np.float32)
-        peak = float(np.percentile(np.abs(x), 99.5))
-        frac = peak / 32768
-        if peak < 30: return wav_bytes, frac
-        y = np.clip(x * min(float(st.session_state.get("cfg_gain", 12)), 0.9 * 32767 / peak), -32768, 32767).astype(np.int16)
-        out = io.BytesIO()
-        with wave.open(out, "wb") as w2:
-            w2.setnchannels(ch); w2.setsampwidth(2); w2.setframerate(fr); w2.writeframes(y.tobytes())
-        return out.getvalue(), frac
-    except: return wav_bytes, 1.0
-
-def transcribe(wav, orig=None, arabic=False):
-    prompt = ("Transcribe this Quran recitation exactly as spoken, in Arabic script. Preserve mistakes. Return [inaudible] if empty." if arabic 
-              else "Transcribe this student's message in English. Return only the transcript. Return [inaudible] if empty.")
-    for audio in (wav, orig):
-        if not audio: continue
-        try: prepared = _valid_wav(audio)
-        except: prepared = audio
-        try:
-            result = call_gemini([{"text": prompt}, audio_part(prepared, "audio/wav")], pro=False).strip()
-            if result and "[inaudible]" not in result.lower(): return result
-        except: pass
-    return ""
-
-def norm_ar(t):
-    t = re.sub("[\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06ED\u0640]", "", t)
-    t = re.sub("[إأآٱ]", "ا", t).replace("ى", "ي").replace("ة", "ه")
-    return re.sub("[^\u0621-\u064A\\s]", "", t).split()
-
-def match_report(words_ar, heard):
-    exp = ["".join(norm_ar(w)) for w in words_ar]
-    hw = norm_ar(heard)
-    if not hw or len(hw) < 0.2 * len(exp): return None
-    
-    n, m = len(exp), len(hw)
-    sc = lambda e, h: 2 if e == h else (1 if e[:2] == h[:2] and abs(len(e)-len(h)) <= 1 else 0)
-    D = [[0] * (m + 1) for _ in range(n + 1)]
-    for i in range(1, n + 1): D[i][0] = -i
-    for j in range(1, m + 1): D[0][j] = -j
-    for i in range(1, n + 1):
-        for j in range(1, m + 1):
-            D[i][j] = max(D[i-1][j-1] + sc(exp[i-1], hw[j-1]), D[i-1][j] - 1, D[i][j-1] - 1)
+                text = response.json()['candidates'][0]['content']['parts'][0]['text']
+                cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", text, flags=re.IGNORECASE).strip()
+                m = re.search(r"\{.*\}", cleaned, re.DOTALL)
+                if m: cleaned = m.group(0)
+                return json.loads(cleaned)
+        except Exception:
+            continue
             
-    st_, i, j, extra = ["missed"] * n, n, m, 0
-    while i > 0 or j > 0:
-        if i and j and D[i][j] == D[i-1][j-1] + sc(exp[i-1], hw[j-1]):
-            x = sc(exp[i-1], hw[j-1])
-            st_[i-1] = {2: "correct", 1: "close"}.get(x, "missed")
-            extra += (x == 0); i -= 1; j -= 1
-        elif i and D[i][j] == D[i-1][j] - 1: i -= 1
-        else: extra += 1; j -= 1
+    return {"error": "Failed to analyze audio with Gemini."}
+
+# --- THE REACT UI ---
+analysis_json = json.dumps(st.session_state.analysis) if st.session_state.analysis else "null"
+teacher_img = "https://raw.githubusercontent.com/Abia2746/ReadandMemoriseTheQuran/main/IMG_6146.jpeg"
+
+html_code = f"""
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Amiri+Quran&display=swap" rel="stylesheet">
+  <style>
+    body {{ background-color: #1A1510; color: #E8D5B5; margin: 0; overflow-x: hidden; }}
+    .font-arabic {{ font-family: 'Amiri Quran', serif; }}
+    ::-webkit-scrollbar {{ width: 0px; background: transparent; }}
+  </style>
+  <script>
+    tailwind.config = {{
+      theme: {{ extend: {{ fontFamily: {{ arabic: ['"Amiri Quran"', 'serif'] }} }} }}
+    }}
+  </script>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const {{ useState, useEffect, useRef }} = React;
+    const mockWords = {json.dumps(words)};
+    const analysis = {analysis_json}; // Injected from Python
+
+    function Garden() {{
+      const mountRef = useRef(null);
+      useEffect(() => {{
+        const scene = new THREE.Scene();
+        scene.fog = new THREE.FogExp2(0x0a0805, 0.05);
+        const camera = new THREE.PerspectiveCamera(60, mountRef.current.clientWidth / mountRef.current.clientHeight, 0.1, 1000);
+        camera.position.set(0, 5, 15);
+        const renderer = new THREE.WebGLRenderer({{ antialias: true, alpha: true }});
+        renderer.setSize(mountRef.current.clientWidth, mountRef.current.clientHeight);
+        mountRef.current.appendChild(renderer.domElement);
+        scene.add(new THREE.AmbientLight(0xffffff, 0.5));
+        const dirLight = new THREE.DirectionalLight(0xffeedd, 1);
+        dirLight.position.set(10, 20, 10);
+        scene.add(dirLight);
         
-    pts = sum(1 if x == "correct" else .5 if x == "close" else 0 for x in st_)
-    return {"pct": round(100 * pts / len(exp)), "states": st_}
+        const ground = new THREE.Mesh(new THREE.PlaneGeometry(100, 100), new THREE.MeshStandardMaterial({{ color: 0x1a2020, roughness: 0.1, metalness: 0.8 }}));
+        ground.rotation.x = -Math.PI / 2;
+        scene.add(ground);
+        
+        const rainCount = 3000;
+        const rainGeo = new THREE.BufferGeometry();
+        const rainPositions = new Float32Array(rainCount * 3);
+        for(let i=0; i<rainCount*3; i+=3) {{
+          rainPositions[i] = (Math.random() - 0.5) * 60;
+          rainPositions[i+1] = Math.random() * 40;
+          rainPositions[i+2] = (Math.random() - 0.5) * 60;
+        }}
+        rainGeo.setAttribute('position', new THREE.BufferAttribute(rainPositions, 3));
+        const rain = new THREE.Points(rainGeo, new THREE.PointsMaterial({{ color: 0xaaccff, size: 0.15, transparent: true, opacity: 0.6 }}));
+        scene.add(rain);
+        
+        for(let i=0; i<15; i++) {{
+          const tree = new THREE.Mesh(new THREE.ConeGeometry(1.5, 6, 8), new THREE.MeshStandardMaterial({{ color: 0x0a2a1a, roughness: 1 }}));
+          tree.position.set((Math.random()-0.5)*40, 3, (Math.random()-0.5)*40 - 10);
+          scene.add(tree);
+        }}
+        
+        const lantern = new THREE.Mesh(new THREE.BoxGeometry(1, 1.5, 1), new THREE.MeshStandardMaterial({{ color: 0x332200, emissive: 0xffaa00, emissiveIntensity: 2 }}));
+        lantern.position.set(0, 2, 0);
+        scene.add(lantern);
+        const pointLight = new THREE.PointLight(0xffaa00, 2, 20);
+        pointLight.position.set(0, 2, 0);
+        scene.add(pointLight);
+        
+        let time = 0; let animationFrameId;
+        const animate = () => {{
+          animationFrameId = requestAnimationFrame(animate);
+          time += 0.01;
+          const positions = rain.geometry.attributes.position.array;
+          for(let i=1; i<rainCount*3; i+=3) {{
+            positions[i] -= 0.5;
+            if(positions[i] < 0) positions[i] = 40;
+          }}
+          rain.geometry.attributes.position.needsUpdate = true;
+          camera.position.x = Math.sin(time * 0.2) * 5;
+          camera.position.z = Math.cos(time * 0.2) * 5 + 10;
+          camera.lookAt(0, 2, 0);
+          renderer.render(scene, camera);
+        }};
+        animate();
+        return () => {{ cancelAnimationFrame(animationFrameId); if (mountRef.current) mountRef.current.removeChild(renderer.domElement); }};
+      }}, []);
+      return <div ref={{mountRef}} className="w-full h-[300px] rounded-2xl overflow-hidden border border-[#D4AF37]/30 shadow-[0_0_30px_rgba(212,175,55,0.15)] bg-black" />;
+    }}
 
-# ──────────────────────────────────────────────────────────────────────────────
-# UI Theming
-# ──────────────────────────────────────────────────────────────────────────────
-def apply_theme():
-    t = {"bg": "#1A1510", "bg2": "#2A221B", "word": "#E8D5B5", "dim": "#8A7A66", "glow": "#D4AF37", "rule": "rgba(212,175,55,.15)", "wash": "rgba(212,175,55,.08)", "ok": "#4ADE80", "bad": "#F87171"}
+    function App() {{
+      const hasAnalysis = analysis && analysis.words;
+
+      return (
+        <div className="min-h-screen bg-[#1A1510] text-[#E8D5B5] font-sans pb-32">
+          <nav className="flex justify-between items-center p-6 border-b border-[#D4AF37]/20">
+            <div className="text-[#D4AF37] font-serif text-2xl tracking-wide">Al-Mu'allim</div>
+          </nav>
+          
+          <div className="max-w-2xl mx-auto px-4 mt-6">
+            <div className="text-center mb-6">
+              <p className="text-[#8A7A66] text-sm tracking-widest uppercase mb-1">Surah</p>
+              <h1 className="text-3xl font-serif text-[#D4AF37]">Al-Baqarah · Ayah 60</h1>
+            </div>
+
+            <div className="flex justify-center mb-6">
+              <div className="relative w-32 h-40 rounded-3xl overflow-hidden shadow-[0_0_40px_rgba(212,175,55,0.15)] border border-[#D4AF37]/30">
+                <img src="{teacher_img}" alt="Teacher" className="w-full h-full object-cover opacity-80" />
+              </div>
+            </div>
+
+            {{hasAnalysis && (
+              <div className="text-center mb-6 bg-[#2A221B] p-4 rounded-2xl border border-[#D4AF37]/50">
+                <h2 className="text-2xl font-bold text-[#D4AF37]">Score: {{analysis.score}}%</h2>
+                <p className="text-[#8A7A66] mt-2">{{analysis.summary}}</p>
+              </div>
+            )}}
+
+            {/* THE WORD CARDS */}
+            <div className="flex flex-wrap gap-3 justify-center mb-8" dir="rtl">
+              {{mockWords.map((word, idx) => {{
+                let borderClass = 'border-[#D4AF37]/10';
+                let bgClass = 'bg-[#2A221B]';
+                
+                if (hasAnalysis) {{
+                  const result = analysis.words.find((w) => w.word === word.ar || w.word.includes(word.ar));
+                  if (result) {{
+                    if (result.status === 'good') {{ borderClass = 'border-green-500'; bgClass = 'bg-green-500/10'; }}
+                    if (result.status === 'missed') {{ borderClass = 'border-red-500'; bgClass = 'bg-red-500/10'; }}
+                    if (result.status === 'close') {{ borderClass = 'border-yellow-500'; bgClass = 'bg-yellow-500/10'; }}
+                  }} else {{
+                     borderClass = 'border-red-500'; bgClass = 'bg-red-500/10';
+                  }}
+                }}
+
+                return (
+                  <div key={{idx}} className={{`flex flex-col items-center justify-center p-4 min-w-[100px] rounded-2xl border transition-all duration-300 ${{borderClass}} ${{bgClass}}`}}>
+                    {/* SHOW ENGLISH PROMINENTLY UNTIL ANALYZED */}
+                    <div className={{`text-xl font-bold text-[#E8D5B5] ${{!hasAnalysis ? 'mb-2' : 'mb-1 opacity-50'}}`}}>
+                      {{word.en}}
+                    </div>
+                    
+                    {/* HIDE ARABIC UNTIL ANALYZED */}
+                    <div className={{`font-arabic text-4xl mb-1 text-[#D4AF37] leading-relaxed transition-opacity duration-500 ${{hasAnalysis ? 'opacity-100' : 'opacity-0 h-0 overflow-hidden'}}`}}>
+                      {{word.ar}}
+                    </div>
+                  </div>
+                );
+              }})}}
+            </div>
+
+            <div className="mb-10">
+              <div className="flex items-center gap-2 mb-4 text-[#D4AF37]">
+                <h2 className="text-xl font-serif">Your Private Garden</h2>
+              </div>
+              <Garden />
+            </div>
+          </div>
+        </div>
+      );
+    }}
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+</body>
+</html>
+"""
+
+# 1. Render the Vercel-style UI
+components.html(html_code, height=1000, scrolling=True)
+
+# 2. Render the Streamlit Mic underneath
+st.markdown("---")
+st.markdown("<h3 style='text-align: center; color: #D4AF37; margin-bottom: 0;'>🎙️ Recite the Ayah</h3>", unsafe_allow_html=True)
+st.markdown("<p style='text-align: center; color: #8A7A66; font-size: 0.9rem;'>Recite from memory. The AI will reveal the Arabic words and highlight your mistakes.</p>", unsafe_allow_html=True)
+
+col1, col2, col3 = st.columns([1, 2, 1])
+with col2:
+    audio_value = st.audio_input("Record", label_visibility="collapsed")
     
-    st.markdown(f"""<style>
-@import url('https://fonts.googleapis.com/css2?family=Amiri+Quran&family=Cormorant+Garamond:wght@600&family=Inter:wght@400;500;600&display=swap');
-:root{{--bg:{t['bg']};--bg2:{t['bg2']};--word:{t['word']};--dim:{t['dim']};--wash:{t['wash']};--glow:{t['glow']};--rule:{t['rule']};--ok:{t['ok']};--bad:{t['bad']}}}
-html,body,.stApp{{background:var(--bg)!important;color:var(--word)}}
-.stApp p,.stApp li,.stApp label,.stApp span,.stApp h1,.stApp h2,.stApp h3,.stApp h4,.stApp [data-testid="stCaptionContainer"]{{color:var(--word)!important;font-family:Inter,system-ui,sans-serif}}
-h1,h2,h3,h4{{font-family:'Cormorant Garamond',serif!important;font-weight:600!important;color:var(--glow)!important}}
-[data-testid="stSidebar"]{{background:#110D09!important;border-right:1px solid var(--rule)}}
-div.stButton>button{{background:var(--glow)!important;color:#000!important;border-radius:999px!important;font-weight:600!important;min-height:44px;border:none!important;transition:transform .2s}}
-div.stButton>button:hover{{transform:scale(1.02)}}
-.glass{{background:var(--bg2)!important;border:1px solid var(--rule)!important;border-radius:20px!important;padding:18px 22px;margin:10px 0;box-shadow:0 8px 28px -12px rgba(0,0,0,.4)!important}}
-
-/* Word Cards */
-.word-grid{{display:flex;flex-wrap:wrap;gap:12px;justify-content:center;direction:rtl;padding:10px}}
-.word-card{{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:12px 18px;border-radius:16px;background:var(--bg2);border:1px solid var(--rule);transition:all .3s ease;min-width:100px}}
-.word-card .ar{{font-family:'Amiri Quran',serif;font-size:2.2rem;color:var(--word);line-height:1.4}}
-.word-card .tr{{font-size:0.8rem;color:var(--glow);font-style:italic;margin-top:6px;opacity:0.9}}
-.word-card .en{{font-size:0.9rem;color:var(--dim);margin-top:2px}}
-.word-card.correct{{border-color:var(--ok);box-shadow:0 0 15px rgba(74,222,128,.2)}}
-.word-card.missed{{border-color:var(--bad);box-shadow:0 0 15px rgba(248,113,113,.2)}}
-
-/* Portrait */
-.portrait-container{{position:relative;width:100%;max-width:380px;margin:0 auto 20px;border-radius:32px;overflow:hidden;box-shadow:0 0 40px var(--wash);aspect-ratio: 3/4;background:#000}}
-.portrait-img{{width:100%;height:100%;object-fit:cover;object-position:center 25%;opacity:0.9}}
-
-/* Mic Button */
-.mic-container div[data-testid="stAudioInput"] {{
-    background: linear-gradient(135deg, #D4AF37, #F3E5AB, #D4AF37) !important;
-    border-radius: 999px !important;
-    padding: 12px 24px !important;
-    box-shadow: 0 0 30px rgba(212,175,55,0.5) !important;
-    border: none !important;
-    width: 100% !important;
-}}
-.mic-container div[data-testid="stAudioInput"] * {{
-    color: black !important;
-    font-weight: 700 !important;
-}}
-</style>""", unsafe_allow_html=True)
-
-def teacher_portrait():
-    choice = st.session_state.get("cfg_teacher", "Female")
-    img_name = "IMG_6147.jpeg" if choice == "Male" else "IMG_6146.jpeg"
-    p = ROOT / img_name
-    if p.is_file():
-        b = p.read_bytes()
-        img_src = f"data:image/jpeg;base64,{base64.b64encode(b).decode()}"
-    else:
-        img_src = "https://via.placeholder.com/380x506/2A221B/D4AF37?text=Missing+Image"
-    st.markdown(f'<div class="portrait-container"><img class="portrait-img" src="{img_src}"></div>', unsafe_allow_html=True)
-
-# ──────────────────────────────────────────────────────────────────────────────
-# HTML/JS Players
-# ──────────────────────────────────────────────────────────────────────────────
-def _data_uri(b, mime="audio/mpeg"):
-    return f"data:{mime};base64,{base64.b64encode(b).decode()}"
-
-def player_html(words, audio_url):
-    payload = [{"ar": w.get("ar", ""), "tr": w.get("tr", ""), "en": w.get("en", "")} for w in words]
-    t = {"word": "#E8D5B5", "glow": "#D4AF37", "wash": "rgba(212,175,55,.15)", "bg2": "#2A221B", "rule": "rgba(212,175,55,.15)", "dim": "#8A7A66"}
-    
-    tpl = r"""
-<style>
-body{margin:0;font-family:Inter,system-ui,sans-serif;background:transparent;color:__WORD__;}
-audio{width:100%;max-width:600px;margin:15px auto 0 auto;border-radius:999px;outline:none;filter:drop-shadow(0 4px 12px rgba(0,0,0,.3));display:block;}
-audio::-webkit-media-controls-panel{background-color:__BG2__;}
-#w{display:flex;flex-wrap:wrap;gap:12px;justify-content:center;direction:rtl;padding:10px;}
-.word-card{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:12px 18px;border-radius:16px;background:__BG2__;border:1px solid __RULE__;transition:all .3s ease;min-width:100px;}
-.word-card .ar{font-family:'Amiri Quran',serif;font-size:2.2rem;color:__WORD__;line-height:1.4;}
-.word-card .tr{font-size:0.8rem;color:__GLOW__;font-style:italic;margin-top:6px;opacity:0.9;}
-.word-card .en{font-size:0.9rem;color:__DIM__;margin-top:2px;}
-.word-card.on{box-shadow:0 0 20px rgba(212,175,55,.4);border-color:__GLOW__;transform:translateY(-3px) scale(1.05);background:__WASH__;}
-</style>
-<div id="w"></div>
-<audio id="a" controls src="__URL__"></audio>
-<script>
-const W=__WORDS__,a=document.getElementById('a'),box=document.getElementById('w');
-const els=W.map(w=>{
-    const d=document.createElement('div');d.className='word-card';
-    d.innerHTML=`<div class="ar">${w.ar}</div><div class="tr">${w.tr}</div><div class="en">${w.en}</div>`;
-    box.appendChild(d);return d;
-});
-let cum=[]; const L=w=>Math.max(1,(w.ar||'').replace(/[\u064B-\u0652\u0670\u06D6-\u06ED\u0640]/g,'').length);
-function build(){const d=a.duration||1,l=d*.05,sp=d*.88,tot=W.reduce((s,w)=>s+L(w),0);let t=l;
-cum=W.map(w=>{t+=sp*L(w)/tot;return t;});}
-a.onloadedmetadata=build;
-a.ontimeupdate=()=>{if(!cum.length)build();const t=a.currentTime;let i=cum.findIndex(c=>t<c);if(a.ended)i=-1;
-els.forEach((e,k)=>e.classList.toggle('on',k===i));};
-</script>"""
-    for k, v in {"__WORD__": t["word"], "__GLOW__": t["glow"], "__WASH__": t["wash"], "__BG2__": t["bg2"], "__RULE__": t["rule"], "__DIM__": t["dim"]}.items():
-        tpl = tpl.replace(k, v)
-    return tpl.replace("__URL__", audio_url).replace("__WORDS__", json.dumps(payload, ensure_ascii=False))
-
-def feedback_html(words, states, rules):
-    cards = []
-    for i, (word, state) in enumerate(zip(words, states)):
-        arabic = _h.escape(str(word.get("ar", "")))
-        tr = _h.escape(str(word.get("tr", "")))
-        en = _h.escape(str(word.get("en", "")))
-        cls = state if state in ["correct", "missed"] else ""
-        cards.append(f'<div class="word-card {cls}"><div class="ar">{arabic}</div><div class="tr">{tr}</div><div class="en">{en}</div></div>')
-    
-    grid = '<div class="word-grid" dir="rtl">' + "".join(cards) + '</div>'
-    
-    tags = []
-    for r in rules:
-        is_ok = r.get("verdict") == "correct"
-        color = "var(--ok)" if is_ok else ("var(--glow)" if r.get("verdict") == "partly" else "var(--bad)")
-        icon = "✓" if is_ok else "✕"
-        tag = f'<div class="tw-tag"><div class="tw-dot" style="background:{color}"></div>{r.get("rule","")} <span style="color:{color};margin-left:4px">{icon}</span></div>'
-        tags.append(tag)
-    
-    return grid + '<div style="display:flex;flex-wrap:wrap;justify-content:center;margin-top:15px">' + "".join(tags) + '</div>'
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Main UI
-# ──────────────────────────────────────────────────────────────────────────────
-apply_theme()
-
-if st.session_state.app_phase == "onboarding":
-    st.markdown("<h1 style='text-align:center;margin-top:20vh;font-size:4rem'>🕌</h1>", unsafe_allow_html=True)
-    st.markdown("<h2 style='text-align:center'>Al-Mu'allim</h2>", unsafe_allow_html=True)
-    with st.form("onboard"):
-        n = st.text_input("What is your name?", placeholder="e.g., Abia")
-        if st.form_submit_button("Begin Session", use_container_width=True) and n.strip():
-            st.session_state.user_name = n.strip()
-            st.session_state.app_phase = "classroom"
-            st.rerun()
-    st.stop()
-
-# Sidebar
-sb = st.sidebar
-sb.markdown(f"### 🧑‍🎓 {st.session_state.user_name}")
-sb.divider()
-si = sb.number_input("Surah", 1, 114, st.session_state.current_surah)
-ai = sb.number_input("Ayah", 1, 286, st.session_state.current_ayah)
-if sb.button("Go to Ayah", use_container_width=True):
-    st.session_state.current_surah, st.session_state.current_ayah = si, ai
-    st.session_state.chat = []
-    st.rerun()
-
-with sb.expander("⚙️ Teacher Settings"):
-    st.selectbox("Reciter", ["Mishary Alafasy", "Yasser Al-Dosari"], key="cfg_reciter")
-    st.selectbox("Teacher Style", ["Warm & casual", "Classical scholar", "Concise coach"], key="cfg_style")
-    st.radio("Study Companion", ["Female", "Male"], key="cfg_teacher", horizontal=True)
-
-# Layout Container
-st.markdown('<div style="max-width: 700px; margin: 0 auto; padding-top: 10px;">', unsafe_allow_html=True)
-
-s, a = st.session_state.current_surah, st.session_state.current_ayah
-key, ref = f"{s}:{a}", f"Surah {s}, Ayah {a}"
-
-verse = fetch_verse(s, a)
-words = fetch_words(s, a)
-if not verse:
-    st.error("Network error loading Qur'an text.")
-    st.stop()
-
-audio_url, ref_mp3, reciter = fetch_reciter(s, a, st.session_state.cfg_reciter)
-tafsir_src = fetch_ibn_kathir(s, a)
-
-# Top Header
-st.markdown(f"<div style='text-align:center;color:var(--dim);font-size:.9rem;letter-spacing:2px;text-transform:uppercase'>Surah</div>", unsafe_allow_html=True)
-st.markdown(f"<h2 style='text-align:center;margin-top:-5px'>{ref}</h2>", unsafe_allow_html=True)
-
-# Portrait
-teacher_portrait()
-
-t1, t2 = st.tabs(["Study", "Recite"])
-
-# ─── TAB 1: STUDY ───
-with t1:
-    st.markdown(f"<div style='text-align:center;color:var(--glow);margin-bottom:10px'>Reciter: {reciter}</div>", unsafe_allow_html=True)
-    if audio_url and words:
-        # Exact dynamic height calculation for tight spacing
-        rows = math.ceil(len(words) / 3)
-        iframe_height = max(250, rows * 130 + 80)
-        components.html(player_html(words, _data_uri(ref_mp3)), height=iframe_height, scrolling=False)
-    
-    st.divider()
-    if st.button("📖 Generate Tafsir", use_container_width=True):
-        try:
-            with st.spinner("Preparing tafsir..."):
-                st.session_state.tafsir_text[key] = call_gemini([{"text": f"Explain {ref} ({verse}) in ~200 words based on Ibn Kathir. Source:\n{tafsir_src}"}])
-        except Exception as e: st.error(e)
-    
-    if key in st.session_state.tafsir_text:
-        st.markdown(f'<div class="glass">{_h.escape(st.session_state.tafsir_text[key])}</div>', unsafe_allow_html=True)
-
-# ─── TAB 2: RECITE ───
-with t2:
-    res = st.session_state.last_analysis.get(key)
-    
-    if not res:
-        st.markdown(f'<div class="ayah-text blur-text">{verse}</div>', unsafe_allow_html=True)
-    else:
-        m_ = res.get("match")
-        if m_ and words:
-            st.markdown(feedback_html(words, m_["states"], res.get("rules_check", [])), unsafe_allow_html=True)
-            st.markdown(f"<div style='text-align:center;color:var(--glow);font-size:1.2rem;margin:20px 0'>Score: {res.get('overall_score',0)}%</div>", unsafe_allow_html=True)
-        else:
-            st.markdown(f'<div class="ayah-text">{verse}</div>', unsafe_allow_html=True)
-
-    st.markdown("<div style='text-align:center;color:var(--dim);margin:20px 0'>Tap below and recite from memory</div>", unsafe_allow_html=True)
-    
-    st.markdown('<div class="mic-container">', unsafe_allow_html=True)
-    wav = None
-    if hasattr(st, "audio_input"):
-        clip = st.audio_input("Recite", label_visibility="collapsed")
-        if clip: wav = boost(_valid_wav(clip.getvalue()))[0]
-    else:
-        m = mic_recorder(start_prompt="🎙️ Tap to talk", stop_prompt="⏹️ Send", key="recite", just_once=True, format="wav")
-        if m: wav = boost(m["bytes"])[0]
-    st.markdown('</div>', unsafe_allow_html=True)
-    
-    if wav and ref_mp3:
-        with st.spinner("Analyzing your recitation..."):
-            try:
-                heard = transcribe(wav, arabic=True)
-                if not heard: st.warning("I couldn't hear the recitation.")
+    if audio_value is not None:
+        if st.button("Analyze My Recitation", use_container_width=True, type="primary"):
+            with st.spinner("Listening to your voice..."):
+                result = analyze_recitation(audio_value.getvalue())
+                
+                if "error" in result:
+                    st.error(result["error"])
                 else:
-                    rules = tajweed_rules(verse)
-                    r = analyse(verse, ref_mp3, wav, reciter, rules, heard)
-                    r["match"] = match_report([w["ar"] for w in words], heard)
-                    st.session_state.last_analysis[key] = r
-            except Exception as e:
-                st.error(f"Analysis error: {e}")
-        st.rerun()
-    
-    if res:
-        if st.button("Try Again", use_container_width=True, type="primary"):
-            st.session_state.last_analysis.pop(key, None)
-            st.rerun()
+                    st.session_state.analysis = result
+                    st.rerun()
 
-st.markdown('</div>', unsafe_allow_html=True)
+    if st.session_state.analysis:
+        if st.button("Reset / Try Again", use_container_width=True):
+            st.session_state.analysis = None
+            st.rerun()
