@@ -53,16 +53,34 @@ def fetch_audio(s, a, folder):
     if r.status_code != 200 or len(r.content) < 2000: raise RuntimeError("Audio not available.")
     return r.content
 
-# ───────────────────────────── AI (Speed Optimized) ─────────────────────────────
+# ───────────────────────────── AI ─────────────────────────────
 def api_key():
     try: return st.secrets["GEMINI_API_KEY"]
     except: return os.environ.get("GEMINI_API_KEY", "")
 
-def analyse_recitation_fast(wav_bytes, words, strictness):
+def get_working_model(k):
+    # Dynamically find a working Flash model from the latest generation
+    try:
+        r = requests.get(GEMINI, headers={"x-goog-api-key": k}, params={"pageSize": 100}, timeout=10).json()
+        models = [m["name"].split("/")[-1] for m in r.get("models", []) if "generateContent" in m.get("supportedGenerationMethods", [])]
+        # Prefer the newest flash models
+        for pref in ["gemini-3.8-flash", "gemini-2.5-flash", "gemini-2.0-flash"]:
+            if pref in models: return pref
+        # Fallback to any flash model
+        for m in models:
+            if "flash" in m and "image" not in m and "tts" not in m:
+                return m
+    except: pass
+    return "gemini-2.5-flash" # Hard fallback
+
+def analyse_recitation_fast(wav_bytes, words, strictness, teacher_gender):
     k = api_key()
     if not k: raise RuntimeError("Add GEMINI_API_KEY in Streamlit secrets.")
     
-    prompt = (f"You are a strict Quran teacher. Analyze this recitation of: "
+    model = get_working_model(k)
+    teacher = "a strict male Sheikh" if teacher_gender == "Male" else "a gentle female Sheikh"
+    
+    prompt = (f"You are {teacher}. Analyze this recitation of: "
               + json.dumps([w["ar"] for w in words], ensure_ascii=False)
               + f'. Evaluate Tajweed (Madd, Ghunnah, Qalqalah, Idgham). Strictness: {strictness}. '
               'Return JSON only: {"words":[{"i":0,"status":"good","rule":"Madd"}], "feedback":"..."}')
@@ -72,10 +90,8 @@ def analyse_recitation_fast(wav_bytes, words, strictness):
         "generationConfig": {"responseMimeType": "application/json", "temperature": 0.1}
     }
     
-    # Use 1.5-flash for lightning fast audio analysis
-    model = "gemini-1.5-flash"
     try:
-        r = requests.post(f"{GEMINI}/{model}:generateContent", headers={"x-goog-api-key": k}, json=body, timeout=30)
+        r = requests.post(f"{GEMINI}/{model}:generateContent", headers={"x-goog-api-key": k}, json=body, timeout=60)
         if r.status_code != 200:
             raise RuntimeError(f"API Error {r.status_code}: {r.text}")
             
@@ -94,7 +110,7 @@ def analyse_recitation_fast(wav_bytes, words, strictness):
     except Exception as e:
         raise RuntimeError(f"Analysis failed: {e}")
 
-# ───────────────────────────── Visual Engine (React + Tajweed) ─────────────────────────────
+# ───────────────────────────── Visual Engine (React) ─────────────────────────────
 PLAYER_HTML = r"""<!DOCTYPE html><html><head><meta charset="utf-8">
 <link href="https://fonts.googleapis.com/css2?family=Amiri+Quran&family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
 <script src="https://cdn.tailwindcss.com"></script>
@@ -102,56 +118,56 @@ PLAYER_HTML = r"""<!DOCTYPE html><html><head><meta charset="utf-8">
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 <style>
 body{margin:0;background:transparent;color:#E8D5B5;font-family:Inter,sans-serif;}
-.ar-text{font-family:'Amiri Quran',serif; font-size: 2.8rem; line-height: 2.2; direction: rtl;}
-.glass{background: rgba(30, 25, 20, 0.4); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border: 1px solid rgba(212, 175, 55, 0.2); box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);}
-.glass-card{background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.05); border-radius: 16px; transition: all 0.3s ease;}
-.glass-card:hover{background: rgba(255, 255, 255, 0.06); border: 1px solid rgba(212, 175, 55, 0.4);}
-.blur-text{filter: blur(8px); opacity: 0.6; transition: all 0.5s ease;}
-.active-word{color: #D4AF37; text-shadow: 0 0 15px rgba(212,175,55,0.8); transform: scale(1.05); display: inline-block;}
-/* Tajweed Colors */
-.tj-madd { color: #ff6b6b; } /* Red */
-.tj-ghunnah { color: #4ecdc4; } /* Teal/Blue */
-.tj-qalqalah { color: #ffd93d; } /* Yellow/Green */
-.tj-idgham { color: #a29bfe; } /* Purple */
+.ar-text{font-family:'Amiri Quran',serif; font-size: 2.4rem; line-height: 2.2; direction: rtl;}
+.glass{background: rgba(30, 25, 20, 0.6); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); border: 1px solid rgba(212, 175, 55, 0.15); box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.4);}
+.glass-card{background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.05); border-radius: 16px;}
+.blur-text{filter: blur(10px); opacity: 0.4; transition: all 0.5s ease; user-select: none;}
+.word-span{display: inline-block; transition: all 0.2s ease; padding: 0 4px; border-radius: 8px;}
+.word-active{background: rgba(212, 175, 55, 0.2); color: #D4AF37; text-shadow: 0 0 15px rgba(212,175,55,0.8); transform: scale(1.05);}
+.word-good{color: #4ade80; text-shadow: 0 0 10px rgba(74, 222, 128, 0.5);}
+.word-missed{color: #f87171; text-shadow: 0 0 10px rgba(248, 113, 113, 0.5);}
+/* Custom Scrollbar */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(212, 175, 55, 0.3); border-radius: 10px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(212, 175, 55, 0.6); }
 </style></head>
 <body><div id="root"></div><script>
 const h=React.createElement,{useState,useEffect,useRef}=React,D=__DATA__;
 
-// Simple Tajweed parser for visual effect
 function parseTajweed(text) {
-  // Pseudo-logic to wrap specific characters for visual color-coding
   let html = text;
-  html = html.replace(/([\u064B-\u0652]*[\u0627\u0648\u064A][\u064B-\u0652]*)/g, '<span class="tj-madd">$1</span>');
-  html = html.replace(/([\u0646\u0645][\u0651])/g, '<span class="tj-ghunnah">$1</span>');
-  html = html.replace(/([\u0642\u0637\u0628\u062C\u062F][\u0652])/g, '<span class="tj-qalqalah">$1</span>');
+  html = html.replace(/([\u064B-\u0652]*[\u0627\u0648\u064A][\u064B-\u0652]*)/g, '<span style="color:#ff6b6b">$1</span>');
+  html = html.replace(/([\u0646\u0645][\u0651])/g, '<span style="color:#4ecdc4">$1</span>');
+  html = html.replace(/([\u0642\u0637\u0628\u062C\u062F][\u0652])/g, '<span style="color:#ffd93d">$1</span>');
   return html;
 }
 
 function App(){
- const [playing, setPlaying] = useState(false);
  const [activeWord, setActiveWord] = useState(-1);
  const audioRef = useRef(null);
+ const containerRef = useRef(null);
 
- // Highlight logic (simulated for UI effect)
- useEffect(() => {
-   if (!playing) { setActiveWord(-1); return; }
-   let i = 0;
-   const interval = setInterval(() => {
-     setActiveWord(i);
-     i++;
-     if (i >= D.words.length) { clearInterval(interval); setPlaying(false); setActiveWord(-1); }
-   }, 800); // Syncs roughly with recitation
-   return () => clearInterval(interval);
- }, [playing]);
-
- return h('div',{className:'p-6 max-w-5xl mx-auto flex flex-col gap-6'},
+ const handleTimeUpdate = () => {
+   if (!audioRef.current) return;
+   const time = audioRef.current.currentTime;
+   const dur = audioRef.current.duration || 1;
+   const pct = time / dur;
+   const idx = Math.floor(pct * D.words.length);
+   setActiveWord(idx);
    
-   // Top Bar: Audio & Status
+   // Auto-scroll active word into view
+   if (containerRef.current) {
+     const activeEl = containerRef.current.querySelector('.word-active');
+     if (activeEl) activeEl.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+   }
+ };
+
+ return h('div',{className:'p-4 max-w-5xl mx-auto flex flex-col gap-4'},
+   
+   // Header Bar
    h('div',{className:'glass rounded-2xl p-4 flex items-center justify-between'},
      h('div',{className:'flex items-center gap-4'},
-       D.audio ? h('button',{onClick:()=>{audioRef.current.play(); setPlaying(true);}, className:'w-12 h-12 rounded-full bg-gradient-to-br from-[#D4AF37] to-[#F3E5AB] flex items-center justify-center text-black shadow-[0_0_20px_#D4AF37]'},
-         h('svg',{className:'w-6 h-6 ml-1', fill:'currentColor', viewBox:'0 0 24 24'}, h('path',{d:'M8 5v14l11-7z'}))
-       ) : null,
        h('div', null,
          h('div',{className:'text-[#D4AF37] text-sm font-bold tracking-wider uppercase'}, 'Al-Mu\'allim'),
          h('div',{className:'text-xs text-gray-400'}, 'Surah ' + D.meta.s + ' · Ayah ' + D.meta.a)
@@ -163,43 +179,41 @@ function App(){
      )
    ),
 
-   // Main Recitation Area
-   h('div',{className:'glass rounded-3xl p-8 relative overflow-hidden min-h-[300px] flex flex-col justify-center'},
-     
-     // Glowing background effect
-     h('div',{className:'absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-96 h-96 bg-[#D4AF37] rounded-full blur-[120px] opacity-10 pointer-events-none'}),
-
-     // Verse Text
-     h('div',{className:'ar-text text-center z-10 ' + (D.mode==='blind' && !D.states ? 'blur-text' : '')},
+   // Main Recitation Area (Scrollable)
+   h('div',{className:'glass rounded-3xl p-6 relative flex flex-col'},
+     h('div',{ref:containerRef, className:'max-h-[45vh] overflow-y-auto pr-2 flex flex-wrap justify-center gap-y-6 gap-x-2 z-10 ' + (D.mode==='blind' && !D.states ? 'blur-text' : '')},
        D.words.map((w, i) => {
          const isActive = activeWord === i;
          const isGood = D.states && D.states[i] === 'good';
          const isMissed = D.states && D.states[i] === 'missed';
          
-         let colorClass = 'text-[#E8D5B5]';
-         if (isGood) colorClass = 'text-green-400 drop-shadow-[0_0_10px_#4ade80]';
-         if (isMissed) colorClass = 'text-red-400 drop-shadow-[0_0_10px_#f87171]';
+         let cls = 'word-span ';
+         if (isGood) cls += 'word-good ';
+         else if (isMissed) cls += 'word-missed ';
+         else if (isActive) cls += 'word-active ';
 
-         return h('span', {key:i, className:`mx-2 inline-block transition-all duration-300 ${isActive?'active-word':''} ${colorClass}`},
-           h('span', {dangerouslySetInnerHTML:{__html: parseTajweed(w.ar)}})
+         return h('div', {key:i, className:'flex flex-col items-center'},
+           h('span', {className:'ar-text ' + cls, dangerouslySetInnerHTML:{__html: parseTajweed(w.ar)}}),
+           // Show transliteration if hints mode or full mode
+           (D.mode !== 'blind' || D.states) && w.tr ? h('span',{className:'text-[10px] italic text-[#D4AF37] mt-1'}, w.tr) : null,
+           // Show English if hints mode
+           (D.mode === 'hints' || D.mode === 'full') ? h('span',{className:'text-xs text-[#a8987f] text-center max-w-[100px] mt-1'}, w.en) : null
          )
        })
      ),
      
-     // Hidden audio element
-     D.audio ? h('audio', {ref:audioRef, src:D.audio, onEnded:()=>setPlaying(false)}) : null
+     // Hidden audio for syncing
+     D.audio ? h('audio', {ref:audioRef, src:D.audio, controls:true, onTimeUpdate:handleTimeUpdate, className:'w-full mt-6 rounded-full outline-none sepia-[.6] saturate-150'}) : null
    ),
 
-   // Feedback Panel (Only shows when Gemini has analyzed)
-   D.states ? h('div',{className:'grid grid-cols-3 gap-4'},
-     h('div',{className:'glass-card p-4 text-center col-span-1'},
+   // Feedback Panel
+   D.states ? h('div',{className:'grid grid-cols-3 gap-4 mt-2'},
+     h('div',{className:'glass-card p-4 text-center col-span-1 flex flex-col justify-center'},
        h('div',{className:'text-3xl font-bold text-green-400'}, Math.round((D.states.filter(s=>s==='good').length/D.states.length)*100)+'%'),
        h('div',{className:'text-xs text-gray-400 uppercase mt-1'}, 'Accuracy')
      ),
      h('div',{className:'glass-card p-6 col-span-2 flex flex-col justify-center'},
-       h('div',{className:'text-[#D4AF37] text-sm font-bold uppercase mb-2 flex items-center gap-2'},
-         h('span', null, '🎙 Teacher Feedback')
-       ),
+       h('div',{className:'text-[#D4AF37] text-sm font-bold uppercase mb-2 flex items-center gap-2'}, '🎙 Teacher Feedback'),
        h('p',{className:'text-sm text-gray-300 leading-relaxed'}, D.feedback)
      )
    ) : null
@@ -208,7 +222,7 @@ function App(){
 ReactDOM.createRoot(document.getElementById('root')).render(h(App));
 </script></body></html>"""
 
-# ───────────────────────────── Immersive 3D Background ─────────────────────────────
+# ───────────────────────────── 3D Background ─────────────────────────────
 GARDEN_HTML = r"""<!DOCTYPE html><html><head><meta charset="utf-8"><style>html,body{margin:0;background:#05080a;overflow:hidden}canvas{display:block;width:100vw;height:100vh}</style>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script></head><body><script>
 const W=innerWidth,H=innerHeight,R=new THREE.WebGLRenderer({antialias:true,alpha:true});R.setSize(W,H);R.setPixelRatio(Math.min(devicePixelRatio,2));document.body.appendChild(R.domElement);
@@ -216,11 +230,8 @@ const S=new THREE.Scene();S.fog=new THREE.FogExp2(0x05080a,.03);
 const C=new THREE.PerspectiveCamera(60,W/H,.1,100);S.add(new THREE.AmbientLight(0x2a3a4a,.6));
 const dir=new THREE.DirectionalLight(0x6a8aaa,.4);dir.position.set(5,10,7);S.add(dir);
 
-// Reflective Wet Ground
 const gr=new THREE.Mesh(new THREE.PlaneGeometry(200,200),new THREE.MeshStandardMaterial({color:0x0a1216,roughness:0.1,metalness:0.9}));gr.rotation.x=-Math.PI/2;S.add(gr);
-
 const rnd=(a,b)=>a+Math.random()*(b-a);
-// Trees
 for(let i=0;i<100;i++){
  const x=rnd(-40,40),z=rnd(-40,40);if(Math.hypot(x,z)<8)continue;
  const h=rnd(3,6);
@@ -231,13 +242,10 @@ for(let i=0;i<100;i++){
   c.position.set(x,h+k*.9,z);S.add(c);
  }
 }
-
-// Glowing Lantern
 const pole=new THREE.Mesh(new THREE.CylinderGeometry(.05,.08,3,8),new THREE.MeshStandardMaterial({color:0x111}));pole.position.y=1.5;S.add(pole);
 const lamp=new THREE.Mesh(new THREE.CylinderGeometry(.4,.4,.8,16),new THREE.MeshStandardMaterial({color:0xffddaa,emissive:0xff8800,emissiveIntensity:3, metalness:0.5}));lamp.position.y=3;S.add(lamp);
 const light=new THREE.PointLight(0xff8800,4,30);light.position.set(0,3,0);S.add(light);
 
-// Rain
 const N=4000,pos=new Float32Array(N*6),sp=new Float32Array(N);
 for(let i=0;i<N;i++){const x=rnd(-30,30),y=rnd(0,25),z=rnd(-30,30);pos.set([x,y,z,x,y-.8,z],i*6);sp[i]=rnd(.5,.9)}
 const rg=new THREE.BufferGeometry();rg.setAttribute('position',new THREE.BufferAttribute(pos,3));
@@ -262,40 +270,36 @@ def embed_bg(html):
 
 def player(words, mode, states=None, audio=None, feedback="", meta={}):
     data = json.dumps({"words": words, "mode": mode, "states": states, "audio": audio, "feedback": feedback, "meta": meta}, ensure_ascii=False).replace("</", "<\\/")
-    h = 500
+    h = 520 # Increased height to accommodate scrollable area and controls
     embed = PLAYER_HTML.replace("__DATA__", data)
     components.html(embed, height=h, scrolling=False)
 
-# ───────────────────────────── Styling ─────────────────────────────
+# ───────────────────────────── Styling & State ─────────────────────────────
 for k, v in {"name": "", "surah": 2, "ayah": 60, "step": 0, "count": 0, "results": {}, "paid": [], "tries": 0,
-             "teacher_gender": "Male", "strictness": "Balanced"}.items():
+             "teacher_gender": "Male", "strictness": "Balanced", "theme": "Starry Night"}.items():
     st.session_state.setdefault(k, v)
+
+bg_color = "#0a0f1c" if st.session_state.theme == "Starry Night" else "#1A1510" if st.session_state.theme == "Brown" else "#000000"
 
 st.markdown(f"""<style>
 @import url('https://fonts.googleapis.com/css2?family=Amiri+Quran&family=Cormorant+Garamond:wght@600&family=Inter:wght@400;600&display=swap');
-.stApp{{background:transparent;color:#E8D5B5;font-family:Inter,sans-serif}}
+.stApp{{background:{bg_color};color:#E8D5B5;font-family:Inter,sans-serif}}
 [data-testid="stSidebar"]{{background:rgba(10, 8, 6, 0.8); backdrop-filter: blur(20px); border-right:1px solid #D4AF3733}}
 h1,h2,h3{{font-family:'Cormorant Garamond',serif!important;color:#D4AF37!important}}
 div.stButton>button{{background:linear-gradient(135deg, #D4AF37, #F3E5AB)!important;color:#1A1510!important;border:none!important;border-radius:999px!important;font-weight:700!important;min-height:46px;box-shadow:0 0 20px rgba(212,175,55,.4)}}
 div.stButton>button:hover{{box-shadow:0 0 30px rgba(212,175,55,.8)}}
-
-/* Premium Mic Button Style */
 [data-testid="stAudioInput"]{{
     background:linear-gradient(135deg,#D4AF37,#F3E5AB,#D4AF37)!important;
     border-radius:50px!important; padding:10px 20px!important;
     box-shadow:0 0 40px rgba(212,175,55,.6); border: 2px solid #FFF;
-    transition: all 0.3s ease;
 }}
-[data-testid="stAudioInput"]:hover{{ transform: scale(1.02); box-shadow:0 0 60px rgba(212,175,55,.9); }}
 [data-testid="stAudioInput"] *{{color:#1A1510!important;font-weight:700!important}}
 </style>""", unsafe_allow_html=True)
 
-# Inject 3D Background once
 embed_bg(GARDEN_HTML)
 
 if not st.session_state.name:
     st.markdown("<h1 style='text-align:center;margin-top:20vh;font-size:4rem;text-shadow:0 0 30px rgba(212,175,55,0.5)'>🕌 Al-Mu'allim</h1>", unsafe_allow_html=True)
-    st.markdown("<p style='text-align:center;color:#D4AF37;font-size:1.2rem;margin-bottom:2rem'>The Premium AI Quran Academy</p>", unsafe_allow_html=True)
     with st.form("start", clear_on_submit=True):
         c1, c2, c3 = st.columns([1,2,1])
         with c2:
@@ -307,6 +311,7 @@ if not st.session_state.name:
 # ───────────────────────────── Sidebar ─────────────────────────────
 sb = st.sidebar
 sb.markdown(f"<h2 style='text-align:center;color:#D4AF37'>{st.session_state.name}</h2>", unsafe_allow_html=True)
+st.session_state.theme = sb.selectbox("Theme", ["Starry Night", "Brown", "Black"], index=["Starry Night", "Brown", "Black"].index(st.session_state.theme))
 st.session_state.teacher_gender = sb.selectbox("Teacher Voice", ["Male", "Female"], index=["Male", "Female"].index(st.session_state.teacher_gender))
 st.session_state.strictness = sb.select_slider("Strictness", options=["Lenient", "Balanced", "Strict"], value=st.session_state.strictness)
 
@@ -350,12 +355,9 @@ def record_step(kind, next_step):
     res = st.session_state.results.get(rk)
     
     if res is None:
-        # Blur text if blind mode
         player(words, kind, None, None, "", meta_data)
         
         st.markdown("<p style='text-align:center; font-size:1.2rem; margin:20px 0; color:#D4AF37; font-weight:600;'>🎙 Tap the golden mic to recite</p>", unsafe_allow_html=True)
-        
-        # Centered mic button
         c1, c2, c3 = st.columns([1,2,1])
         with c2:
             clip = st.audio_input("Recite", key=f"mic_{rk}_{st.session_state.tries}", label_visibility="collapsed")
@@ -363,8 +365,7 @@ def record_step(kind, next_step):
         if clip is not None:
             with st.spinner("Analyzing Tajweed rules..."):
                 try:
-                    # FAST API CALL (No heavy numpy processing)
-                    states, rules, feedback = analyse_recitation_fast(clip.getvalue(), words, st.session_state.strictness)
+                    states, rules, feedback = analyse_recitation_fast(clip.getvalue(), words, st.session_state.strictness, st.session_state.teacher_gender)
                 except Exception as e:
                     st.error(str(e)); return
             
