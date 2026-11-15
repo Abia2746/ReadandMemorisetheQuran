@@ -54,92 +54,63 @@ def fetch_audio(s, a, folder):
     if r.status_code != 200 or len(r.content) < 2000: raise RuntimeError("Audio not available.")
     return r.content
 
-# ───────────────────────────── Audio Compression (Prevents Timeouts) ─────────────────────────────
-def prep_audio(b):
-    """Converts heavy mic audio into a tiny, fast-processing 16kHz mono WAV."""
-    try:
-        with wave.open(io.BytesIO(b)) as w:
-            ch, sw, fr = w.getnchannels(), w.getsampwidth(), w.getframerate()
-            raw = w.readframes(w.getnframes())
-        if sw != 2 or not raw: return b
-        
-        x = np.frombuffer(raw, "<i2").astype(np.float32)
-        if ch > 1:
-            x = x[: len(x) // ch * ch].reshape(-1, ch).mean(axis=1)
-        if fr != 16000 and len(x) > 1:
-            x = np.interp(np.linspace(0, len(x) - 1, round(len(x) * 16000 / fr)), np.arange(len(x)), x)
-            
-        p = float(np.percentile(np.abs(x), 99.5))
-        if p > 30: x = x * min(30.0, 0.9 * 32767 / p)
-        
-        out = io.BytesIO()
-        with wave.open(out, "wb") as w2:
-            w2.setnchannels(1); w2.setsampwidth(2); w2.setframerate(16000)
-            w2.writeframes(np.clip(x, -32768, 32767).astype("<i2").tobytes())
-        return out.getvalue()
-    except Exception:
-        return b
-
-# ───────────────────────────── AI (Dynamic Model) ─────────────────────────────
+# ───────────────────────────── AI ─────────────────────────────
 def api_key():
     try: return st.secrets["GEMINI_API_KEY"]
     except: return os.environ.get("GEMINI_API_KEY", "")
 
-def get_best_model(k):
-    try:
-        r = requests.get(GEMINI, headers={"x-goog-api-key": k}, params={"pageSize": 100}, timeout=10).json()
-        models = [m["name"].split("/")[-1] for m in r.get("models", []) if "generateContent" in m.get("supportedGenerationMethods", [])]
-        
-        # Prioritize the latest models
-        for pref in ["gemini-3.8-flash", "gemini-3.5-flash", "gemini-2.5-flash", "gemini-1.5-flash-latest"]:
-            if pref in models: return pref
-            
-        flash_models = [m for m in models if "flash" in m and "image" not in m and "tts" not in m]
-        if flash_models:
-            def ver(m):
-                match = re.search(r'(\d+\.\d+)', m)
-                return float(match.group(1)) if match else 0.0
-            return sorted(flash_models, key=ver, reverse=True)[0]
-    except Exception: pass
-    return "gemini-3.8-flash"
-
-def analyse_recitation_fast(wav_bytes, words, strictness, teacher_gender):
+def analyse_recitation_fast(audio_bytes, mime_type, words, strictness, teacher_gender):
     k = api_key()
     if not k: raise RuntimeError("Add GEMINI_API_KEY in Streamlit secrets.")
     
-    model = get_best_model(k)
     teacher = "a strict male Sheikh" if teacher_gender == "Male" else "a gentle female Sheikh"
     
     prompt = (f"You are {teacher}. Analyze this recitation of: "
               + json.dumps([w["ar"] for w in words], ensure_ascii=False)
               + f'. Evaluate Tajweed (Madd, Ghunnah, Qalqalah, Idgham). Strictness: {strictness}. '
-              'Return JSON only: {"words":[{"i":0,"status":"good","rule":"Madd"}], "feedback":"..."}')
+              'Return a JSON object with this exact format: {"words":[{"i":0,"status":"good","rule":"Madd"}], "feedback":"..."}')
               
     body = {
-        "contents": [{"parts": [{"text": prompt}, {"inline_data": {"mime_type": "audio/wav", "data": base64.b64encode(wav_bytes).decode()}}]}],
-        "generationConfig": {"responseMimeType": "application/json", "temperature": 0.1}
+        "contents": [{"parts": [{"text": prompt}, {"inline_data": {"mime_type": mime_type, "data": base64.b64encode(audio_bytes).decode()}}]}],
+        "generationConfig": {"temperature": 0.1}
     }
     
-    try:
-        # INCREASED TIMEOUT TO 120 SECONDS
-        r = requests.post(f"{GEMINI}/{model}:generateContent", headers={"x-goog-api-key": k}, json=body, timeout=120)
-        if r.status_code != 200:
-            raise RuntimeError(f"API Error {r.status_code}: {r.text}")
-            
-        txt = "".join(p.get("text", "") for p in r.json()["candidates"][0]["content"]["parts"])
-        data = json.loads(re.sub(r"^```(?:json)?|```$", "", txt.strip()).strip())
-        
-        states = ["missed"] * len(words)
-        rules = ["none"] * len(words)
-        for w in data.get("words", []):
-            i = w.get("i")
-            if isinstance(i, int) and 0 <= i < len(words):
-                states[i] = "good" if w.get("status") == "good" else "missed"
-                rules[i] = w.get("rule", "none")
+    # Try multiple models to guarantee success
+    models_to_try = ["gemini-1.5-flash", "gemini-2.0-flash", "gemini-3.8-flash"]
+    err = ""
+    
+    for model in models_to_try:
+        try:
+            r = requests.post(f"{GEMINI}/{model}:generateContent", headers={"x-goog-api-key": k}, json=body, timeout=(10, 30))
+            if r.status_code != 200:
+                err = f"{model}: {r.status_code}"
+                continue
                 
-        return states, rules, str(data.get("feedback", ""))
-    except Exception as e:
-        raise RuntimeError(f"Analysis failed: {e}")
+            txt = "".join(p.get("text", "") for p in r.json()["candidates"][0]["content"]["parts"])
+            txt = re.sub(r"^```(?:json)?|```$", "", txt.strip()).strip()
+            
+            # Safely extract JSON if the model wrapped it in extra text
+            json_match = re.search(r'\{.*\}', txt, re.DOTALL)
+            if json_match: txt = json_match.group(0)
+                
+            data = json.loads(txt)
+            
+            states = ["missed"] * len(words)
+            rules = ["none"] * len(words)
+            for w in data.get("words", []):
+                i = w.get("i")
+                if isinstance(i, int) and 0 <= i < len(words):
+                    states[i] = "good" if w.get("status") == "good" else "missed"
+                    rules[i] = w.get("rule", "none")
+                    
+            return states, rules, str(data.get("feedback", ""))
+            
+        except requests.exceptions.Timeout:
+            err = f"{model} timed out"
+        except Exception as e:
+            err = f"{model}: {str(e)}"
+            
+    raise RuntimeError(f"Analysis failed: {err}")
 
 # ───────────────────────────── Visual Engine (React) ─────────────────────────────
 PLAYER_HTML = r"""<!DOCTYPE html><html><head><meta charset="utf-8">
@@ -231,7 +202,7 @@ function App(){
    h('div',{className:'glass rounded-3xl p-6 relative flex flex-col'},
      
      // Scrollable Arabic Container (FORCED RTL)
-     h('div',{ref:containerRef, dir:'rtl', className:'max-h-[40vh] overflow-y-auto pr-2 flex flex-wrap justify-center gap-y-4 gap-x-2 z-10'},
+     h('div',{ref:containerRef, dir:'rtl', className:'h-[300px] overflow-y-auto pr-2 flex flex-wrap justify-center content-start gap-y-4 gap-x-2 z-10'},
        D.words.map((w, i) => {
          const isActive = activeWord === i;
          const isGood = D.states && D.states[i] === 'good';
@@ -416,18 +387,26 @@ def record_step(kind, next_step):
             clip = st.audio_input("Recite", key=f"mic_{rk}_{st.session_state.tries}", label_visibility="collapsed")
         
         if clip is not None:
-            with st.spinner("Analyzing Tajweed rules..."):
-                try:
-                    # Compress audio using numpy first to avoid timeout, then send
-                    states, rules, feedback = analyse_recitation_fast(prep_audio(clip.getvalue()), words, st.session_state.strictness, st.session_state.teacher_gender)
-                except Exception as e:
-                    st.error(str(e)); return
+            # Playback for the user to hear themselves
+            st.audio(clip)
             
-            st.session_state.results[rk] = (states, feedback)
-            if states.count("good") / len(states) >= 0.8 and rk not in st.session_state.paid:
-                award_xp(st.session_state.name, 10)
-                st.session_state.paid.append(rk)
-            st.rerun()
+            if st.button("Submit for Analysis", type="primary", use_container_width=True):
+                if len(clip.getvalue()) > 10_000_000:
+                    st.error("Audio is too long. Please record a shorter segment (under 30 seconds).")
+                else:
+                    with st.spinner("Analyzing Tajweed rules..."):
+                        try:
+                            # Pass the correct MIME type from the browser!
+                            mime = clip.type or "audio/webm"
+                            states, rules, feedback = analyse_recitation_fast(clip.getvalue(), mime, words, st.session_state.strictness, st.session_state.teacher_gender)
+                            
+                            st.session_state.results[rk] = (states, feedback)
+                            if states.count("good") / len(states) >= 0.8 and rk not in st.session_state.paid:
+                                award_xp(st.session_state.name, 10)
+                                st.session_state.paid.append(rk)
+                            st.rerun()
+                        except Exception as e:
+                            st.error(str(e))
         return
     
     states, feedback = res
