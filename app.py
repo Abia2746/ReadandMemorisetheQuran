@@ -1,4 +1,4 @@
-# app.py — Al-Mu'allim · The Absolute Premium Build
+# app.py — Al-Mu'allim · The Absolute Premium Build (Fixed Audio & UI)
 import base64, json, re, time
 import html as _h
 import datetime, math, pathlib
@@ -152,34 +152,55 @@ h1,h2,h3,h4 { color: #D4AF37 !important; font-family: serif !important; }
 div[data-testid="stAudioInput"] { background: linear-gradient(135deg, #D4AF37, #F3E5AB) !important; border-radius: 999px !important; padding: 10px !important; box-shadow: 0 0 20px rgba(212,175,55,0.4) !important; }
 </style>""", unsafe_allow_html=True)
 
-def render_premium_player(words, audio_b64, teacher_img):
+def render_premium_player(words, audio_b64, teacher_img, analysis):
     html = f"""
     <!DOCTYPE html><html><head><style>
     body {{ background: transparent; color: #E8D5B5; margin: 0; font-family: 'Inter', sans-serif; }}
-    .header {{ text-align: center; margin-bottom: 20px; }}
-    .portrait {{ width: 120px; height: 150px; border-radius: 20px; border: 2px solid #D4AF37; object-fit: cover; margin: 0 auto; display: block; box-shadow: 0 0 30px rgba(212,175,55,0.2); }}
-    #w {{ display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; direction: rtl; padding: 10px; }}
-    .card {{ display: flex; flex-direction: column; align-items: center; padding: 12px 18px; border-radius: 16px; background: #2A221B; border: 1px solid rgba(212,175,55,.15); transition: all .3s; min-width: 110px; text-align: center; }}
-    .ar {{ font-family: 'Amiri Quran', serif; font-size: 2.2rem; color: #E8D5B5; line-height: 1.4; }}
-    .tr {{ font-size: 0.8rem; color: #D4AF37; font-style: italic; margin-top: 6px; }}
-    .en {{ font-size: 0.9rem; color: #8A7A66; margin-top: 2px; }}
+    .header {{ text-align: center; margin-bottom: 10px; }}
+    .portrait {{ width: 100px; height: 120px; border-radius: 20px; border: 2px solid #D4AF37; object-fit: cover; margin: 0 auto; display: block; box-shadow: 0 0 30px rgba(212,175,55,0.2); }}
+    .title {{ color: #D4AF37; font-family: serif; font-size: 1.5rem; margin: 10px 0; }}
+    
+    /* FIXED AUDIO PLAYER AT TOP */
+    audio {{ width: 100%; max-width: 500px; margin: 10px auto; border-radius: 999px; display: block; outline: none; }}
+    
+    #w {{ display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; direction: rtl; padding: 10px; }}
+    .card {{ display: flex; flex-direction: column; align-items: center; padding: 10px 15px; border-radius: 16px; background: #2A221B; border: 2px solid rgba(212,175,55,.15); transition: all .3s; min-width: 100px; text-align: center; }}
+    .ar {{ font-family: 'Amiri Quran', serif; font-size: 2rem; color: #E8D5B5; line-height: 1.4; }}
+    .tr {{ font-size: 0.8rem; color: #D4AF37; font-style: italic; margin-top: 4px; }}
+    .en {{ font-size: 0.85rem; color: #8A7A66; margin-top: 2px; }}
+    
+    /* Highlighting */
     .card.on {{ box-shadow: 0 0 20px rgba(212,175,55,.4); border-color: #D4AF37; transform: translateY(-3px) scale(1.05); background: rgba(212,175,55,.15); }}
-    audio {{ width: 100%; max-width: 600px; margin: 20px auto; border-radius: 999px; display: block; outline: none; }}
+    
+    /* Analysis Colors */
+    .card.correct {{ border-color: #4ADE80; background: rgba(74,222,128,.1); }}
+    .card.missed {{ border-color: #F87171; background: rgba(248,113,113,.1); }}
     </style></head><body>
     
     <div class="header">
         <img src="{teacher_img}" class="portrait" alt="Teacher">
-        <h2 style="color: #D4AF37; margin-top: 10px;">Surah {st.session_state.current_surah} · Ayah {st.session_state.current_ayah}</h2>
+        <div class="title">Surah {st.session_state.current_surah} · Ayah {st.session_state.current_ayah}</div>
     </div>
 
-    <div id="w"></div>
     <audio id="a" controls src="data:audio/mpeg;base64,{audio_b64}"></audio>
+    <div id="w"></div>
     
     <script>
         const W = {json.dumps(words)};
+        const analysis = {json.dumps(analysis)};
         const box = document.getElementById('w'); const a = document.getElementById('a');
-        const els = W.map(w => {{
-            const d = document.createElement('div'); d.className = 'card';
+        
+        const els = W.map((w, idx) => {{
+            const d = document.createElement('div');
+            let border = '';
+            if (analysis && analysis.words) {{
+                const res = analysis.words.find(r => r.word === w.ar || r.word.includes(w.ar) || w.ar.includes(r.word));
+                if (res) {{
+                    if (res.status === 'good') border = 'correct';
+                    if (res.status === 'missed') border = 'missed';
+                }}
+            }}
+            d.className = 'card ' + border;
             d.innerHTML = `<div class="ar">${{w.ar}}</div><div class="tr">${{w.tr}}</div><div class="en">${{w.en}}</div>`;
             box.appendChild(d); return d;
         }});
@@ -195,7 +216,7 @@ def render_premium_player(words, audio_b64, teacher_img):
                 total += weight; return weight;
             }});
             let cur = d * 0.05; const sp = d * 0.90;
-            cum = weights.map(w => {{ cur += (w/total)*sp; return cum; }});
+            cum = weights.map(w => {{ cur += (w/total)*sp; return cur; }});
         }}
         a.onloadedmetadata = build;
         function update() {{
@@ -207,7 +228,7 @@ def render_premium_player(words, audio_b64, teacher_img):
         }}
         a.addEventListener('play', () => requestAnimationFrame(update));
     </script></body></html>"""
-    components.html(html, height=650, scrolling=True)
+    components.html(html, height=600, scrolling=True)
 
 def render_3d_garden():
     html = """
@@ -231,7 +252,7 @@ def render_3d_garden():
         rainGeo.setAttribute('position', new THREE.BufferAttribute(rainPos, 3));
         const rain = new THREE.Points(rainGeo, new THREE.PointsMaterial({color: 0x88bbff, size: 0.1, transparent: true, opacity: 0.4})); scene.add(rain);
         
-        // Better Trees (Cylinder trunk + Cone leaves)
+        // Better Trees
         for(let i=0; i<25; i++){ 
             const x = (Math.random()-0.5)*50; const z = (Math.random()-0.5)*50 - 10;
             const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.4, 4), new THREE.MeshStandardMaterial({color: 0x221100})); 
@@ -297,31 +318,46 @@ if not verse or not words:
     st.error("Could not load Quran data.")
     st.stop()
 
-# 1. PREMIUM PLAYER (Includes Teacher, Arabic, English, Transliteration, and Glowing Audio)
+# 1. PREMIUM PLAYER (Audio Player at Top, All Features)
 img_name = "IMG_6147.jpeg" if st.session_state.cfg_teacher == "Male" else "IMG_6146.jpeg"
 teacher_img = f"https://raw.githubusercontent.com/Abia2746/ReadandMemoriseTheQuran/main/{img_name}"
 audio_b64 = base64.b64encode(ref_mp3).decode("utf-8") if ref_mp3 else ""
 
+analysis = st.session_state.last_analysis.get(key, None)
+
 if audio_b64:
-    render_premium_player(words, audio_b64, teacher_img)
+    render_premium_player(words, audio_b64, teacher_img, analysis)
+
+# 2. RECITE BUTTON ON MAIN SCREEN
+st.markdown("<h3 style='text-align:center;color:#D4AF37;margin-top:10px;'>🎙️ Recite the Ayah</h3>", unsafe_allow_html=True)
+st.markdown("<p style='text-align:center;color:#8A7A66;font-size:0.9rem;'>Recite from memory. The cards above will turn green/red.</p>", unsafe_allow_html=True)
+
+col1, col2, col3 = st.columns([1, 2, 1])
+with col2:
+    audio_val = st.audio_input("Record", label_visibility="collapsed")
+    if audio_val and ref_mp3:
+        if st.button("Analyze Recitation", use_container_width=True, type="primary"):
+            with st.spinner("Listening to your voice..."):
+                res = analyze_recitation(audio_val.getvalue(), [w["ar"] for w in words], ref_mp3)
+                if "error" in res: st.error(res["error"])
+                else:
+                    st.session_state.last_analysis[key] = res
+                    if res.get("overall_score", 0) >= 80:
+                        add_xp(st.session_state.user_name, 10)
+                        st.balloons()
+                    st.rerun()
 
 st.divider()
 
-t1, t2 = st.tabs(["Study", "Memorise (Hifz)"])
+# 3. TABS (Memorise & Study)
+t1, t2 = st.tabs(["Memorise (Hifz)", "Study"])
 
-# ─── TAB 1: STUDY ───
 with t1:
-    st.markdown(f"<div style='direction:rtl; font-family:Amiri Quran; font-size:2.5rem; text-align:center; color:#D4AF37; padding:20px;'>{verse}</div>", unsafe_allow_html=True)
-    st.markdown(f"<div style='text-align:center; color:#8A7A66; margin-top:10px;'>Translation: {requests.get(f'https://api.alquran.cloud/v1/ayah/{s}:{a}/en.sahih').json()['data']['text']}</div>", unsafe_allow_html=True)
-
-# ─── TAB 2: MEMORISE (4-Step System) ───
-with t2:
-    st.markdown(f"<h3 style='text-align:center;'>Step {st.session_state.mem_step + 1} of 4</h3>", unsafe_allow_html=True)
+    st.markdown(f"<h4 style='text-align:center;'>Step {st.session_state.mem_step + 1} of 4</h4>", unsafe_allow_html=True)
     
     if st.session_state.mem_step == 0:
         st.info("Step 1: Listen to the reference 5 times.")
         if ref_mp3: st.audio(ref_mp3, format="audio/mp3")
-        
         if st.button("✅ I listened once", use_container_width=True):
             st.session_state.mem_listens += 1
             if st.session_state.mem_listens >= 5:
@@ -331,18 +367,15 @@ with t2:
         st.caption(f"Listens: {st.session_state.mem_listens}/5")
         
     elif st.session_state.mem_step == 1:
-        st.info("Step 2: Recite using the English hints. Tap the Mic below.")
-        
-        # Show English hints
+        st.info("Step 2: Recite using English hints.")
         cols = st.columns(3)
         for i, w in enumerate(words[:3]): 
             with cols[i]:
                 st.markdown(f"<div style='background:#2A221B;border:1px solid #D4AF37;border-radius:15px;padding:10px;text-align:center;'><div style='color:#E8D5B5;font-weight:bold;'>{w['en']}</div></div>", unsafe_allow_html=True)
         
-        # Native Mic Input (Styled to match)
-        audio_val = st.audio_input("Record your recitation", label_visibility="collapsed")
+        audio_val = st.audio_input("Record step 2", label_visibility="collapsed")
         if audio_val and ref_mp3:
-            if st.button("Analyze", use_container_width=True, type="primary"):
+            if st.button("Analyze Hifz Chunk", use_container_width=True, type="primary"):
                 with st.spinner("Analyzing..."):
                     res = analyze_recitation(audio_val.getvalue(), [w["ar"] for w in words], ref_mp3)
                     if "error" in res: st.error(res["error"])
@@ -352,10 +385,7 @@ with t2:
                         st.rerun()
 
     elif st.session_state.mem_step == 2:
-        res = st.session_state.last_analysis.get(key, {})
-        st.success(f"Score: {res.get('overall_score', 0)}%")
-        st.write(res.get('summary', ''))
-        
+        st.success("Masha'Allah! You passed this chunk.")
         if st.button("Next Step (Repeat x5)", use_container_width=True, type="primary"):
             st.session_state.mem_step = 3
             st.rerun()
@@ -363,7 +393,6 @@ with t2:
     elif st.session_state.mem_step == 3:
         st.info("Step 3: Repeat x5 without looking at the Arabic.")
         if ref_mp3: st.audio(ref_mp3, format="audio/mp3")
-        
         if st.button("✅ I repeated once", use_container_width=True):
             st.session_state.mem_listens += 1
             if st.session_state.mem_listens >= 5:
@@ -376,23 +405,6 @@ with t2:
         if st.session_state.show_reward:
             st.balloons()
             st.markdown("<h3 style='text-align:center;color:#D4AF37'>Alhamdulillah!</h3>", unsafe_allow_html=True)
-            
-            # Canvas
-            canvas_html = """
-            <div style="text-align:center; color:#D4AF37; font-family:'Amiri Quran', serif; font-size:2rem;">اْلحَمْدُ لِلّٰهِ</div>
-            <canvas id="c" width="400" height="150" style="background:#2A221B; border:2px solid #D4AF37; border-radius:20px; width:100%; cursor:crosshair; touch-action:none;"></canvas>
-            <script>
-                const canvas = document.getElementById('c'); const ctx = canvas.getContext('2d');
-                let isDrawing = false; ctx.lineWidth = 4; ctx.lineCap = 'round'; ctx.strokeStyle = '#D4AF37';
-                canvas.addEventListener('mousedown', start); canvas.addEventListener('mousemove', draw); canvas.addEventListener('mouseup', stop);
-                canvas.addEventListener('touchstart', start, {passive:false}); canvas.addEventListener('touchmove', draw, {passive:false}); canvas.addEventListener('touchend', stop);
-                function getPos(e){ const rect = canvas.getBoundingClientRect(); const cx = e.touches ? e.touches[0].clientX : e.clientX; const cy = e.touches ? e.touches[0].clientY : e.clientY; return {x: cx - rect.left, y: cy - rect.top}; }
-                function start(e){ e.preventDefault(); isDrawing = true; ctx.beginPath(); const p = getPos(e); ctx.moveTo(p.x, p.y); }
-                function draw(e){ e.preventDefault(); if(!isDrawing) return; const p = getPos(e); ctx.lineTo(p.x, p.y); ctx.stroke(); }
-                function stop(e){ e.preventDefault(); isDrawing = false; }
-            </script>"""
-            components.html(canvas_html, height=200)
-            
             if st.button("Complete Ritual", use_container_width=True, type="primary"):
                 st.session_state.show_reward = False
                 st.session_state.mem_step = 0
@@ -400,7 +412,7 @@ with t2:
                 st.rerun()
         else:
             st.info("Step 4: Final Blind Recitation.")
-            audio_val = st.audio_input("Record your final recitation", label_visibility="collapsed")
+            audio_val = st.audio_input("Record final", label_visibility="collapsed")
             if audio_val and ref_mp3:
                 if st.button("Analyze Final", use_container_width=True, type="primary"):
                     with st.spinner("Analyzing..."):
@@ -410,6 +422,10 @@ with t2:
                             st.success(f"Score: {res.get('overall_score', 0)}%")
                             st.session_state.show_reward = True
                             st.rerun()
+
+with t2:
+    st.markdown(f"<div style='direction:rtl; font-family:Amiri Quran; font-size:2.5rem; text-align:center; color:#D4AF37; padding:20px;'>{verse}</div>", unsafe_allow_html=True)
+    st.markdown(f"<div style='text-align:center; color:#8A7A66; margin-top:10px;'>Translation: {requests.get(f'https://api.alquran.cloud/v1/ayah/{s}:{a}/en.sahih').json()['data']['text']}</div>", unsafe_allow_html=True)
 
 # ─── 3D GARDEN ───
 st.divider()
