@@ -1,436 +1,1279 @@
-import base64, datetime, hashlib, io, json, math, os, pathlib, re, sqlite3, tempfile, time, wave
-import numpy as np
+import base64
+import datetime
+import json
+import os
+import pathlib
+import re
+import sqlite3
+import unicodedata
+
 import requests
 import streamlit as st
 import streamlit.components.v1 as components
 
-st.set_page_config(page_title="Al-Mu'allim", page_icon="🕌", layout="wide", initial_sidebar_state="expanded")
+
+# ============================================================
+# AL-MU'ALLIM — Qur'an recitation practice and Tajweed feedback
+# ============================================================
+
+st.set_page_config(
+    page_title="Al-Mu'allim",
+    page_icon="🕌",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
+QURAN_API = "https://api.quran.com/api/v4"
+EVERY_AYAH = "https://everyayah.com/data"
+
+RECITERS = {
+    "Mishary Alafasy": "Alafasy_128kbps",
+    "Yasser Al-Dosari": "Yasser_Ad-Dussary_128kbps",
+}
+
+# Number of ayahs in each surah, indexed from 1.
+AYAHS = [
+    0, 7, 286, 200, 176, 120, 165, 206, 75, 129, 109, 123, 111, 43,
+    52, 99, 128, 111, 110, 98, 135, 112, 78, 118, 64, 77, 227, 93,
+    88, 69, 60, 34, 30, 73, 54, 45, 83, 182, 88, 75, 85, 54, 53,
+    89, 59, 37, 35, 38, 29, 18, 45, 60, 49, 62, 55, 78, 96, 29,
+    22, 24, 13, 14, 11, 11, 18, 12, 12, 30, 52, 52, 44, 28, 28,
+    20, 56, 40, 31, 50, 40, 46, 42, 29, 19, 36, 25, 22, 17, 19,
+    26, 30, 20, 15, 21, 11, 8, 8, 19, 5, 8, 8, 11, 11, 8, 3,
+    9, 5, 4, 7, 3, 6, 3, 5, 4, 5, 6,
+]
+
+# Arabic combining marks used for harakah / Tajweed display.
+HARAKAH_NAMES = {
+    "\u064b": "Fathatayn",
+    "\u064c": "Dammatayn",
+    "\u064d": "Kasratayn",
+    "\u064e": "Fathah",
+    "\u064f": "Dammah",
+    "\u0650": "Kasrah",
+    "\u0651": "Shaddah",
+    "\u0652": "Sukoon",
+    "\u0653": "Maddah",
+    "\u0654": "Hamza above",
+    "\u0655": "Hamza below",
+    "\u0670": "Superscript alif",
+}
+
+
+# ----------------------------- Database -----------------------------
 
 try:
     DB_PATH = pathlib.Path(__file__).with_name("muallim.db")
 except NameError:
     DB_PATH = pathlib.Path.cwd() / "muallim.db"
 
-GEMINI = "https://generativelanguage.googleapis.com/v1beta/models"
-RECITERS = {"Mishary Alafasy": "Alafasy_128kbps", "Yasser Al-Dosari": "Yasser_Ad-Dussary_128kbps"}
-AYAHS = [0, 7, 286, 200, 176, 120, 165, 206, 75, 129, 109, 123, 111, 43, 52, 99, 128, 111, 110, 98, 135, 112, 78, 118, 64, 77, 227, 93, 88, 69, 60, 34, 30, 73, 54, 45, 83, 182, 88, 75, 85, 54, 53, 89, 59, 37, 35, 38, 29, 18, 45, 60, 49, 62, 55, 78, 96, 29, 22, 24, 13, 14, 11, 11, 18, 12, 12, 30, 52, 52, 44, 28, 28, 20, 56, 40, 31, 50, 40, 46, 42, 29, 19, 36, 25, 22, 17, 19, 26, 30, 20, 15, 21, 11, 8, 8, 19, 5, 8, 8, 11, 11, 8, 3, 9, 5, 4, 7, 3, 6, 3, 5, 4, 5, 6]
 
-# ───────────────────────────── Database ─────────────────────────────
 def db():
-    c = sqlite3.connect(DB_PATH)
-    c.execute("CREATE TABLE IF NOT EXISTS users(name TEXT PRIMARY KEY, xp INTEGER DEFAULT 0, streak INTEGER DEFAULT 0, last_day TEXT)")
-    return c
+    connection = sqlite3.connect(DB_PATH)
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS users (
+            name TEXT PRIMARY KEY,
+            xp INTEGER DEFAULT 0,
+            streak INTEGER DEFAULT 0,
+            last_day TEXT
+        )
+        """
+    )
+    return connection
+
 
 def get_user(name):
-    with db() as c:
-        c.execute("INSERT OR IGNORE INTO users(name) VALUES(?)", (name,))
-        return c.execute("SELECT xp, streak, last_day FROM users WHERE name=?", (name,)).fetchone()
+    with db() as connection:
+        connection.execute(
+            "INSERT OR IGNORE INTO users(name) VALUES(?)", (name,)
+        )
+        row = connection.execute(
+            "SELECT xp, streak, last_day FROM users WHERE name=?",
+            (name,),
+        ).fetchone()
+    return row
 
-def award_xp(name, xp=10, today=None):
-    today = today or datetime.date.today()
-    xp0, streak, last = get_user(name)
-    if last != today.isoformat():
-        streak = streak + 1 if last == (today - datetime.timedelta(days=1)).isoformat() else 1
-    with db() as c:
-        c.execute("UPDATE users SET xp=?, streak=?, last_day=? WHERE name=?", (xp0 + xp, streak, today.isoformat(), name))
 
-# ───────────────────────────── Quran API ─────────────────────────────
-@st.cache_data(show_spinner=False)
-def fetch_words(s, a):
-    r = requests.get(f"https://api.quran.com/api/v4/verses/by_key/{s}:{a}",
-                     params={"words": "true", "word_fields": "text_uthmani", "language": "en"}, timeout=20)
-    r.raise_for_status()
-    out = []
-    for w in r.json()["verse"]["words"]:
-        if w.get("char_type_name") == "word":
-            out.append({"ar": w["text_uthmani"], "en": (w.get("translation") or {}).get("text", ""),
-                        "tr": (w.get("transliteration") or {}).get("text") or ""})
-    if not out: raise RuntimeError("No words returned.")
-    return out
+def award_xp(name, xp=10):
+    today = datetime.date.today()
+    current_xp, streak, last_day = get_user(name)
 
-@st.cache_data(show_spinner=False)
-def fetch_audio(s, a, folder):
-    r = requests.get(f"https://everyayah.com/data/{folder}/{s:03d}{a:03d}.mp3", timeout=30)
-    if r.status_code != 200 or len(r.content) < 2000: raise RuntimeError("Audio not available.")
-    return r.content
+    if last_day != today.isoformat():
+        yesterday = (today - datetime.timedelta(days=1)).isoformat()
+        streak = streak + 1 if last_day == yesterday else 1
 
-# ───────────────────────────── AI (Stable Models) ─────────────────────────────
+    with db() as connection:
+        connection.execute(
+            "UPDATE users SET xp=?, streak=?, last_day=? WHERE name=?",
+            (current_xp + xp, streak, today.isoformat(), name),
+        )
+
+
+# ----------------------------- Qur'an API -----------------------------
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_words(surah, ayah):
+    response = requests.get(
+        f"{QURAN_API}/verses/by_key/{surah}:{ayah}",
+        params={
+            "words": "true",
+            "word_fields": "text_uthmani",
+            "language": "en",
+        },
+        timeout=20,
+    )
+    response.raise_for_status()
+
+    verse = response.json().get("verse", {})
+    output = []
+
+    for item in verse.get("words", []):
+        if item.get("char_type_name") != "word":
+            continue
+
+        arabic = item.get("text_uthmani", "")
+        if not arabic:
+            continue
+
+        output.append(
+            {
+                "ar": arabic,
+                "en": (item.get("translation") or {}).get("text", ""),
+                "tr": (item.get("transliteration") or {}).get("text", ""),
+                "ayah": int(ayah),
+            }
+        )
+
+    if not output:
+        raise RuntimeError(f"No words were returned for {surah}:{ayah}.")
+
+    return output
+
+
+def split_arabic_graphemes(text):
+    """Keep each Arabic base character together with its combining marks."""
+    graphemes = []
+
+    for character in text:
+        if unicodedata.category(character).startswith("M") and graphemes:
+            graphemes[-1] += character
+        else:
+            graphemes.append(character)
+
+    return graphemes
+
+
+def harakah_labels(grapheme):
+    return [
+        HARAKAH_NAMES[character]
+        for character in grapheme
+        if character in HARAKAH_NAMES
+    ]
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_passage(surah, start_ayah, end_ayah):
+    passage_words = []
+    track_word_counts = []
+
+    for ayah in range(start_ayah, end_ayah + 1):
+        verse_words = fetch_words(surah, ayah)
+        track_word_counts.append(len(verse_words))
+
+        for word in verse_words:
+            item = dict(word)
+            item["letters"] = [
+                {
+                    "text": grapheme,
+                    "marks": harakah_labels(grapheme),
+                }
+                for grapheme in split_arabic_graphemes(word["ar"])
+            ]
+            passage_words.append(item)
+
+    if not passage_words:
+        raise RuntimeError("No words were returned for this passage.")
+
+    return passage_words, track_word_counts
+
+
+def audio_url(surah, ayah, reciter_folder):
+    return (
+        f"{EVERY_AYAH}/{reciter_folder}/"
+        f"{surah:03d}{ayah:03d}.mp3"
+    )
+
+
+# ----------------------------- Gemini API -----------------------------
+
 def api_key():
-    try: return st.secrets["GEMINI_API_KEY"]
-    except: return os.environ.get("GEMINI_API_KEY", "")
+    try:
+        return st.secrets["GEMINI_API_KEY"]
+    except Exception:
+        return os.environ.get("GEMINI_API_KEY", "")
 
-def analyse_recitation_fast(audio_bytes, mime_type, words, strictness, teacher_gender):
-    k = api_key()
-    if not k: raise RuntimeError("Add GEMINI_API_KEY in Streamlit secrets.")
-    
-    # Gemini API has a 20MB limit for inline data. 10MB is a safe threshold for audio.
-    if len(audio_bytes) > 10_000_000:
-        raise RuntimeError("Audio recording is too long. Please record under 30 seconds.")
 
-    teacher = "a strict male Sheikh" if teacher_gender == "Male" else "a gentle female Sheikh"
-    
-    prompt = (f"You are {teacher}. Analyze this recitation of: "
-              + json.dumps([w["ar"] for w in words], ensure_ascii=False)
-              + f'. Evaluate Tajweed (Madd, Ghunnah, Qalqalah, Idgham). Strictness: {strictness}. '
-              'Return JSON only: {"words":[{"i":0,"status":"good","rule":"Madd"}], "feedback":"..."}')
-              
-    body = {
-        "contents": [{"parts": [{"text": prompt}, {"inline_data": {"mime_type": mime_type, "data": base64.b64encode(audio_bytes).decode()}}]}],
-        "generationConfig": {"responseMimeType": "application/json", "temperature": 0.1}
-    }
-    
-    # Actual currently supported models
-    models_to_try = ["gemini-2.0-flash", "gemini-1.5-flash-latest", "gemini-1.5-flash"]
-    err = ""
-    
-    for model in models_to_try:
-        try:
-            # Using a 45-second timeout per model
-            r = requests.post(f"{GEMINI}/{model}:generateContent", headers={"x-goog-api-key": k}, json=body, timeout=45)
-            if r.status_code != 200:
-                err = f"{model}: {r.status_code}"
-                continue
-                
-            txt = "".join(p.get("text", "") for p in r.json()["candidates"][0]["content"]["parts"])
-            txt = re.sub(r"^```(?:json)?|```$", "", txt.strip()).strip()
-            
-            # Safely extract JSON if the model wrapped it in extra text
-            json_match = re.search(r'\{.*\}', txt, re.DOTALL)
-            if json_match: txt = json_match.group(0)
-                
-            data = json.loads(txt)
-            
-            states = ["missed"] * len(words)
-            rules = ["none"] * len(words)
-            for w in data.get("words", []):
-                i = w.get("i")
-                if isinstance(i, int) and 0 <= i < len(words):
-                    states[i] = "good" if w.get("status") == "good" else "missed"
-                    rules[i] = w.get("rule", "none")
-                    
-            return states, rules, str(data.get("feedback", ""))
-            
-        except requests.exceptions.Timeout:
-            err = f"{model} timed out"
-        except Exception as e:
-            err = f"{model}: {str(e)}"
-            
-    raise RuntimeError(f"Analysis failed after trying all models. {err}")
+@st.cache_data(ttl=1800, show_spinner=False)
+def get_available_flash_model(api_key_value):
+    """
+    Ask the Gemini API which models this key can access.
+    This avoids hard-coding retired or unavailable model IDs.
+    """
+    response = requests.get(
+        "https://generativelanguage.googleapis.com/v1beta/models",
+        headers={"x-goog-api-key": api_key_value},
+        timeout=15,
+    )
+    response.raise_for_status()
 
-# ───────────────────────────── Visual Engine (React) ─────────────────────────────
-PLAYER_HTML = r"""<!DOCTYPE html><html><head><meta charset="utf-8">
-<link href="https://fonts.googleapis.com/css2?family=Amiri+Quran&family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
-<script src="https://cdn.tailwindcss.com"></script>
-<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-<style>
-body{margin:0;background:transparent;color:#E8D5B5;font-family:Inter,sans-serif;}
-.ar-text{font-family:'Amiri Quran',serif; font-size: 2.2rem; line-height: 2.4; direction: rtl;}
-.glass{background: rgba(30, 25, 20, 0.5); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); border: 1px solid rgba(212, 175, 55, 0.15); box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.4);}
-.glass-card{background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.05); border-radius: 16px;}
-.blur-text{filter: blur(12px); opacity: 0.3; transition: all 0.5s ease; user-select: none; pointer-events: none;}
+    models = response.json().get("models", [])
+    available = []
 
-/* Tilawa.ai Style Aesthetic Highlight */
-.word-span{
-  display: inline-flex; flex-direction: column; align-items: center; 
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); 
-  padding: 6px 12px; border-radius: 16px; border: 1px solid transparent;
-}
-.word-active{
-  background: linear-gradient(135deg, rgba(212, 175, 55, 0.25), rgba(212, 175, 55, 0.05));
-  border: 1px solid rgba(212, 175, 55, 0.6);
-  box-shadow: 0 0 30px rgba(212, 175, 55, 0.3), inset 0 0 10px rgba(212, 175, 55, 0.1);
-  transform: scale(1.08) translateY(-2px);
-  backdrop-filter: blur(8px);
-  z-index: 10;
-}
-.word-active .ar-text { color: #FFF; text-shadow: 0 0 15px rgba(212,175,55,0.9); }
-.word-good{color: #4ade80; text-shadow: 0 0 15px rgba(74, 222, 128, 0.6);}
-.word-missed{color: #f87171; text-shadow: 0 0 15px rgba(248, 113, 113, 0.6);}
+    for model in models:
+        methods = model.get("supportedGenerationMethods", [])
+        name = model.get("name", "")
 
-/* Custom Scrollbar */
-::-webkit-scrollbar { width: 6px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: rgba(212, 175, 55, 0.3); border-radius: 10px; }
-::-webkit-scrollbar-thumb:hover { background: rgba(212, 175, 55, 0.6); }
-</style></head>
-<body><div id="root"></div><script>
-const h=React.createElement,{useState,useEffect,useRef}=React,D=__DATA__;
+        if "generateContent" in methods and "flash" in name.lower():
+            available.append(name)
 
-function parseTajweed(text) {
-  let html = text;
-  html = html.replace(/([\u064B-\u0652]*[\u0627\u0648\u064A][\u064B-\u0652]*)/g, '<span style="color:#ff6b6b">$1</span>');
-  html = html.replace(/([\u0646\u0645][\u0651])/g, '<span style="color:#4ecdc4">$1</span>');
-  html = html.replace(/([\u0642\u0637\u0628\u062C\u062F][\u0652])/g, '<span style="color:#ffd93d">$1</span>');
-  return html;
-}
+    if not available:
+        raise RuntimeError(
+            "No Flash model supporting generateContent is available to this "
+            "API key. Check that the key belongs to the correct Google "
+            "Cloud project and that the Gemini API is enabled."
+        )
 
-function App(){
- const [activeWord, setActiveWord] = useState(-1);
- const audioRef = useRef(null);
- const containerRef = useRef(null);
+    # Prefer a current, efficient model if it is actually available.
+    preferences = (
+        "gemini-2.5-flash",
+        "gemini-2.0-flash",
+        "gemini-1.5-flash",
+    )
 
- const handleTimeUpdate = () => {
-   if (!audioRef.current) return;
-   const time = audioRef.current.currentTime;
-   const dur = audioRef.current.duration || 1;
-   const pct = time / dur;
-   const idx = Math.floor(pct * D.words.length);
-   setActiveWord(idx);
-   
-   // Auto-scroll active word into view smoothly
-   if (containerRef.current) {
-     const activeEl = containerRef.current.querySelector('.word-active');
-     if (activeEl) activeEl.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
-   }
- };
+    for preferred in preferences:
+        matches = [name for name in available if name.endswith(preferred)]
+        if matches:
+            return matches[0]
 
- const isBlind = D.mode === 'blind' && !D.states;
+    # Otherwise use the first Flash model returned by Google's API.
+    return available[0]
 
- return h('div',{className:'p-4 max-w-5xl mx-auto flex flex-col gap-4'},
-   
-   // Header Bar
-   h('div',{className:'glass rounded-2xl p-4 flex items-center justify-between'},
-     h('div',{className:'flex items-center gap-4'},
-       h('div', null,
-         h('div',{className:'text-[#D4AF37] text-sm font-bold tracking-wider uppercase'}, 'Al-Mu\'allim'),
-         h('div',{className:'text-xs text-gray-400'}, 'Surah ' + D.meta.s + ' · Ayah ' + D.meta.a)
-       )
-     ),
-     h('div',{className:'flex gap-3'},
-        h('span',{className:'px-3 py-1 rounded-full bg-[#D4AF37]/10 border border-[#D4AF37]/30 text-[#D4AF37] text-xs font-bold'}, '⭐ ' + D.meta.xp + ' XP'),
-        h('span',{className:'px-3 py-1 rounded-full bg-orange-500/10 border border-orange-500/30 text-orange-400 text-xs font-bold'}, '🔥 ' + D.meta.streak + ' Days')
-     )
-   ),
 
-   // Main Recitation Area
-   h('div',{className:'glass rounded-3xl p-6 relative flex flex-col'},
-     
-     // Scrollable Arabic Container (FORCED RTL)
-     h('div',{ref:containerRef, dir:'rtl', className:'h-[300px] overflow-y-auto pr-2 flex flex-wrap justify-center content-start gap-y-4 gap-x-2 z-10'},
-       D.words.map((w, i) => {
-         const isActive = activeWord === i;
-         const isGood = D.states && D.states[i] === 'good';
-         const isMissed = D.states && D.states[i] === 'missed';
-         
-         let cls = 'word-span ';
-         if (isGood) cls += 'word-good ';
-         else if (isMissed) cls += 'word-missed ';
-         else if (isActive) cls += 'word-active ';
+def analyse_recitation(
+    audio_bytes,
+    mime_type,
+    words,
+    strictness,
+    teacher_gender,
+):
+    key = api_key()
+    if not key:
+        raise RuntimeError(
+            "Gemini API key missing. Add GEMINI_API_KEY to Streamlit secrets."
+        )
 
-         return h('div', {key:i, className:cls},
-           // Arabic (Blurred only if blind)
-           h('span', {className:'ar-text ' + (isBlind ? 'blur-text' : ''), dangerouslySetInnerHTML:{__html: parseTajweed(w.ar)}}),
-           
-           // Transliteration (ALWAYS VISIBLE)
-           w.tr ? h('span',{className:'text-[11px] italic text-[#D4AF37] mt-1 font-semibold'}, w.tr) : null,
-           
-           // English Hints (ALWAYS VISIBLE)
-           w.en ? h('span',{className:'text-[11px] text-[#a8987f] text-center max-w-[120px] mt-1'}, w.en) : null
-         )
-       })
-     ),
-     
-     // Audio Player
-     D.audio ? h('audio', {ref:audioRef, src:D.audio, controls:true, onTimeUpdate:handleTimeUpdate, className:'w-full mt-6 rounded-full outline-none sepia-[.6] saturate-150'}) : null
-   ),
+    if len(audio_bytes) > 12_000_000:
+        raise RuntimeError(
+            "The recording is too large. Please record a shorter passage."
+        )
 
-   // Feedback Panel
-   D.states ? h('div',{className:'grid grid-cols-3 gap-4 mt-2'},
-     h('div',{className:'glass-card p-4 text-center col-span-1 flex flex-col justify-center'},
-       h('div',{className:'text-3xl font-bold text-green-400'}, Math.round((D.states.filter(s=>s==='good').length/D.states.length)*100)+'%'),
-       h('div',{className:'text-xs text-gray-400 uppercase mt-1'}, 'Accuracy')
-     ),
-     h('div',{className:'glass-card p-6 col-span-2 flex flex-col justify-center'},
-       h('div',{className:'text-[#D4AF37] text-sm font-bold uppercase mb-2 flex items-center gap-2'}, '🎙 Teacher Feedback'),
-       h('p',{className:'text-sm text-gray-300 leading-relaxed'}, D.feedback)
-     )
-   ) : null
- )
-}
-ReactDOM.createRoot(document.getElementById('root')).render(h(App));
-</script></body></html>"""
+    model_name = get_available_flash_model(key)
 
-# ───────────────────────────── 3D Background ─────────────────────────────
-GARDEN_HTML = r"""<!DOCTYPE html><html><head><meta charset="utf-8"><style>html,body{margin:0;background:#05080a;overflow:hidden}canvas{display:block;width:100vw;height:100vh}</style>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script></head><body><script>
-const W=innerWidth,H=innerHeight,R=new THREE.WebGLRenderer({antialias:true,alpha:true});R.setSize(W,H);R.setPixelRatio(Math.min(devicePixelRatio,2));document.body.appendChild(R.domElement);
-const S=new THREE.Scene();S.fog=new THREE.FogExp2(0x05080a,.03);
-const C=new THREE.PerspectiveCamera(60,W/H,.1,100);S.add(new THREE.AmbientLight(0x2a3a4a,.6));
-const dir=new THREE.DirectionalLight(0x6a8aaa,.4);dir.position.set(5,10,7);S.add(dir);
+    teacher_description = (
+        "a knowledgeable male Qur'an recitation teacher"
+        if teacher_gender == "Male"
+        else "a knowledgeable female Qur'an recitation teacher"
+    )
 
-const gr=new THREE.Mesh(new THREE.PlaneGeometry(200,200),new THREE.MeshStandardMaterial({color:0x0a1216,roughness:0.1,metalness:0.9}));gr.rotation.x=-Math.PI/2;S.add(gr);
-const rnd=(a,b)=>a+Math.random()*(b-a);
-for(let i=0;i<100;i++){
- const x=rnd(-40,40),z=rnd(-40,40);if(Math.hypot(x,z)<8)continue;
- const h=rnd(3,6);
- const t=new THREE.Mesh(new THREE.CylinderGeometry(.15,.3,h,7),new THREE.MeshStandardMaterial({color:0x1a1005,roughness:1}));t.position.set(x,h/2,z);S.add(t);
- const layers = Math.floor(rnd(3,6));
- for(let k=0;k<layers;k++){
-  const c=new THREE.Mesh(new THREE.ConeGeometry(2-k*.3, 2.5, 8),new THREE.MeshStandardMaterial({color:new THREE.Color().setHSL(.35,.7,.05+k*.02),roughness:1}));
-  c.position.set(x,h+k*.9,z);S.add(c);
- }
-}
-const pole=new THREE.Mesh(new THREE.CylinderGeometry(.05,.08,3,8),new THREE.MeshStandardMaterial({color:0x111}));pole.position.y=1.5;S.add(pole);
-const lamp=new THREE.Mesh(new THREE.CylinderGeometry(.4,.4,.8,16),new THREE.MeshStandardMaterial({color:0xffddaa,emissive:0xff8800,emissiveIntensity:3, metalness:0.5}));lamp.position.y=3;S.add(lamp);
-const light=new THREE.PointLight(0xff8800,4,30);light.position.set(0,3,0);S.add(light);
+    expected_text = []
+    for word_index, word in enumerate(words):
+        expected_text.append(
+            {
+                "word_i": word_index,
+                "ayah": word["ayah"],
+                "text": word["ar"],
+                "letters": [
+                    {"letter_i": letter_index, "text": letter["text"]}
+                    for letter_index, letter in enumerate(word["letters"])
+                ],
+            }
+        )
 
-const N=4000,pos=new Float32Array(N*6),sp=new Float32Array(N);
-for(let i=0;i<N;i++){const x=rnd(-30,30),y=rnd(0,25),z=rnd(-30,30);pos.set([x,y,z,x,y-.8,z],i*6);sp[i]=rnd(.5,.9)}
-const rg=new THREE.BufferGeometry();rg.setAttribute('position',new THREE.BufferAttribute(pos,3));
-S.add(new THREE.LineSegments(rg,new THREE.LineBasicMaterial({color:0x6a8aaa,transparent:true,opacity:.2})));
+    prompt = f"""
+You are {teacher_description}. Assess the attached recording of Qur'an
+recitation against the exact Uthmani text supplied below.
 
-let T=0;
-function loop(){
- requestAnimationFrame(loop);T+=.01;
- for(let i=0;i<N;i++){pos[i*6+1]-=sp[i];pos[i*6+4]-=sp[i];if(pos[i*6+4]<0){pos[i*6+1]=25;pos[i*6+4]=24.2}}
- rg.attributes.position.needsUpdate=true;
- light.intensity=4+Math.sin(T*10)*.5;
- const angle=T*.05;
- C.position.set(Math.sin(angle)*15, 5+Math.sin(T*.2)*.5, Math.cos(angle)*15);
- C.lookAt(0,2,0);
- R.render(S,C);
-}
-loop();
-</script></body></html>"""
+Strictness: {strictness}.
 
-def embed_bg(html):
-    components.html(html, height=0, width=0)
+Assess only what can reasonably be heard. Do not invent errors. If you
+cannot confidently identify a sound or align it to a particular letter,
+mark it "uncertain", not "review".
 
-def player(words, mode, states=None, audio=None, feedback="", meta={}):
-    data = json.dumps({"words": words, "mode": mode, "states": states, "audio": audio, "feedback": feedback, "meta": meta}, ensure_ascii=False).replace("</", "<\\/")
-    h = 600 
-    embed = PLAYER_HTML.replace("__DATA__", data)
-    components.html(embed, height=h, scrolling=False)
+Pay attention to:
+- Fathah, kasrah, dammah and tanween
+- Sukoon and shaddah
+- Madd and its duration
+- Ghunnah
+- Qalqalah
+- Idgham, ikhfa, iqlab and izhar
+- Letter articulation and clarity
 
-# ───────────────────────────── Styling & State ─────────────────────────────
-for k, v in {"name": "", "surah": 2, "ayah": 60, "step": 0, "count": 0, "results": {}, "paid": [], "tries": 0,
-             "teacher_gender": "Male", "strictness": "Balanced", "theme": "Starry Night"}.items():
-    st.session_state.setdefault(k, v)
+The supplied text is divided into indexed words and indexed letter-graphemes.
+Use the exact indexes. Do not rewrite or alter the Qur'anic text.
 
-bg_color = "#0a0f1c" if st.session_state.theme == "Starry Night" else "#1A1510" if st.session_state.theme == "Brown" else "#000000"
-
-st.markdown(f"""<style>
-@import url('https://fonts.googleapis.com/css2?family=Amiri+Quran&family=Cormorant+Garamond:wght@600&family=Inter:wght@400;600&display=swap');
-.stApp{{background:{bg_color};color:#E8D5B5;font-family:Inter,sans-serif}}
-[data-testid="stSidebar"]{{background:rgba(10, 8, 6, 0.8); backdrop-filter: blur(20px); border-right:1px solid #D4AF3733}}
-h1,h2,h3{{font-family:'Cormorant Garamond',serif!important;color:#D4AF37!important}}
-div.stButton>button{{background:linear-gradient(135deg, #D4AF37, #F3E5AB)!important;color:#1A1510!important;border:none!important;border-radius:999px!important;font-weight:700!important;min-height:46px;box-shadow:0 0 20px rgba(212,175,55,.4)}}
-div.stButton>button:hover{{box-shadow:0 0 30px rgba(212,175,55,.8)}}
-[data-testid="stAudioInput"]{{
-    background:linear-gradient(135deg,#D4AF37,#F3E5AB,#D4AF37)!important;
-    border-radius:50px!important; padding:10px 20px!important;
-    box-shadow:0 0 40px rgba(212,175,55,.6); border: 2px solid #FFF;
+Return JSON only in this structure:
+{{
+  "letters": [
+    {{
+      "word_i": 0,
+      "letter_i": 0,
+      "status": "good",
+      "rule": "Fathah",
+      "feedback": "The vowel is clear.",
+      "confidence": "high"
+    }}
+  ],
+  "word_feedback": [
+    {{
+      "word_i": 0,
+      "status": "good",
+      "feedback": "The word was recited clearly."
+    }}
+  ],
+  "feedback": "Brief overall feedback and priorities for practice."
 }}
-[data-testid="stAudioInput"] *{{color:#1A1510!important;font-weight:700!important}}
-</style>""", unsafe_allow_html=True)
 
-embed_bg(GARDEN_HTML)
+Allowed letter and word statuses: good, review, uncertain.
+Use "review" only for an audible issue you can identify with reasonable
+confidence. Use "uncertain" when the audio is unclear or alignment is
+uncertain. Do not claim to measure exact millisecond durations unless
+they are reliably apparent.
+
+Expected text:
+{json.dumps(expected_text, ensure_ascii=False)}
+"""
+
+    request_body = {
+        "contents": [
+            {
+                "parts": [
+                    {"text": prompt},
+                    {
+                        "inline_data": {
+                            "mime_type": mime_type or "audio/webm",
+                            "data": base64.b64encode(audio_bytes).decode("utf-8"),
+                        },
+                    },
+                ],
+            }
+        ],
+        "generationConfig": {
+            "responseMimeType": "application/json",
+            "temperature": 0.1,
+            "maxOutputTokens": 3500,
+        },
+    }
+
+    response = requests.post(
+        f"https://generativelanguage.googleapis.com/v1beta/{model_name}:generateContent",
+        headers={"x-goog-api-key": key},
+        json=request_body,
+        timeout=75,
+    )
+
+    if response.status_code != 200:
+        try:
+            detail = response.json().get("error", {}).get("message", response.text)
+        except Exception:
+            detail = response.text
+
+        raise RuntimeError(
+            f"Gemini request failed ({response.status_code}): {detail}"
+        )
+
+    payload = response.json()
+
+    try:
+        candidate = payload["candidates"][0]
+        response_text = "".join(
+            part.get("text", "")
+            for part in candidate["content"]["parts"]
+        )
+        response_text = re.sub(
+            r"^```(?:json)?|```$",
+            "",
+            response_text.strip(),
+        ).strip()
+        data = json.loads(response_text)
+    except Exception as exc:
+        raise RuntimeError(
+            "Gemini returned a response that could not be read as JSON. "
+            "Try a shorter recording."
+        ) from exc
+
+    # Validate the letter-level feedback indexes.
+    letter_results = {}
+    for item in data.get("letters", []):
+        word_index = item.get("word_i")
+        letter_index = item.get("letter_i")
+
+        if not isinstance(word_index, int) or not isinstance(letter_index, int):
+            continue
+        if not 0 <= word_index < len(words):
+            continue
+        if not 0 <= letter_index < len(words[word_index]["letters"]):
+            continue
+
+        status = item.get("status", "uncertain")
+        if status not in ("good", "review", "uncertain"):
+            status = "uncertain"
+
+        letter_results[f"{word_index}:{letter_index}"] = {
+            "status": status,
+            "rule": str(item.get("rule", "")),
+            "feedback": str(item.get("feedback", "")),
+            "confidence": str(item.get("confidence", "unknown")),
+        }
+
+    # Word status defaults to uncertain; unreturned words are not assumed good.
+    states = ["uncertain"] * len(words)
+    word_feedback = {}
+
+    for item in data.get("word_feedback", []):
+        word_index = item.get("word_i")
+        if not isinstance(word_index, int) or not 0 <= word_index < len(words):
+            continue
+
+        status = item.get("status", "uncertain")
+        if status not in ("good", "review", "uncertain"):
+            status = "uncertain"
+
+        states[word_index] = status
+        word_feedback[word_index] = str(item.get("feedback", ""))
+
+    overall_feedback = str(data.get("feedback", ""))
+    return states, letter_results, word_feedback, overall_feedback
+
+
+# ----------------------------- Audio / Arabic player -----------------------------
+
+PLAYER_HTML = r"""
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<link href="https://fonts.googleapis.com/css2?family=Amiri+Quran&family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  color: #E8D5B5;
+  background: transparent;
+  font-family: Inter, sans-serif;
+}
+.shell {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.panel {
+  background: rgba(30,25,20,.72);
+  border: 1px solid rgba(212,175,55,.20);
+  border-radius: 20px;
+  padding: 18px;
+  box-shadow: 0 8px 32px rgba(0,0,0,.22);
+}
+.topline {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.brand {
+  color: #D4AF37;
+  font-weight: 700;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  font-size: 12px;
+}
+.meta { color: #a8987f; font-size: 12px; margin-top: 4px; }
+.pill {
+  border: 1px solid rgba(212,175,55,.3);
+  color: #D4AF37;
+  border-radius: 99px;
+  padding: 6px 10px;
+  font-size: 12px;
+}
+.arabic-area {
+  direction: rtl;
+  text-align: center;
+  min-height: 210px;
+  max-height: 360px;
+  overflow-y: auto;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-content: flex-start;
+  gap: 13px 5px;
+  padding: 10px 5px 18px;
+}
+.word {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 5px 7px;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  min-width: 42px;
+}
+.word.active {
+  background: rgba(212,175,55,.16);
+  border-color: rgba(212,175,55,.65);
+  box-shadow: 0 0 18px rgba(212,175,55,.16);
+}
+.word.good { background: rgba(74,222,128,.09); }
+.word.review { background: rgba(248,113,113,.10); }
+.word.uncertain { background: rgba(251,191,36,.07); }
+.arabic-word {
+  font-family: 'Amiri Quran', serif;
+  font-size: 34px;
+  line-height: 1.9;
+  direction: rtl;
+  white-space: nowrap;
+}
+.letter {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  vertical-align: middle;
+  border-radius: 5px;
+  margin: 0 1px;
+  padding: 0 1px;
+}
+.letter.good { color: #4ade80; }
+.letter.review { color: #f87171; text-decoration: underline wavy #f87171; }
+.letter.uncertain { color: #fbbf24; }
+.letter.ungraded { color: #F4EBDD; }
+.letter-char { line-height: 1.35; }
+.mark-label {
+  direction: ltr;
+  font: 8px Inter, sans-serif;
+  color: #D4AF37;
+  opacity: .9;
+  white-space: nowrap;
+  line-height: 1.2;
+}
+.translit { color: #D4AF37; font-size: 10px; font-style: italic; }
+.translation {
+  color: #a8987f;
+  font-size: 10px;
+  max-width: 125px;
+  text-align: center;
+  line-height: 1.4;
+  margin-top: 3px;
+}
+.blind .arabic-word {
+  filter: blur(11px);
+  opacity: .25;
+  user-select: none;
+}
+.audio-controls { display: flex; flex-direction: column; gap: 9px; }
+audio { width: 100%; }
+.trackline { color: #a8987f; font-size: 12px; text-align: center; }
+.feedback-grid {
+  display: grid;
+  grid-template-columns: 140px 1fr;
+  gap: 12px;
+}
+.feedback-card {
+  background: rgba(255,255,255,.035);
+  border: 1px solid rgba(255,255,255,.07);
+  border-radius: 14px;
+  padding: 14px;
+}
+.feedback-title {
+  color: #D4AF37;
+  font-weight: 700;
+  font-size: 12px;
+  text-transform: uppercase;
+  margin-bottom: 7px;
+}
+.feedback-text { color: #d8cbb8; font-size: 13px; line-height: 1.6; }
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  color: #a8987f;
+  font-size: 11px;
+}
+.dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; }
+@media(max-width:600px) {
+  .feedback-grid { grid-template-columns: 1fr; }
+  .arabic-word { font-size: 29px; }
+}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script>
+const D = __DATA__;
+
+function el(tag, cls, text) {
+  const node = document.createElement(tag);
+  if (cls) node.className = cls;
+  if (text !== undefined && text !== null) node.textContent = text;
+  return node;
+}
+
+const root = document.getElementById("app");
+const shell = el("div", "shell");
+const header = el("div", "panel topline");
+const headLeft = el("div");
+headLeft.appendChild(el("div", "brand", "Al-Mu'allim"));
+const endAyah = D.meta.end && D.meta.end !== D.meta.a ? "–" + D.meta.end : "";
+headLeft.appendChild(el("div", "meta", "Surah " + D.meta.s + " · Ayah " + D.meta.a + endAyah));
+header.appendChild(headLeft);
+
+const headRight = el("div", "topline");
+headRight.appendChild(el("span", "pill", "⭐ " + (D.meta.xp || 0) + " XP"));
+headRight.appendChild(el("span", "pill", "🔥 " + (D.meta.streak || 0) + " days"));
+header.appendChild(headRight);
+shell.appendChild(header);
+
+const recitationPanel = el("div", "panel");
+const arabicArea = el("div", "arabic-area" + (D.mode === "blind" && !D.states ? " blind" : ""));
+const wordNodes = [];
+
+function renderWord(word, index) {
+  const wrapper = el("div", "word");
+  wrapper.dataset.index = index;
+
+  const arabic = el("div", "arabic-word");
+  const letters = word.letters || [];
+
+  letters.forEach((letter, letterIndex) => {
+    const result = D.letterResults
+      ? D.letterResults[index + ":" + letterIndex]
+      : null;
+    const status = result ? result.status : "ungraded";
+
+    const unit = el("span", "letter " + status);
+    const character = el("span", "letter-char", letter.text);
+    unit.appendChild(character);
+
+    if (letter.marks && letter.marks.length) {
+      unit.appendChild(el("span", "mark-label", letter.marks.join(" · ")));
+    }
+
+    if (result) {
+      const detail = [
+        result.rule || "",
+        result.feedback || "",
+        result.confidence ? "Confidence: " + result.confidence : ""
+      ].filter(Boolean).join(" — ");
+      if (detail) unit.title = detail;
+    } else if (letter.marks && letter.marks.length) {
+      unit.title = letter.marks.join(", ");
+    }
+
+    arabic.appendChild(unit);
+  });
+
+  wrapper.appendChild(arabic);
+
+  if (word.tr) wrapper.appendChild(el("div", "translit", word.tr));
+  if (word.en) wrapper.appendChild(el("div", "translation", word.en));
+  wrapper.appendChild(el("div", "meta", "Ayah " + word.ayah));
+
+  if (D.states && D.states[index]) {
+    wrapper.classList.add(D.states[index]);
+  }
+
+  arabicArea.appendChild(wrapper);
+  wordNodes.push(wrapper);
+}
+
+D.words.forEach(renderWord);
+recitationPanel.appendChild(arabicArea);
+
+const audioControls = el("div", "audio-controls");
+const audio = document.createElement("audio");
+audio.controls = true;
+audio.preload = "metadata";
+
+const tracks = Array.isArray(D.audio) ? D.audio : (D.audio ? [D.audio] : []);
+const counts = D.trackWordCounts || [];
+let trackIndex = 0;
+let activeWord = -1;
+
+function wordsBeforeTrack(index) {
+  return counts.slice(0, index).reduce((sum, n) => sum + n, 0);
+}
+
+function setActiveWord(index) {
+  if (index < 0 || index >= wordNodes.length) return;
+  if (activeWord >= 0 && wordNodes[activeWord]) {
+    wordNodes[activeWord].classList.remove("active");
+  }
+  activeWord = index;
+  wordNodes[index].classList.add("active");
+  wordNodes[index].scrollIntoView({
+    behavior: "smooth",
+    block: "nearest",
+    inline: "center"
+  });
+}
+
+function loadTrack(index, autoplay) {
+  if (index < 0 || index >= tracks.length) return;
+  trackIndex = index;
+  audio.src = tracks[index];
+  audio.load();
+  trackLabel.textContent = "Playing ayah " + (D.meta.a + index) +
+    " of " + (D.meta.end || D.meta.a);
+  if (autoplay) {
+    audio.play().catch(() => {
+      trackLabel.textContent += " — press Play if playback was blocked";
+    });
+  }
+}
+
+audio.addEventListener("timeupdate", () => {
+  const count = counts[trackIndex] || 0;
+  if (!count || !audio.duration || !isFinite(audio.duration)) return;
+  const localIndex = Math.min(
+    count - 1,
+    Math.floor((audio.currentTime / audio.duration) * count)
+  );
+  setActiveWord(wordsBeforeTrack(trackIndex) + localIndex);
+});
+
+audio.addEventListener("ended", () => {
+  if (trackIndex + 1 < tracks.length) loadTrack(trackIndex + 1, true);
+  else trackLabel.textContent = "Passage finished";
+});
+
+const trackLabel = el("div", "trackline", "");
+if (tracks.length) {
+  audioControls.appendChild(audio);
+  audioControls.appendChild(trackLabel);
+  loadTrack(0, false);
+}
+recitationPanel.appendChild(audioControls);
+shell.appendChild(recitationPanel);
+
+if (D.feedback) {
+  const feedbackGrid = el("div", "feedback-grid");
+  const judged = (D.states || []).filter(s => s === "good" || s === "review");
+  const correct = (D.states || []).filter(s => s === "good").length;
+  const accuracy = judged.length ? Math.round(correct / judged.length * 100) : null;
+
+  const scoreCard = el("div", "feedback-card");
+  scoreCard.appendChild(el("div", "feedback-title", "Word assessment"));
+  scoreCard.appendChild(el("div", "feedback-text",
+    accuracy === null ? "Not enough confidently judged words for a score."
+      : accuracy + "% of confidently judged words marked correct."
+  ));
+  feedbackGrid.appendChild(scoreCard);
+
+  const overallCard = el("div", "feedback-card");
+  overallCard.appendChild(el("div", "feedback-title", "Teacher feedback"));
+  overallCard.appendChild(el("div", "feedback-text", D.feedback));
+  feedbackGrid.appendChild(overallCard);
+  shell.appendChild(feedbackGrid);
+}
+
+const legend = el("div", "legend");
+[
+  ["#4ade80", "Good"],
+  ["#f87171", "Review"],
+  ["#fbbf24", "Uncertain"],
+  ["#F4EBDD", "Not assessed"]
+].forEach(([colour, label]) => {
+  const item = el("span");
+  const dot = el("span", "dot");
+  dot.style.background = colour;
+  item.appendChild(dot);
+  item.appendChild(document.createTextNode(label));
+  legend.appendChild(item);
+});
+shell.appendChild(legend);
+root.appendChild(shell);
+</script>
+</body>
+</html>
+"""
+
+
+def render_player(
+    words,
+    mode,
+    states=None,
+    audio_tracks=None,
+    feedback="",
+    meta=None,
+    letter_results=None,
+    track_word_counts=None,
+):
+    payload = {
+        "words": words,
+        "mode": mode,
+        "states": states,
+        "audio": audio_tracks or [],
+        "feedback": feedback,
+        "meta": meta or {},
+        "letterResults": letter_results or {},
+        "trackWordCounts": track_word_counts or [],
+    }
+    serialized = json.dumps(payload, ensure_ascii=False).replace("</", "<\\/")
+    html = PLAYER_HTML.replace("__DATA__", serialized)
+    components.html(html, height=680, scrolling=True)
+
+
+# ----------------------------- Session state -----------------------------
+
+DEFAULTS = {
+    "name": "",
+    "surah": 2,
+    "ayah": 60,
+    "end_ayah": 60,
+    "step": 0,
+    "count": 0,
+    "results": {},
+    "paid": [],
+    "tries": 0,
+    "teacher_gender": "Male",
+    "strictness": "Balanced",
+    "theme": "Starry Night",
+}
+
+for key, value in DEFAULTS.items():
+    st.session_state.setdefault(key, value)
+
+
+# ----------------------------- Styling -----------------------------
+
+theme_colours = {
+    "Starry Night": "#0a0f1c",
+    "Brown": "#1A1510",
+    "Black": "#000000",
+}
+bg_color = theme_colours.get(st.session_state.theme, "#0a0f1c")
+
+st.markdown(
+    f"""
+    <style>
+    .stApp {{
+        background: {bg_color};
+        color: #E8D5B5;
+        font-family: Inter, sans-serif;
+    }}
+    [data-testid="stSidebar"] {{
+        background: rgba(10, 8, 6, .88);
+        border-right: 1px solid #D4AF3733;
+    }}
+    h1, h2, h3 {{
+        color: #D4AF37 !important;
+        font-family: Georgia, serif !important;
+    }}
+    div.stButton > button {{
+        background: linear-gradient(135deg, #D4AF37, #F3E5AB);
+        color: #1A1510;
+        border: none;
+        border-radius: 999px;
+        font-weight: 700;
+        min-height: 44px;
+    }}
+    div.stButton > button:hover {{
+        border: 1px solid #fff;
+        color: #1A1510;
+    }}
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+
+# ----------------------------- Welcome screen -----------------------------
 
 if not st.session_state.name:
-    st.markdown("<h1 style='text-align:center;margin-top:20vh;font-size:4rem;text-shadow:0 0 30px rgba(212,175,55,0.5)'>🕌 Al-Mu'allim</h1>", unsafe_allow_html=True)
-    with st.form("start", clear_on_submit=True):
-        c1, c2, c3 = st.columns([1,2,1])
-        with c2:
-            n = st.text_input("Enter your name to begin", label_visibility="collapsed", placeholder="Your name...")
-            if st.form_submit_button("Enter Academy", use_container_width=True) and n.strip():
-                st.session_state.name = n.strip(); st.rerun()
+    st.markdown(
+        """
+        <div style="text-align:center;padding-top:12vh">
+          <div style="font-size:58px">🕌</div>
+          <h1 style="font-size:3.4rem">Al-Mu'allim</h1>
+          <p style="color:#a8987f">Qur'an recitation and Tajweed practice</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    with st.form("start_form"):
+        name = st.text_input("Your name", placeholder="Enter your name")
+        submitted = st.form_submit_button("Enter Academy", use_container_width=True)
+
+    if submitted and name.strip():
+        st.session_state.name = name.strip()
+        st.rerun()
+
     st.stop()
 
-# ───────────────────────────── Sidebar ─────────────────────────────
-sb = st.sidebar
-sb.markdown(f"<h2 style='text-align:center;color:#D4AF37'>{st.session_state.name}</h2>", unsafe_allow_html=True)
-st.session_state.theme = sb.selectbox("Theme", ["Starry Night", "Brown", "Black"], index=["Starry Night", "Brown", "Black"].index(st.session_state.theme))
-st.session_state.teacher_gender = sb.selectbox("Teacher Voice", ["Male", "Female"], index=["Male", "Female"].index(st.session_state.teacher_gender))
-st.session_state.strictness = sb.select_slider("Strictness", options=["Lenient", "Balanced", "Strict"], value=st.session_state.strictness)
 
-sb.markdown("---")
-s_in = sb.number_input("Surah", 1, 114, st.session_state.surah)
-a_in = sb.number_input("Ayah", 1, AYAHS[int(s_in)], min(st.session_state.ayah, AYAHS[int(s_in)]))
-reciter = sb.selectbox("Reciter Audio", list(RECITERS))
-if sb.button("Load Ayah", use_container_width=True):
-    st.session_state.update(surah=int(s_in), ayah=int(a_in), step=0, count=0, tries=0, results={})
+# ----------------------------- Sidebar -----------------------------
+
+sidebar = st.sidebar
+sidebar.markdown(
+    f"<h2 style='text-align:center'>{st.session_state.name}</h2>",
+    unsafe_allow_html=True,
+)
+
+theme_options = ["Starry Night", "Brown", "Black"]
+st.session_state.theme = sidebar.selectbox(
+    "Theme",
+    theme_options,
+    index=theme_options.index(st.session_state.theme),
+)
+
+st.session_state.teacher_gender = sidebar.selectbox(
+    "Teacher voice",
+    ["Male", "Female"],
+    index=["Male", "Female"].index(st.session_state.teacher_gender),
+)
+
+st.session_state.strictness = sidebar.select_slider(
+    "Assessment strictness",
+    options=["Lenient", "Balanced", "Strict"],
+    value=st.session_state.strictness,
+)
+
+sidebar.markdown("---")
+surah_input = sidebar.number_input(
+    "Surah",
+    min_value=1,
+    max_value=114,
+    value=int(st.session_state.surah),
+    step=1,
+)
+
+surah_max = AYAHS[int(surah_input)]
+ayah_input = sidebar.number_input(
+    "Starting ayah",
+    min_value=1,
+    max_value=surah_max,
+    value=min(int(st.session_state.ayah), surah_max),
+    step=1,
+)
+
+max_end = min(surah_max, int(ayah_input) + 9)
+default_end = max(
+    int(ayah_input),
+    min(int(st.session_state.end_ayah), max_end),
+)
+
+end_input = sidebar.number_input(
+    "Ending ayah",
+    min_value=int(ayah_input),
+    max_value=max_end,
+    value=default_end,
+    step=1,
+    help="Select up to ten ayahs at a time.",
+)
+
+reciter = sidebar.selectbox("Reciter audio", list(RECITERS.keys()))
+
+if sidebar.button("Load passage", use_container_width=True):
+    st.session_state.update(
+        surah=int(surah_input),
+        ayah=int(ayah_input),
+        end_ayah=int(end_input),
+        step=0,
+        count=0,
+        tries=0,
+        results={},
+    )
     st.rerun()
 
-s, a = st.session_state.surah, min(st.session_state.ayah, AYAHS[st.session_state.surah])
-key = f"{s}:{a}"
-try:
-    words = fetch_words(s, a)
-    mp3 = fetch_audio(s, a, RECITERS[reciter])
-except Exception as e:
-    st.error(f"Error loading ayah: {e}"); st.stop()
+sidebar.caption("Passage playback supports up to 10 ayahs per selection.")
 
-audio_uri = "data:audio/mpeg;base64," + base64.b64encode(mp3).decode()
+
+# ----------------------------- Load passage -----------------------------
+
+surah = int(st.session_state.surah)
+start_ayah = int(st.session_state.ayah)
+end_ayah = max(
+    start_ayah,
+    min(int(st.session_state.end_ayah), AYAHS[surah]),
+)
+
+passage_key = f"{surah}:{start_ayah}-{end_ayah}"
+result_key = f"{passage_key}|recitation"
+
+try:
+    with st.spinner("Loading Qur'an text..."):
+        words, track_word_counts = fetch_passage(
+            surah, start_ayah, end_ayah
+        )
+
+    audio_tracks = [
+        audio_url(surah, ayah, RECITERS[reciter])
+        for ayah in range(start_ayah, end_ayah + 1)
+    ]
+
+except Exception as error:
+    st.error(f"Unable to load the passage: {error}")
+    st.stop()
+
 xp, streak, _ = get_user(st.session_state.name)
-meta_data = {"s": s, "a": a, "xp": xp, "streak": streak}
+meta = {
+    "s": surah,
+    "a": start_ayah,
+    "end": end_ayah,
+    "xp": xp,
+    "streak": streak,
+}
+
+
+# ----------------------------- Main content -----------------------------
+
+st.markdown(
+    "<h1 style='text-align:center'>Al-Mu'allim</h1>",
+    unsafe_allow_html=True,
+)
+st.markdown(
+    f"<p style='text-align:center;color:#a8987f'>"
+    f"Surah {surah} · Ayahs {start_ayah}–{end_ayah}</p>",
+    unsafe_allow_html=True,
+)
 
 step = st.session_state.step
-titles = ["Step 1 · Listen & Repeat", "Step 2 · Memorise (Blind)", "Step 3 · Talk to Teacher"]
-st.markdown(f"<h3 style='text-align:center;color:#D4AF37;margin-top:10px;font-size:1.8rem'>{titles[min(step, 2)]}</h3>", unsafe_allow_html=True)
+step_titles = [
+    "Step 1 · Listen and repeat",
+    "Step 2 · Memorise and recite",
+    "Step 3 · Review with your teacher",
+]
+st.markdown(
+    f"<h3 style='text-align:center'>{step_titles[min(step, 2)]}</h3>",
+    unsafe_allow_html=True,
+)
 
-def listen_step(next_step):
-    player(words, "full", None, audio_uri, "", meta_data)
-    st.markdown(f"<p style='text-align:center;color:#a8987f'>Repeats: {st.session_state.count} / 5</p>", unsafe_allow_html=True)
-    c1, c2 = st.columns(2)
-    if c1.button("I repeated once", use_container_width=True):
+
+def listen_step():
+    render_player(
+        words,
+        "full",
+        audio_tracks=audio_tracks,
+        meta=meta,
+        track_word_counts=track_word_counts,
+    )
+
+    st.markdown(
+        f"<p style='text-align:center;color:#a8987f'>"
+        f"Repetitions: {st.session_state.count} / 5</p>",
+        unsafe_allow_html=True,
+    )
+
+    col1, col2 = st.columns(2)
+
+    if col1.button("I repeated once", use_container_width=True):
         st.session_state.count += 1
-        if st.session_state.count >= 5: st.session_state.update(step=next_step, count=0)
+        if st.session_state.count >= 5:
+            st.session_state.update(step=1, count=0)
         st.rerun()
-    if c2.button("Skip", use_container_width=True):
-        st.session_state.update(step=next_step, count=0); st.rerun()
 
-def record_step(kind, next_step):
-    rk = f"{key}|{kind}"
-    res = st.session_state.results.get(rk)
-    
-    if res is None:
-        player(words, kind, None, None, "", meta_data)
-        
-        st.markdown("<p style='text-align:center; font-size:1.2rem; margin:20px 0; color:#D4AF37; font-weight:600;'>🎙 Tap the golden mic to recite</p>", unsafe_allow_html=True)
-        c1, c2, c3 = st.columns([1,2,1])
-        with c2:
-            clip = st.audio_input("Recite", key=f"mic_{rk}_{st.session_state.tries}", label_visibility="collapsed")
-        
-        if clip is not None:
-            st.audio(clip)
-            if st.button("Submit for Analysis", type="primary", use_container_width=True):
-                with st.spinner("Analyzing Tajweed rules..."):
-                    try:
-                        # Pass the correct MIME type from the browser!
-                        mime = clip.type or "audio/webm"
-                        states, rules, feedback = analyse_recitation_fast(clip.getvalue(), mime, words, st.session_state.strictness, st.session_state.teacher_gender)
-                        
-                        st.session_state.results[rk] = (states, feedback)
-                        if states.count("good") / len(states) >= 0.8 and rk not in st.session_state.paid:
-                            award_xp(st.session_state.name, 10)
-                            st.session_state.paid.append(rk)
-                        st.rerun()
-                    except Exception as e:
-                        st.error(str(e))
+    if col2.button("Skip", use_container_width=True):
+        st.session_state.update(step=1, count=0)
+        st.rerun()
+
+
+def record_step():
+    saved_result = st.session_state.results.get(result_key)
+
+    if saved_result is None:
+        render_player(
+            words,
+            "blind",
+            audio_tracks=audio_tracks,
+            meta=meta,
+            track_word_counts=track_word_counts,
+        )
+
+        st.markdown(
+            """
+            <p style='text-align:center;font-size:1.1rem;
+            color:#D4AF37;font-weight:600'>
+            🎙 Record your recitation of the selected passage
+            </p>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        left, centre, right = st.columns([1, 2, 1])
+        with centre:
+            recording = st.audio_input(
+                "Record recitation",
+                key=f"recording_{passage_key}_{st.session_state.tries}",
+            )
+
+        if recording is not None:
+            st.audio(recording)
+
+            if st.button(
+                "Submit for Tajweed analysis",
+                type="primary",
+                use_container_width=True,
+            ):
+                try:
+                    with st.spinner(
+                        "Listening to your recitation and preparing feedback..."
+                    ):
+                        states, letter_results, word_feedback, feedback = (
+                            analyse_recitation(
+                                recording.getvalue(),
+                                recording.type or "audio/webm",
+                                words,
+                                st.session_state.strictness,
+                                st.session_state.teacher_gender,
+                            )
+                        )
+
+                    st.session_state.results[result_key] = {
+                        "states": states,
+                        "letter_results": letter_results,
+                        "word_feedback": word_feedback,
+                        "feedback": feedback,
+                    }
+
+                    judged = [
+                        state for state in states
+                        if state in ("good", "review")
+                    ]
+                    correct = states.count("good")
+
+                    if (
+                        judged
+                        and correct / len(judged) >= 0.8
+                        and result_key not in st.session_state.paid
+                    ):
+                        award_xp(st.session_state.name, 10)
+                        st.session_state.paid.append(result_key)
+
+                    st.rerun()
+
+                except Exception as error:
+                    st.error(str(error))
+
         return
-    
-    states, feedback = res
-    player(words, kind, states, None, feedback, meta_data)
-    
-    c1, c2 = st.columns(2)
-    if c1.button("Try again", use_container_width=True):
-        st.session_state.results.pop(rk, None)
+
+    show_result(saved_result)
+
+
+def show_result(result):
+    render_player(
+        words,
+        "review",
+        states=result["states"],
+        meta=meta,
+        feedback=result["feedback"],
+        letter_results=result["letter_results"],
+    )
+
+    st.markdown("#### Word-by-word feedback")
+
+    rows = []
+    for index, word in enumerate(words):
+        status = result["states"][index]
+        comment = result["word_feedback"].get(index, "")
+        rows.append(
+            {
+                "Ayah": word["ayah"],
+                "Word": word["ar"],
+                "Assessment": status.capitalize(),
+                "Feedback": comment,
+            }
+        )
+
+    st.dataframe(rows, use_container_width=True, hide_index=True)
+
+    with st.expander("Letter-level Tajweed observations"):
+        any_results = False
+
+        for index, word in enumerate(words):
+            for letter_index, letter in enumerate(word["letters"]):
+                assessment = result["letter_results"].get(
+                    f"{index}:{letter_index}"
+                )
+                if not assessment:
+                    continue
+
+                any_results = True
+                st.markdown(
+                    f"**Ayah {word['ayah']} · {letter['text']}** — "
+                    f"{assessment['status'].capitalize()}"
+                )
+
+                marks = ", ".join(letter["marks"]) or "No displayed harakah"
+                st.caption(
+                    f"Harakah: {marks} · Rule: "
+                    f"{assessment['rule'] or 'Not specified'}"
+                )
+
+                if assessment["feedback"]:
+                    st.write(assessment["feedback"])
+
+        if not any_results:
+            st.info(
+                "No individual letters were confidently assessed in this "
+                "response. Try a shorter, clearer recording."
+            )
+
+    col1, col2 = st.columns(2)
+
+    if col1.button("Try again", use_container_width=True):
+        st.session_state.results.pop(result_key, None)
         st.session_state.tries += 1
         st.rerun()
-    if c2.button("Continue", use_container_width=True, type="primary"):
-        st.session_state.update(step=next_step, count=0)
+
+    if col2.button(
+        "Continue",
+        use_container_width=True,
+        type="primary",
+    ):
+        st.session_state.update(step=2, count=0)
         st.rerun()
 
-# Render UI
-if step == 0: listen_step(1)
-elif step == 1: record_step("blind", 2)
-elif step == 2: 
-    rk = f"{key}|blind"
-    if rk in st.session_state.results:
-        states, feedback = st.session_state.results[rk]
-        player(words, "blind", states, None, feedback, meta_data)
-        if st.button("Start Over (New Ayah)", use_container_width=True):
-            st.session_state.update(step=0, count=0, results={})
+
+if step == 0:
+    listen_step()
+
+elif step == 1:
+    record_step()
+
+elif step == 2:
+    saved_result = st.session_state.results.get(result_key)
+
+    if saved_result:
+        show_result(saved_result)
+
+        if st.button("Start again with this passage", use_container_width=True):
+            st.session_state.update(step=0, count=0)
             st.rerun()
     else:
-        st.info("Please complete Step 2 first.")
+        st.info("Complete Step 2 before opening the teacher review.")
+        if st.button("Return to recitation", use_container_width=True):
+            st.session_state.step = 1
+            st.rerun()
+
+
+# ----------------------------- Footer / limitations -----------------------------
+
+st.markdown("---")
+st.caption(
+    "Learning aid only: automated audio feedback can make mistakes and "
+    "cannot replace a qualified Qur'an teacher. The written harakah labels "
+    "come from the displayed Qur'anic text; audio judgements may be uncertain."
+)
