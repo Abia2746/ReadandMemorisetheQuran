@@ -25,6 +25,22 @@ st.set_page_config(
 
 QURAN_API = "https://api.quran.com/api/v4"
 EVERY_AYAH = "https://everyayah.com/data"
+GEMINI_INTERACTIONS_URL = "https://generativelanguage.googleapis.com/v1beta/interactions"
+GEMINI_MODELS_URL = "https://generativelanguage.googleapis.com/v1beta/models"
+GEMINI_MODEL = "gemini-3.8-flash"
+
+SUPPORTED_AUDIO_MIME_TYPES = {
+    "audio/wav",
+    "audio/x-wav",
+    "audio/wave",
+    "audio/mp3",
+    "audio/mpeg",
+    "audio/aiff",
+    "audio/aac",
+    "audio/ogg",
+    "audio/flac",
+    "audio/webm",
+}
 
 RECITERS = {
     "Mishary Alafasy": "Alafasy_128kbps",
@@ -205,59 +221,172 @@ def audio_url(surah, ayah, reciter_folder):
     )
 
 
-# ----------------------------- Gemini API -----------------------------
+# ----------------------------- Gemini Interactions API -----------------------------
 
 def api_key():
     try:
-        return st.secrets["GEMINI_API_KEY"]
+        secret_key = st.secrets.get("GEMINI_API_KEY", "")
+        if secret_key:
+            return str(secret_key).strip()
     except Exception:
-        return os.environ.get("GEMINI_API_KEY", "")
+        pass
+    return os.environ.get("GEMINI_API_KEY", "").strip()
+
+
+def normalize_audio_mime_type(mime_type):
+    if not mime_type:
+        return "audio/wav"
+
+    cleaned = mime_type.split(";")[0].strip().lower()
+    aliases = {
+        "audio/x-wav": "audio/wav",
+        "audio/wave": "audio/wav",
+        "audio/mpeg": "audio/mp3",
+    }
+    normalized = aliases.get(cleaned, cleaned)
+
+    if normalized not in SUPPORTED_AUDIO_MIME_TYPES:
+        raise RuntimeError(
+            f"Unsupported audio format ({cleaned}). Please record directly in the browser "
+            "or upload WAV, MP3, OGG, FLAC, AAC, AIFF, or WEBM audio."
+        )
+
+    return normalized
 
 
 @st.cache_data(ttl=1800, show_spinner=False)
-def get_available_flash_model(api_key_value):
+def verify_gemini_model(api_key_value, model_id=GEMINI_MODEL):
     """
-    Ask the Gemini API which models this key can access.
-    This avoids hard-coding retired or unavailable model IDs.
+    Verify that the configured API key is valid and has access to the
+    target Gemini model without leaking the API key.
     """
-    response = requests.get(
-        "https://generativelanguage.googleapis.com/v1beta/models",
-        headers={"x-goog-api-key": api_key_value},
-        timeout=15,
-    )
-    response.raise_for_status()
-
-    models = response.json().get("models", [])
-    available = []
-
-    for model in models:
-        methods = model.get("supportedGenerationMethods", [])
-        name = model.get("name", "")
-
-        if "generateContent" in methods and "flash" in name.lower():
-            available.append(name)
-
-    if not available:
+    try:
+        response = requests.get(
+            f"{GEMINI_MODELS_URL}/{model_id}",
+            headers={"x-goog-api-key": api_key_value},
+            timeout=15,
+        )
+    except requests.RequestException as exc:
         raise RuntimeError(
-            "No Flash model supporting generateContent is available to this "
-            "API key. Check that the key belongs to the correct Google "
-            "Cloud project and that the Gemini API is enabled."
+            "Network error while connecting to the Gemini API. "
+            "Check your internet connection and try again."
+        ) from exc
+
+    if response.status_code in (401, 403):
+        raise RuntimeError(
+            "Invalid or unauthorized GEMINI_API_KEY. Verify your key in "
+            "Streamlit secrets or environment variables."
         )
 
-    # Prefer a current, efficient model if it is actually available.
-    preferences = (
-        "gemini-2.5-flash",
-        "gemini-2.0-flash",
-        "gemini-1.5-flash",
-    )
+    if response.status_code == 404:
+        raise RuntimeError(
+            f"Model '{model_id}' is not available to this API key. "
+            "Ensure your Google AI Studio / Cloud project has access to gemini-3.8-flash."
+        )
 
-    for preferred in preferences:
-        matches = [name for name in available if name.endswith(preferred)]
-        if matches:
-            return matches[0]
+    if response.status_code != 200:
+        raise RuntimeError(
+            f"Unable to verify Gemini model availability (HTTP {response.status_code})."
+        )
 
-    # Otherwise use the first Flash model returned by Google's API.
-    return available[0]
+    return model_id
+
+
+def extract_interaction_text(payload):
+    """
+    Extract generated text from an Interactions API response.
+    Supports both the current `steps` schema (`model_output` steps)
+    and fallback `outputs` arrays if returned.
+    """
+    status = payload.get("status")
+    if status == "failed":
+        errors = payload.get("errors") or []
+        detail = errors[0].get("message") if errors and isinstance(errors[0], dict) else "Interaction failed."
+        raise RuntimeError(f"Gemini interaction failed: {detail}")
+
+    if status == "incomplete":
+        raise RuntimeError(
+            "Gemini response was truncated before finishing the Tajweed JSON. "
+            "Please try recording a shorter passage."
+        )
+
+    text_chunks = []
+
+    steps = payload.get("steps")
+    if isinstance(steps, list):
+        for step in steps:
+            if not isinstance(step, dict):
+                continue
+            if step.get("type") == "model_output":
+                for block in step.get("content", []):
+                    if isinstance(block, dict) and block.get("type") == "text":
+                        text_chunks.append(block.get("text", ""))
+
+    if not text_chunks and isinstance(payload.get("outputs"), list):
+        for item in payload["outputs"]:
+            if isinstance(item, dict) and item.get("type") == "text":
+                text_chunks.append(item.get("text", ""))
+
+    combined = "".join(text_chunks).strip()
+    if not combined:
+        raise RuntimeError(
+            "Gemini completed the request but returned no text output."
+        )
+
+    return combined
+
+
+def tajweed_response_schema():
+    return {
+        "type": "object",
+        "properties": {
+            "letters": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "word_i": {"type": "integer"},
+                        "letter_i": {"type": "integer"},
+                        "status": {
+                            "type": "string",
+                            "enum": ["good", "review", "uncertain"],
+                        },
+                        "rule": {"type": "string"},
+                        "feedback": {"type": "string"},
+                        "confidence": {
+                            "type": "string",
+                            "enum": ["high", "medium", "low"],
+                        },
+                    },
+                    "required": [
+                        "word_i",
+                        "letter_i",
+                        "status",
+                        "rule",
+                        "feedback",
+                        "confidence",
+                    ],
+                },
+            },
+            "word_feedback": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "word_i": {"type": "integer"},
+                        "status": {
+                            "type": "string",
+                            "enum": ["good", "review", "uncertain"],
+                        },
+                        "feedback": {"type": "string"},
+                    },
+                    "required": ["word_i", "status", "feedback"],
+                },
+            },
+            "feedback": {"type": "string"},
+        },
+        "required": ["letters", "word_feedback", "feedback"],
+    }
 
 
 def analyse_recitation(
@@ -270,15 +399,22 @@ def analyse_recitation(
     key = api_key()
     if not key:
         raise RuntimeError(
-            "Gemini API key missing. Add GEMINI_API_KEY to Streamlit secrets."
+            "Gemini API key missing. Add GEMINI_API_KEY to Streamlit secrets or environment variables."
         )
 
+    if not audio_bytes:
+        raise RuntimeError(
+            "The audio recording is empty. Please record your recitation and try again."
+        )
+
+    # Keep inline base64 payload comfortably under the 20 MB Interactions API request cap.
     if len(audio_bytes) > 12_000_000:
         raise RuntimeError(
-            "The recording is too large. Please record a shorter passage."
+            "The recording is too large (over 12 MB). Please record a shorter passage."
         )
 
-    model_name = get_available_flash_model(key)
+    normalized_mime = normalize_audio_mime_type(mime_type)
+    model_id = verify_gemini_model(key, GEMINI_MODEL)
 
     teacher_description = (
         "a knowledgeable male Qur'an recitation teacher"
@@ -300,121 +436,144 @@ def analyse_recitation(
             }
         )
 
+    system_instruction = (
+        f"You are {teacher_description} evaluating Qur'anic recitation with Tajweed. "
+        "Assess strictly what is audibly present in the recording against the exact Uthmani text. "
+        "Never invent or hallucinate Tajweed mistakes. "
+        "Distinguish clearly between an audible error ('review') and an unclear or unaligned segment ('uncertain'). "
+        "If audio quality, background noise, fast pace, or alignment prevents confident verification of a letter or word, "
+        "you MUST classify it as 'uncertain' with 'low' confidence rather than guessing 'good' or 'review'."
+    )
+
     prompt = f"""
-You are {teacher_description}. Assess the attached recording of Qur'an
-recitation against the exact Uthmani text supplied below.
+Assess the attached Qur'an recitation audio against the exact Uthmani text supplied below.
 
-Strictness: {strictness}.
+Strictness level: {strictness}.
 
-Assess only what can reasonably be heard. Do not invent errors. If you
-cannot confidently identify a sound or align it to a particular letter,
-mark it "uncertain", not "review".
+Assessment rules:
+1. Assess only what can reasonably be heard in the audio. Do not invent errors.
+2. Never mark an unclear or unverified sound as "good" or "review" — mark it "uncertain" with "low" confidence.
+3. Pay attention to:
+   - Fathah, kasrah, dammah, and tanween
+   - Sukoon and shaddah
+   - Madd and its elongation proportions
+   - Ghunnah (nasalization)
+   - Qalqalah (echoing bounce on ق ط ب ج د)
+   - Noon sakinah / tanween rules (Idgham, Ikhfa, Iqlab, Izhar)
+   - Makharij (letter articulation points) and clarity
+4. Do not claim exact millisecond durations unless clearly discernible.
+5. Use the exact `word_i` and `letter_i` indexes provided below. Do not alter the Arabic text.
 
-Pay attention to:
-- Fathah, kasrah, dammah and tanween
-- Sukoon and shaddah
-- Madd and its duration
-- Ghunnah
-- Qalqalah
-- Idgham, ikhfa, iqlab and izhar
-- Letter articulation and clarity
-
-The supplied text is divided into indexed words and indexed letter-graphemes.
-Use the exact indexes. Do not rewrite or alter the Qur'anic text.
-
-Return JSON only in this structure:
-{{
-  "letters": [
-    {{
-      "word_i": 0,
-      "letter_i": 0,
-      "status": "good",
-      "rule": "Fathah",
-      "feedback": "The vowel is clear.",
-      "confidence": "high"
-    }}
-  ],
-  "word_feedback": [
-    {{
-      "word_i": 0,
-      "status": "good",
-      "feedback": "The word was recited clearly."
-    }}
-  ],
-  "feedback": "Brief overall feedback and priorities for practice."
-}}
-
-Allowed letter and word statuses: good, review, uncertain.
-Use "review" only for an audible issue you can identify with reasonable
-confidence. Use "uncertain" when the audio is unclear or alignment is
-uncertain. Do not claim to measure exact millisecond durations unless
-they are reliably apparent.
+Allowed statuses for both letters and words:
+- "good": Clearly and accurately recited according to Tajweed rules.
+- "review": Audible pronunciation or Tajweed error identified with reasonable confidence.
+- "uncertain": Audio unclear, cut off, noisy, or alignment uncertain.
 
 Expected text:
 {json.dumps(expected_text, ensure_ascii=False)}
 """
 
+    encoded_audio = base64.b64encode(audio_bytes).decode("ascii")
+
     request_body = {
-        "contents": [
+        "model": model_id,
+        "system_instruction": system_instruction,
+        "store": False,
+        "input": [
             {
-                "parts": [
-                    {"text": prompt},
-                    {
-                        "inline_data": {
-                            "mime_type": mime_type or "audio/webm",
-                            "data": base64.b64encode(audio_bytes).decode("utf-8"),
-                        },
-                    },
-                ],
-            }
+                "type": "text",
+                "text": prompt,
+            },
+            {
+                "type": "audio",
+                "data": encoded_audio,
+                "mime_type": normalized_mime,
+            },
         ],
-        "generationConfig": {
-            "responseMimeType": "application/json",
+        "response_format": {
+            "type": "text",
+            "mime_type": "application/json",
+            "schema": tajweed_response_schema(),
+        },
+        "generation_config": {
             "temperature": 0.1,
-            "maxOutputTokens": 3500,
+            "max_output_tokens": 4096,
         },
     }
 
-    response = requests.post(
-        f"https://generativelanguage.googleapis.com/v1beta/{model_name}:generateContent",
-        headers={"x-goog-api-key": key},
-        json=request_body,
-        timeout=75,
-    )
+    try:
+        response = requests.post(
+            GEMINI_INTERACTIONS_URL,
+            headers={
+                "x-goog-api-key": key,
+                "Content-Type": "application/json",
+            },
+            json=request_body,
+            timeout=90,
+        )
+    except requests.Timeout as exc:
+        raise RuntimeError(
+            "The Gemini analysis timed out. Please try a shorter passage."
+        ) from exc
+    except requests.RequestException as exc:
+        raise RuntimeError(
+            "Network failure while sending the recording to Gemini. Please try again."
+        ) from exc
 
     if response.status_code != 200:
+        detail = f"HTTP {response.status_code}"
         try:
-            detail = response.json().get("error", {}).get("message", response.text)
+            err_obj = response.json().get("error", {})
+            if isinstance(err_obj, dict) and err_obj.get("message"):
+                detail = err_obj["message"]
         except Exception:
-            detail = response.text
+            if response.text:
+                detail = response.text[:300]
 
-        raise RuntimeError(
-            f"Gemini request failed ({response.status_code}): {detail}"
-        )
-
-    payload = response.json()
+        if response.status_code in (401, 403):
+            raise RuntimeError(
+                "Gemini API authentication failed. Check that GEMINI_API_KEY is valid."
+            )
+        if response.status_code == 404:
+            raise RuntimeError(
+                f"Gemini model '{model_id}' was not found or is unavailable on the Interactions API."
+            )
+        if response.status_code == 400:
+            raise RuntimeError(
+                f"Gemini rejected the audio or request format: {detail}"
+            )
+        raise RuntimeError(f"Gemini request failed ({response.status_code}): {detail}")
 
     try:
-        candidate = payload["candidates"][0]
-        response_text = "".join(
-            part.get("text", "")
-            for part in candidate["content"]["parts"]
-        )
-        response_text = re.sub(
+        payload = response.json()
+    except ValueError as exc:
+        raise RuntimeError(
+            "Gemini returned a non-JSON HTTP response."
+        ) from exc
+
+    response_text = extract_interaction_text(payload)
+
+    try:
+        cleaned_json = re.sub(
             r"^```(?:json)?|```$",
             "",
             response_text.strip(),
         ).strip()
-        data = json.loads(response_text)
+        data = json.loads(cleaned_json)
     except Exception as exc:
         raise RuntimeError(
-            "Gemini returned a response that could not be read as JSON. "
-            "Try a shorter recording."
+            "Gemini returned malformed JSON that could not be parsed. "
+            "Try recording a shorter passage."
         ) from exc
 
-    # Validate the letter-level feedback indexes.
+    if not isinstance(data, dict):
+        raise RuntimeError("Unexpected JSON structure returned by Gemini.")
+
+    # Validate letter-level feedback indexes; unassessed letters remain ungraded/uncertain.
     letter_results = {}
     for item in data.get("letters", []):
+        if not isinstance(item, dict):
+            continue
         word_index = item.get("word_i")
         letter_index = item.get("letter_i")
 
@@ -429,18 +588,28 @@ Expected text:
         if status not in ("good", "review", "uncertain"):
             status = "uncertain"
 
+        confidence = str(item.get("confidence", "low")).lower()
+        if confidence not in ("high", "medium", "low"):
+            confidence = "low"
+
+        # Prevent low-confidence observations from being silently treated as definite errors or passes.
+        if confidence == "low" and status == "good":
+            status = "uncertain"
+
         letter_results[f"{word_index}:{letter_index}"] = {
             "status": status,
             "rule": str(item.get("rule", "")),
             "feedback": str(item.get("feedback", "")),
-            "confidence": str(item.get("confidence", "unknown")),
+            "confidence": confidence,
         }
 
-    # Word status defaults to uncertain; unreturned words are not assumed good.
+    # Word status defaults to "uncertain" so omitted words are NEVER silently marked "good".
     states = ["uncertain"] * len(words)
     word_feedback = {}
 
     for item in data.get("word_feedback", []):
+        if not isinstance(item, dict):
+            continue
         word_index = item.get("word_i")
         if not isinstance(word_index, int) or not 0 <= word_index < len(words):
             continue
@@ -452,7 +621,12 @@ Expected text:
         states[word_index] = status
         word_feedback[word_index] = str(item.get("feedback", ""))
 
-    overall_feedback = str(data.get("feedback", ""))
+    overall_feedback = str(data.get("feedback", "")).strip()
+    if not overall_feedback:
+        overall_feedback = (
+            "Assessment complete. Words marked in amber were unclear or uncertain and were not counted as errors."
+        )
+
     return states, letter_results, word_feedback, overall_feedback
 
 
@@ -587,7 +761,7 @@ audio { width: 100%; }
 .trackline { color: #a8987f; font-size: 12px; text-align: center; }
 .feedback-grid {
   display: grid;
-  grid-template-columns: 140px 1fr;
+  grid-template-columns: 180px 1fr;
   gap: 12px;
 }
 .feedback-card {
@@ -694,6 +868,10 @@ function renderWord(word, index) {
     wrapper.classList.add(D.states[index]);
   }
 
+  if (D.wordFeedback && D.wordFeedback[index]) {
+    wrapper.title = D.wordFeedback[index];
+  }
+
   arabicArea.appendChild(wrapper);
   wordNodes.push(wrapper);
 }
@@ -771,14 +949,18 @@ if (D.feedback) {
   const feedbackGrid = el("div", "feedback-grid");
   const judged = (D.states || []).filter(s => s === "good" || s === "review");
   const correct = (D.states || []).filter(s => s === "good").length;
+  const uncertainCount = (D.states || []).filter(s => s === "uncertain").length;
   const accuracy = judged.length ? Math.round(correct / judged.length * 100) : null;
 
   const scoreCard = el("div", "feedback-card");
   scoreCard.appendChild(el("div", "feedback-title", "Word assessment"));
-  scoreCard.appendChild(el("div", "feedback-text",
-    accuracy === null ? "Not enough confidently judged words for a score."
-      : accuracy + "% of confidently judged words marked correct."
-  ));
+  const scoreSummary = accuracy === null
+    ? "Not enough confidently judged words for a score."
+    : accuracy + "% of confidently judged words marked correct (" + correct + "/" + judged.length + ").";
+  const fullScoreText = uncertainCount > 0
+    ? scoreSummary + " " + uncertainCount + " word(s) marked uncertain."
+    : scoreSummary;
+  scoreCard.appendChild(el("div", "feedback-text", fullScoreText));
   feedbackGrid.appendChild(scoreCard);
 
   const overallCard = el("div", "feedback-card");
@@ -818,6 +1000,7 @@ def render_player(
     feedback="",
     meta=None,
     letter_results=None,
+    word_feedback=None,
     track_word_counts=None,
 ):
     payload = {
@@ -828,6 +1011,7 @@ def render_player(
         "feedback": feedback,
         "meta": meta or {},
         "letterResults": letter_results or {},
+        "wordFeedback": {str(k): v for k, v in (word_feedback or {}).items()},
         "trackWordCounts": track_word_counts or [],
     }
     serialized = json.dumps(payload, ensure_ascii=False).replace("</", "<\\/")
@@ -1134,7 +1318,7 @@ def record_step():
                         states, letter_results, word_feedback, feedback = (
                             analyse_recitation(
                                 recording.getvalue(),
-                                recording.type or "audio/webm",
+                                recording.type or "audio/wav",
                                 words,
                                 st.session_state.strictness,
                                 st.session_state.teacher_gender,
@@ -1162,118 +1346,68 @@ def record_step():
                         award_xp(st.session_state.name, 10)
                         st.session_state.paid.append(result_key)
 
+                    st.session_state.step = 2
                     st.rerun()
 
                 except Exception as error:
-                    st.error(str(error))
+                    st.error(f"Tajweed analysis failed: {error}")
 
+        st.markdown("---")
+        if st.button("← Back to Step 1 (Listen)", use_container_width=True):
+            st.session_state.step = 0
+            st.rerun()
+    else:
+        st.session_state.step = 2
+        st.rerun()
+
+
+def review_step():
+    saved_result = st.session_state.results.get(result_key)
+    if saved_result is None:
+        st.session_state.step = 1
+        st.rerun()
         return
 
-    show_result(saved_result)
-
-
-def show_result(result):
     render_player(
         words,
         "review",
-        states=result["states"],
+        states=saved_result["states"],
+        audio_tracks=audio_tracks,
+        feedback=saved_result["feedback"],
         meta=meta,
-        feedback=result["feedback"],
-        letter_results=result["letter_results"],
+        letter_results=saved_result["letter_results"],
+        word_feedback=saved_result.get("word_feedback", {}),
+        track_word_counts=track_word_counts,
     )
 
-    st.markdown("#### Word-by-word feedback")
+    review_notes = [
+        (idx, words[idx]["ar"], saved_result["word_feedback"][idx])
+        for idx in sorted(saved_result.get("word_feedback", {}).keys())
+        if saved_result["states"][idx] in ("review", "uncertain")
+        and saved_result["word_feedback"][idx].strip()
+    ]
 
-    rows = []
-    for index, word in enumerate(words):
-        status = result["states"][index]
-        comment = result["word_feedback"].get(index, "")
-        rows.append(
-            {
-                "Ayah": word["ayah"],
-                "Word": word["ar"],
-                "Assessment": status.capitalize(),
-                "Feedback": comment,
-            }
-        )
-
-    st.dataframe(rows, use_container_width=True, hide_index=True)
-
-    with st.expander("Letter-level Tajweed observations"):
-        any_results = False
-
-        for index, word in enumerate(words):
-            for letter_index, letter in enumerate(word["letters"]):
-                assessment = result["letter_results"].get(
-                    f"{index}:{letter_index}"
-                )
-                if not assessment:
-                    continue
-
-                any_results = True
-                st.markdown(
-                    f"**Ayah {word['ayah']} · {letter['text']}** — "
-                    f"{assessment['status'].capitalize()}"
-                )
-
-                marks = ", ".join(letter["marks"]) or "No displayed harakah"
-                st.caption(
-                    f"Harakah: {marks} · Rule: "
-                    f"{assessment['rule'] or 'Not specified'}"
-                )
-
-                if assessment["feedback"]:
-                    st.write(assessment["feedback"])
-
-        if not any_results:
-            st.info(
-                "No individual letters were confidently assessed in this "
-                "response. Try a shorter, clearer recording."
-            )
+    if review_notes:
+        with st.expander("Word-by-word Tajweed & observation notes", expanded=True):
+            for idx, arabic_word, note in review_notes:
+                status_label = saved_result["states"][idx].capitalize()
+                st.markdown(f"**Word {idx + 1} ({arabic_word}) — {status_label}:** {note}")
 
     col1, col2 = st.columns(2)
-
-    if col1.button("Try again", use_container_width=True):
+    if col1.button("Practice & record again", use_container_width=True):
         st.session_state.results.pop(result_key, None)
         st.session_state.tries += 1
+        st.session_state.step = 1
         st.rerun()
 
-    if col2.button(
-        "Continue",
-        use_container_width=True,
-        type="primary",
-    ):
-        st.session_state.update(step=2, count=0)
+    if col2.button("Listen to reference recitation", use_container_width=True):
+        st.session_state.step = 0
         st.rerun()
 
 
 if step == 0:
     listen_step()
-
 elif step == 1:
     record_step()
-
-elif step == 2:
-    saved_result = st.session_state.results.get(result_key)
-
-    if saved_result:
-        show_result(saved_result)
-
-        if st.button("Start again with this passage", use_container_width=True):
-            st.session_state.update(step=0, count=0)
-            st.rerun()
-    else:
-        st.info("Complete Step 2 before opening the teacher review.")
-        if st.button("Return to recitation", use_container_width=True):
-            st.session_state.step = 1
-            st.rerun()
-
-
-# ----------------------------- Footer / limitations -----------------------------
-
-st.markdown("---")
-st.caption(
-    "Learning aid only: automated audio feedback can make mistakes and "
-    "cannot replace a qualified Qur'an teacher. The written harakah labels "
-    "come from the displayed Qur'anic text; audio judgements may be uncertain."
-)
+else:
+    review_step()
