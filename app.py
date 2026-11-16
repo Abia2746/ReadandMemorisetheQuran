@@ -309,8 +309,7 @@ def get_available_models(api_key_value):
 def extract_interaction_text(payload):
     """
     Extract generated text from an Interactions API response.
-    Supports both the current `steps` schema (`model_output` steps)
-    and fallback `outputs` arrays if returned.
+    Returns (text, is_incomplete).
     """
     status = payload.get("status")
     if status == "failed":
@@ -321,12 +320,6 @@ def extract_interaction_text(payload):
             else "Interaction failed."
         )
         raise RuntimeError(f"Gemini interaction failed: {detail}")
-
-    if status == "incomplete":
-        raise RuntimeError(
-            "Gemini response was truncated before finishing the Tajweed JSON. "
-            "Please try recording a shorter passage."
-        )
 
     text_chunks = []
 
@@ -351,7 +344,70 @@ def extract_interaction_text(payload):
             "Gemini completed the request but returned no text output."
         )
 
-    return combined
+    return combined, (status == "incomplete")
+
+
+def parse_tajweed_json(raw_text, is_incomplete=False):
+    """
+    Parse the Tajweed JSON response, recovering any complete letter/word objects
+    if the response was cut off near the token ceiling.
+    """
+    cleaned = re.sub(r"^```(?:json)?|```$", "", raw_text.strip()).strip()
+
+    try:
+        data = json.loads(cleaned)
+        if isinstance(data, dict):
+            return data
+    except Exception:
+        pass
+
+    # Attempt recovery of complete JSON objects inside "letters" and "word_feedback"
+    letters = []
+    word_feedback = []
+
+    letters_match = re.search(r'"letters"\s*:\s*\[', cleaned)
+    words_match = re.search(r'"word_feedback"\s*:\s*\[', cleaned)
+
+    if letters_match:
+        end_pos = words_match.start() if words_match else len(cleaned)
+        letters_section = cleaned[letters_match.end():end_pos]
+        for obj_match in re.finditer(r'\{[^{}]*\}', letters_section):
+            try:
+                letters.append(json.loads(obj_match.group(0)))
+            except Exception:
+                continue
+
+    if words_match:
+        words_section = cleaned[words_match.end():]
+        for obj_match in re.finditer(r'\{[^{}]*\}', words_section):
+            try:
+                word_feedback.append(json.loads(obj_match.group(0)))
+            except Exception:
+                continue
+
+    feedback_match = re.search(r'"feedback"\s*:\s*"((?:[^"\\]|\\.)*)"', cleaned)
+    overall_feedback = ""
+    if feedback_match:
+        try:
+            overall_feedback = json.loads(f'"{feedback_match.group(1)}"')
+        except Exception:
+            overall_feedback = feedback_match.group(1)
+
+    if letters or word_feedback:
+        if is_incomplete and not overall_feedback:
+            overall_feedback = (
+                "Partial assessment recovered — the passage was very long, so remaining words were marked uncertain."
+            )
+        return {
+            "letters": letters,
+            "word_feedback": word_feedback,
+            "feedback": overall_feedback,
+        }
+
+    raise RuntimeError(
+        "Gemini response was truncated before finishing the Tajweed JSON. "
+        "Please try recording a shorter passage."
+    )
 
 
 def tajweed_response_schema():
@@ -417,7 +473,6 @@ def post_interaction_with_retry(key, base_request_body, candidate_models):
     for model_id in candidate_models:
         request_body = dict(base_request_body, model=model_id)
 
-        # Up to 3 attempts per model (initial + 2 exponential backoff retries)
         for attempt in range(3):
             try:
                 response = requests.post(
@@ -427,7 +482,7 @@ def post_interaction_with_retry(key, base_request_body, candidate_models):
                         "Content-Type": "application/json",
                     },
                     json=request_body,
-                    timeout=90,
+                    timeout=110,
                 )
             except requests.Timeout:
                 last_error = f"Request to {model_id} timed out."
@@ -452,7 +507,6 @@ def post_interaction_with_retry(key, base_request_body, candidate_models):
                 if response.text:
                     detail = response.text[:300]
 
-            # Never retry non-transient client errors
             if response.status_code in (401, 403):
                 raise RuntimeError(
                     "Gemini API authentication failed. Check that GEMINI_API_KEY is valid."
@@ -465,14 +519,12 @@ def post_interaction_with_retry(key, base_request_body, candidate_models):
                 last_error = f"Model '{model_id}' is unavailable on the Interactions API."
                 break
 
-            # Transient overload / rate-limit errors (503, 429, 500, 502, 504)
             if response.status_code in (429, 500, 502, 503, 504):
                 last_error = f"Gemini request failed ({response.status_code}): {detail}"
                 if attempt < 2:
                     delay = (1.5 * (2 ** attempt)) + random.uniform(0.1, 0.7)
                     time.sleep(delay)
                     continue
-                # Move on to next fallback model after retries on current model are exhausted
                 break
 
             raise RuntimeError(f"Gemini request failed ({response.status_code}): {detail}")
@@ -545,7 +597,11 @@ Strictness level: {strictness}.
 Assessment rules:
 1. Assess only what can reasonably be heard in the audio. Do not invent errors.
 2. Never mark an unclear or unverified sound as "good" or "review" — mark it "uncertain" with "low" confidence.
-3. Pay attention to:
+3. Keep JSON compact so all words and letters fit cleanly:
+   - For letters with status "good", keep "feedback" concise (under 6 words, e.g. "Clear vowel" or "").
+   - For letters with status "review" or "uncertain", state the specific Tajweed issue in 1 short sentence (under 15 words).
+   - For word_feedback, keep "feedback" to 1 concise sentence per word.
+4. Pay attention to:
    - Fathah, kasrah, dammah, and tanween
    - Sukoon and shaddah
    - Madd and its elongation proportions
@@ -553,8 +609,8 @@ Assessment rules:
    - Qalqalah (echoing bounce on ق ط ب ج د)
    - Noon sakinah / tanween rules (Idgham, Ikhfa, Iqlab, Izhar)
    - Makharij (letter articulation points) and clarity
-4. Do not claim exact millisecond durations unless clearly discernible.
-5. Use the exact `word_i` and `letter_i` indexes provided below. Do not alter the Arabic text.
+5. Do not claim exact millisecond durations unless clearly discernible.
+6. Use the exact `word_i` and `letter_i` indexes provided below. Do not alter the Arabic text.
 
 Allowed statuses for both letters and words:
 - "good": Clearly and accurately recited according to Tajweed rules.
@@ -588,7 +644,7 @@ Expected text:
         },
         "generation_config": {
             "temperature": 0.1,
-            "max_output_tokens": 4096,
+            "max_output_tokens": 16384,
         },
     }
 
@@ -601,23 +657,8 @@ Expected text:
             "Gemini returned a non-JSON HTTP response."
         ) from exc
 
-    response_text = extract_interaction_text(payload)
-
-    try:
-        cleaned_json = re.sub(
-            r"^```(?:json)?|```$",
-            "",
-            response_text.strip(),
-        ).strip()
-        data = json.loads(cleaned_json)
-    except Exception as exc:
-        raise RuntimeError(
-            "Gemini returned malformed JSON that could not be parsed. "
-            "Try recording a shorter passage."
-        ) from exc
-
-    if not isinstance(data, dict):
-        raise RuntimeError("Unexpected JSON structure returned by Gemini.")
+    response_text, is_incomplete = extract_interaction_text(payload)
+    data = parse_tajweed_json(response_text, is_incomplete=is_incomplete)
 
     # Validate letter-level feedback indexes; unassessed letters remain ungraded/uncertain.
     letter_results = {}
