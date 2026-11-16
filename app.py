@@ -15,7 +15,7 @@ import streamlit.components.v1 as components
 
 
 # ============================================================
-# AL-MU'ALLIM — Qur'an recitation practice and Tajweed feedback
+# AL-MU'ALLIM — Expert Qur'an Recitation & 16-Rule Tajweed Teacher
 # ============================================================
 
 st.set_page_config(
@@ -30,7 +30,6 @@ EVERY_AYAH = "https://everyayah.com/data"
 GEMINI_INTERACTIONS_URL = "https://generativelanguage.googleapis.com/v1beta/interactions"
 GEMINI_MODELS_URL = "https://generativelanguage.googleapis.com/v1beta/models"
 
-# Primary model followed by Interactions API fallback models for 503 high-demand spikes
 GEMINI_MODELS = [
     "gemini-3.8-flash",
     "gemini-3.6-flash",
@@ -67,6 +66,26 @@ AYAHS = [
     9, 5, 4, 7, 3, 6, 3, 5, 4, 5, 6,
 ]
 
+# The 16 Defined Tajweed Rules used for expert assessment
+TAJWEED_RULES_DEFINITIONS = {
+    1: {"name": "Madd Tabii (Natural Madd)", "category": "Madd duration", "desc": "Elongating a harf madd (alif, waw, ya) by 2 vowel counts."},
+    2: {"name": "Madd Muttasil (Connected Madd)", "category": "Madd duration", "desc": "Madd followed by a hamza in the same word, elongated 4-5 counts."},
+    3: {"name": "Madd Munfasil (Separated Madd)", "category": "Madd duration", "desc": "Madd at the end of a word followed by hamza in the next word, elongated 2-5 counts."},
+    4: {"name": "Madd Lazim (Compulsory Madd)", "category": "Madd duration", "desc": "Madd followed by a permanent sukoon or shaddah, elongated strictly 6 counts."},
+    5: {"name": "Ghunnah (Nasalization)", "category": "Ghunnah", "desc": "Emitting sound from the nasal cavity for 2 counts on a Noon or Meem with shaddah."},
+    6: {"name": "Idgham with Ghunnah", "category": "Noon sakinah and tanween", "desc": "Merging Noon sakinah or tanween into ي, ن, م, و with nasalization."},
+    7: {"name": "Idgham without Ghunnah", "category": "Noon sakinah and tanween", "desc": "Merging Noon sakinah or tanween into ل or ر without nasalization."},
+    8: {"name": "Ikhfa (Concealment)", "category": "Noon sakinah and tanween", "desc": "Concealing Noon sakinah or tanween near 15 letters with a hidden nasal sound."},
+    9: {"name": "Iqlab (Conversion)", "category": "Noon sakinah and tanween", "desc": "Converting Noon sakinah or tanween into a hidden Meem before the letter Baa."},
+    10: {"name": "Izhar (Clear Pronunciation)", "category": "Noon sakinah and tanween", "desc": "Pronouncing Noon sakinah or tanween clearly before throat letters (ء ه ع ح غ خ)."},
+    11: {"name": "Idgham Shafawi", "category": "Meem sakinah", "desc": "Merging Meem sakinah into another Meem with full ghunnah."},
+    12: {"name": "Ikhfa Shafawi", "category": "Meem sakinah", "desc": "Concealing Meem sakinah gently before the letter Baa with ghunnah."},
+    13: {"name": "Izhar Shafawi", "category": "Meem sakinah", "desc": "Pronouncing Meem sakinah clearly before all letters except Baa and Meem."},
+    14: {"name": "Qalqalah (Echo/Bounce)", "category": "Qalqalah", "desc": "Bouncing the voice on sukoon letters (ق ط ب ج د)."},
+    15: {"name": "Tafkhim & Tarqiq (Heavy & Light Letters)", "category": "Sifaat", "desc": "Elevating the back of the tongue for heavy letters (إستعلاء) vs lowering for light."},
+    16: {"name": "Waqf and Ibtida (Pausing and Resuming)", "category": "Waqf and ibtida", "desc": "Observing correct breathing pauses and proper resumption rules at verse stops."},
+}
+
 # Arabic combining marks used for harakah / Tajweed display.
 HARAKAH_NAMES = {
     "\u064b": "Fathatayn",
@@ -84,7 +103,7 @@ HARAKAH_NAMES = {
 }
 
 
-# ----------------------------- Database -----------------------------
+# ----------------------------- Database & Analytics -----------------------------
 
 try:
     DB_PATH = pathlib.Path(__file__).with_name("muallim.db")
@@ -101,6 +120,16 @@ def db():
             xp INTEGER DEFAULT 0,
             streak INTEGER DEFAULT 0,
             last_day TEXT
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS error_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT,
+            rule_name TEXT,
+            timestamp TEXT
         )
         """
     )
@@ -132,6 +161,23 @@ def award_xp(name, xp=10):
             "UPDATE users SET xp=?, streak=?, last_day=? WHERE name=?",
             (current_xp + xp, streak, today.isoformat(), name),
         )
+
+
+def log_recurring_error(name, rule_name):
+    with db() as connection:
+        connection.execute(
+            "INSERT INTO error_logs(name, rule_name, timestamp) VALUES(?, ?, ?)",
+            (name, rule_name, datetime.datetime.now().isoformat()),
+        )
+
+
+def get_user_weaknesses(name):
+    with db() as connection:
+        rows = connection.execute(
+            "SELECT rule_name, COUNT(*) as cnt FROM error_logs WHERE name=? GROUP BY rule_name ORDER BY cnt DESC LIMIT 3",
+            (name,),
+        ).fetchall()
+    return rows
 
 
 # ----------------------------- Qur'an API -----------------------------
@@ -350,9 +396,11 @@ def parse_tajweed_json(raw_text, is_incomplete=False):
 
     letters = []
     word_feedback = []
+    tajweed_assessments = []
 
     letters_match = re.search(r'"letters"\s*:\s*\[', cleaned)
     words_match = re.search(r'"word_feedback"\s*:\s*\[', cleaned)
+    rules_match = re.search(r'"tajweed_assessments"\s*:\s*\[', cleaned)
 
     if letters_match:
         end_pos = words_match.start() if words_match else len(cleaned)
@@ -371,7 +419,17 @@ def parse_tajweed_json(raw_text, is_incomplete=False):
             except Exception:
                 continue
 
+    if rules_match:
+        rules_section = cleaned[rules_match.end():]
+        for obj_match in re.finditer(r'\{[^{}]*\}', rules_section):
+            try:
+                tajweed_assessments.append(json.loads(obj_match.group(0)))
+            except Exception:
+                continue
+
     feedback_match = re.search(r'"feedback"\s*:\s*"((?:[^"\\]|\\.)*)"', cleaned)
+    teacher_label_match = re.search(r'"teacher_label"\s*:\s*"((?:[^"\\]|\\.)*)"', cleaned)
+    
     overall_feedback = ""
     if feedback_match:
         try:
@@ -379,15 +437,22 @@ def parse_tajweed_json(raw_text, is_incomplete=False):
         except Exception:
             overall_feedback = feedback_match.group(1)
 
-    if letters or word_feedback:
+    teacher_label = "I'm listening..."
+    if teacher_label_match:
+        try:
+            teacher_label = json.loads(f'"{teacher_label_match.group(1)}"')
+        except Exception:
+            teacher_label = teacher_label_match.group(1)
+
+    if letters or word_feedback or tajweed_assessments:
         if is_incomplete and not overall_feedback:
-            overall_feedback = (
-                "Partial assessment recovered."
-            )
+            overall_feedback = "Partial assessment recovered."
         return {
             "letters": letters,
             "word_feedback": word_feedback,
+            "tajweed_assessments": tajweed_assessments,
             "feedback": overall_feedback,
+            "teacher_label": teacher_label,
         }
 
     raise RuntimeError(
@@ -399,6 +464,7 @@ def tajweed_response_schema():
     return {
         "type": "object",
         "properties": {
+            "teacher_label": {"type": "string"},
             "letters": {
                 "type": "array",
                 "items": {
@@ -442,9 +508,33 @@ def tajweed_response_schema():
                     "required": ["word_i", "status", "feedback"],
                 },
             },
+            "tajweed_assessments": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "rule_id": {"type": "integer"},
+                        "rule_name": {"type": "string"},
+                        "applied_correctly": {"type": "boolean"},
+                        "location": {"type": "string"},
+                        "mistake_description": {"type": "string"},
+                        "correction_guide": {"type": "string"},
+                        "repetition_exercise": {"type": "string"},
+                    },
+                    "required": [
+                        "rule_id",
+                        "rule_name",
+                        "applied_correctly",
+                        "location",
+                        "mistake_description",
+                        "correction_guide",
+                        "repetition_exercise",
+                    ],
+                },
+            },
             "feedback": {"type": "string"},
         },
-        "required": ["letters", "word_feedback", "feedback"],
+        "required": ["teacher_label", "letters", "word_feedback", "tajweed_assessments", "feedback"],
     }
 
 
@@ -463,7 +553,7 @@ def post_interaction_with_retry(key, base_request_body, candidate_models):
                         "Content-Type": "application/json",
                     },
                     json=request_body,
-                    timeout=60,
+                    timeout=70,
                 )
             except requests.Timeout:
                 last_error = f"Request to {model_id} timed out."
@@ -529,9 +619,9 @@ def analyse_recitation(
     candidate_models = get_available_models(key)
 
     teacher_description = (
-        "a knowledgeable male Qur'an recitation teacher"
+        "a knowledgeable, warm, and patient male Qur'an recitation teacher"
         if teacher_gender == "Male"
-        else "a knowledgeable female Qur'an recitation teacher"
+        else "a knowledgeable, warm, and patient female Qur'an recitation teacher"
     )
 
     expected_text = []
@@ -548,15 +638,23 @@ def analyse_recitation(
             }
         )
 
+    rules_list_str = "\n".join([f"Rule ID {rid}: {rinfo['name']} ({rinfo['category']}) - {rinfo['desc']}" for rid, rinfo in TAJWEED_RULES_DEFINITIONS.items()])
+
     system_instruction = (
         f"You are {teacher_description} evaluating Qur'anic recitation with Tajweed. "
         "Assess strictly what is audibly present against the exact Uthmani text. "
-        "Never invent mistakes. Distinguish clearly between 'review' (error) and 'uncertain'."
+        "Never invent mistakes. Distinguish clearly between pronunciation errors, makharij, sifaat, madd, ghunnah, and noon/meem rules. "
+        "Evaluate applicable rules among the 16 defined Tajweed rules. "
+        "If an audio feature is uncertain or unclear, mark it 'uncertain' with 'low' confidence rather than guessing. "
+        "Provide a natural, encouraging context-aware teacher message in `teacher_label` (e.g. 'Repeat after me', 'Let\\'s practise that vowel', 'Excellent pronunciation!')."
     )
 
     prompt = f"""
 Assess the attached Qur'an recitation audio against the exact Uthmani text supplied below.
 Strictness level: {strictness}.
+
+Here are the 16 defined Tajweed rules to check where applicable:
+{rules_list_str}
 
 Expected text:
 {json.dumps(expected_text, ensure_ascii=False)}
@@ -648,11 +746,14 @@ Expected text:
         states[word_index] = status
         word_feedback[word_index] = str(item.get("feedback", ""))
 
+    tajweed_assessments = data.get("tajweed_assessments", [])
     overall_feedback = str(data.get("feedback", "")).strip()
     if not overall_feedback:
         overall_feedback = "Assessment complete."
 
-    return states, letter_results, word_feedback, overall_feedback
+    teacher_label = str(data.get("teacher_label", "I'm listening...")).strip()
+
+    return states, letter_results, word_feedback, tajweed_assessments, overall_feedback, teacher_label
 
 
 # ----------------------------- Audio / Arabic player -----------------------------
@@ -767,7 +868,8 @@ body {
   white-space: nowrap;
   line-height: 1.2;
 }
-.translit { color: #D4AF37; font-size: 10px; font-style: italic; }
+/* Transliteration is completely hidden in Recite from Memory mode */
+.translit { display: none !important; }
 .translation {
   color: #a8987f;
   font-size: 10px;
@@ -784,37 +886,6 @@ body {
 .audio-controls { display: flex; flex-direction: column; gap: 9px; }
 audio { width: 100%; }
 .trackline { color: #a8987f; font-size: 12px; text-align: center; }
-.feedback-grid {
-  display: grid;
-  grid-template-columns: 180px 1fr;
-  gap: 12px;
-}
-.feedback-card {
-  background: rgba(255,255,255,.035);
-  border: 1px solid rgba(255,255,255,.07);
-  border-radius: 14px;
-  padding: 14px;
-}
-.feedback-title {
-  color: #D4AF37;
-  font-weight: 700;
-  font-size: 12px;
-  text-transform: uppercase;
-  margin-bottom: 7px;
-}
-.feedback-text { color: #d8cbb8; font-size: 13px; line-height: 1.6; }
-.legend {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
-  color: #a8987f;
-  font-size: 11px;
-}
-.dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; }
-@media(max-width:600px) {
-  .feedback-grid { grid-template-columns: 1fr; }
-  .arabic-word { font-size: 29px; }
-}
 </style>
 </head>
 <body>
@@ -845,7 +916,6 @@ header.appendChild(headRight);
 shell.appendChild(header);
 
 const recitationPanel = el("div", "panel");
-// Dynamic class injection based on Recite from Memory toggle state
 const isBlind = D.reciteFromMemory && !D.states;
 const arabicArea = el("div", "arabic-area" + (isBlind ? " blind" : ""));
 const wordNodes = [];
@@ -885,7 +955,10 @@ function renderWord(word, index) {
 
   wrapper.appendChild(arabic);
 
-  if (word.tr) wrapper.appendChild(el("div", "translit", word.tr));
+  // Transliteration is strictly omitted when reciteFromMemory is enabled
+  if (!D.reciteFromMemory && word.tr) {
+    wrapper.appendChild(el("div", "translit", word.tr));
+  }
   if (word.en) wrapper.appendChild(el("div", "translation", word.en));
   wrapper.appendChild(el("div", "meta", "Ayah " + word.ayah));
 
@@ -957,26 +1030,6 @@ if (tracks.length) {
 recitationPanel.appendChild(audioControls);
 shell.appendChild(recitationPanel);
 
-if (D.feedback) {
-  const feedbackGrid = el("div", "feedback-grid");
-  const judged = (D.states || []).filter(s => s === "good" || s === "review");
-  const correct = (D.states || []).filter(s => s === "good").length;
-  const accuracy = judged.length ? Math.round(correct / judged.length * 100) : null;
-
-  const scoreCard = el("div", "feedback-card");
-  scoreCard.appendChild(el("div", "feedback-title", "Word assessment"));
-  scoreCard.appendChild(el("div", "feedback-text",
-    accuracy === null ? "Assessment complete." : accuracy + "% accuracy."
-  ));
-  feedbackGrid.appendChild(scoreCard);
-
-  const overallCard = el("div", "feedback-card");
-  overallCard.appendChild(el("div", "feedback-title", "Teacher feedback"));
-  overallCard.appendChild(el("div", "feedback-text", D.feedback));
-  feedbackGrid.appendChild(overallCard);
-  shell.appendChild(feedbackGrid);
-}
-
 root.appendChild(shell);
 </script>
 </body>
@@ -1026,6 +1079,7 @@ DEFAULTS = {
     "teacher_gender": "Male",
     "strictness": "Balanced",
     "theme": "Starry Night",
+    "teacher_label": "I'm listening...",
 }
 
 for key, value in DEFAULTS.items():
@@ -1068,6 +1122,17 @@ st.markdown(
     div.stButton > button:hover {{
         border: 1px solid #fff;
         color: #1A1510;
+    }}
+    .teacher-badge {{
+        background: rgba(212, 175, 55, 0.12);
+        border: 1px solid rgba(212, 175, 55, 0.35);
+        border-radius: 12px;
+        padding: 10px 16px;
+        text-align: center;
+        color: #F3E5AB;
+        font-weight: 600;
+        font-size: 1.05rem;
+        margin-bottom: 16px;
     }}
     </style>
     """,
@@ -1129,11 +1194,10 @@ st.session_state.strictness = sidebar.select_slider(
 
 sidebar.markdown("---")
 
-# Tilawa-style "Recite from memory" interactive toggle switch
 st.session_state.recite_from_memory = sidebar.toggle(
     "🧠 Recite from memory",
     value=st.session_state.recite_from_memory,
-    help="When enabled, the text stays hidden so you can recite from memory and get checked."
+    help="When enabled, the reference text is hidden so you can test memorisation independently without transliteration hints."
 )
 
 sidebar.markdown("---")
@@ -1178,6 +1242,7 @@ if sidebar.button("Load passage", use_container_width=True):
         end_ayah=int(end_input),
         tries=0,
         results={},
+        teacher_label="I'm listening...",
     )
     st.rerun()
 
@@ -1219,7 +1284,7 @@ meta = {
 }
 
 
-# ----------------------------- Main content (Live Tilawa Style) -----------------------------
+# ----------------------------- Main content -----------------------------
 
 st.markdown(
     "<h1 style='text-align:center'>Al-Mu'allim</h1>",
@@ -1231,9 +1296,14 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+# Live Teacher Message Label
+st.markdown(
+    f"<div class='teacher-badge'>💬 Teacher: <em>\"{st.session_state.teacher_label}\"</em></div>",
+    unsafe_allow_html=True,
+)
+
 saved_result = st.session_state.results.get(result_key)
 
-# Render player with current memorization toggle state
 render_player(
     words,
     mode="blind" if st.session_state.recite_from_memory else "full",
@@ -1249,7 +1319,6 @@ render_player(
 
 st.markdown("<br>", unsafe_allow_html=True)
 
-# Direct record widget for immediate live submission
 left, centre, right = st.columns([1, 2, 1])
 with centre:
     recording = st.audio_input(
@@ -1262,8 +1331,8 @@ if recording is not None:
 
     if st.button("Submit for Live Tajweed Analysis", type="primary", use_container_width=True):
         try:
-            with st.spinner("Analyzing recitation quickly..."):
-                states, letter_results, word_feedback, feedback = analyse_recitation(
+            with st.spinner("Teacher is listening and reviewing Tajweed rules..."):
+                states, letter_results, word_feedback, tajweed_assessments, feedback, teacher_label = analyse_recitation(
                     recording.getvalue(),
                     recording.type or "audio/wav",
                     words,
@@ -1271,12 +1340,19 @@ if recording is not None:
                     st.session_state.teacher_gender,
                 )
 
+            st.session_state.teacher_label = teacher_label
             st.session_state.results[result_key] = {
                 "states": states,
                 "letter_results": letter_results,
                 "word_feedback": word_feedback,
+                "tajweed_assessments": tajweed_assessments,
                 "feedback": feedback,
             }
+
+            # Log recurring errors for weak point analysis
+            for ta in tajweed_assessments:
+                if not ta.get("applied_correctly", True):
+                    log_recurring_error(st.session_state.name, ta.get("rule_name", "General Tajweed"))
 
             judged = [s for s in states if s in ("good", "review")]
             correct = states.count("good")
@@ -1291,7 +1367,34 @@ if recording is not None:
             st.error(f"Tajweed analysis failed: {error}")
 
 if saved_result:
+    st.markdown("---")
+    st.markdown("### 📊 Intelligent Feedback & 16-Rule Tajweed Dashboard")
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        st.info(f"**Teacher Feedback:**\n\n{saved_result['feedback']}")
+    with col2:
+        weaknesses = get_user_weaknesses(st.session_state.name)
+        if weaknesses:
+            weak_str = ", ".join([f"{w[0]} ({w[1]}x)" for w in weaknesses])
+            st.warning(f"⚠️ **Targeted Practice Areas (Recurring Weaknesses):**\n\n{weak_str}")
+        else:
+            st.success("🌟 **Great progress!** No recurring weak spots detected.")
+
+    st.markdown("#### 🔬 Detailed 16-Rule Tajweed Assessment")
+    assessments = saved_result.get("tajweed_assessments", [])
+    if assessments:
+        for ta in assessments:
+            status_icon = "✅" if ta.get("applied_correctly") else "❌"
+            with st.expander(f"{status_icon} Rule: {ta.get('rule_name', 'Tajweed Rule')} — Location: {ta.get('location', 'Passage')}"):
+                st.markdown(f"**Mistake / Observation:** {ta.get('mistake_description', 'None')}")
+                st.markdown(f"**How to Correct:** {ta.get('correction_guide', 'Practice carefully.')}")
+                st.markdown(f"**Repetition Exercise:** *\"{ta.get('repetition_exercise', 'Repeat after me.')}\"*")
+    else:
+        st.caption("No specific rule flagged as problematic in this recording.")
+
     if st.button("🔄 Try Again / New Recording", use_container_width=True):
         st.session_state.results.pop(result_key, None)
         st.session_state.tries += 1
+        st.session_state.teacher_label = "Let's try that again."
         st.rerun()
