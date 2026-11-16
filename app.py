@@ -3,8 +3,10 @@ import datetime
 import json
 import os
 import pathlib
+import random
 import re
 import sqlite3
+import time
 import unicodedata
 
 import requests
@@ -27,7 +29,13 @@ QURAN_API = "https://api.quran.com/api/v4"
 EVERY_AYAH = "https://everyayah.com/data"
 GEMINI_INTERACTIONS_URL = "https://generativelanguage.googleapis.com/v1beta/interactions"
 GEMINI_MODELS_URL = "https://generativelanguage.googleapis.com/v1beta/models"
-GEMINI_MODEL = "gemini-3.8-flash"
+
+# Primary model followed by Interactions API fallback models for 503 high-demand spikes
+GEMINI_MODELS = [
+    "gemini-3.8-flash",
+    "gemini-3.6-flash",
+    "gemini-3.5-flash-lite",
+]
 
 SUPPORTED_AUDIO_MIME_TYPES = {
     "audio/wav",
@@ -255,14 +263,13 @@ def normalize_audio_mime_type(mime_type):
 
 
 @st.cache_data(ttl=1800, show_spinner=False)
-def verify_gemini_model(api_key_value, model_id=GEMINI_MODEL):
+def get_available_models(api_key_value):
     """
-    Verify that the configured API key is valid and has access to the
-    target Gemini model without leaking the API key.
+    Return the subset of preferred Interactions API models available to this API key.
     """
     try:
         response = requests.get(
-            f"{GEMINI_MODELS_URL}/{model_id}",
+            GEMINI_MODELS_URL,
             headers={"x-goog-api-key": api_key_value},
             timeout=15,
         )
@@ -278,18 +285,25 @@ def verify_gemini_model(api_key_value, model_id=GEMINI_MODEL):
             "Streamlit secrets or environment variables."
         )
 
-    if response.status_code == 404:
-        raise RuntimeError(
-            f"Model '{model_id}' is not available to this API key. "
-            "Ensure your Google AI Studio / Cloud project has access to gemini-3.8-flash."
-        )
-
     if response.status_code != 200:
         raise RuntimeError(
             f"Unable to verify Gemini model availability (HTTP {response.status_code})."
         )
 
-    return model_id
+    returned_names = {
+        item.get("name", "").removeprefix("models/")
+        for item in response.json().get("models", [])
+        if isinstance(item, dict)
+    }
+
+    available = [m for m in GEMINI_MODELS if m in returned_names]
+    if not available:
+        raise RuntimeError(
+            "None of the supported Gemini Flash models (gemini-3.8-flash, gemini-3.6-flash, "
+            "gemini-3.5-flash-lite) are enabled for this API key."
+        )
+
+    return available
 
 
 def extract_interaction_text(payload):
@@ -301,7 +315,11 @@ def extract_interaction_text(payload):
     status = payload.get("status")
     if status == "failed":
         errors = payload.get("errors") or []
-        detail = errors[0].get("message") if errors and isinstance(errors[0], dict) else "Interaction failed."
+        detail = (
+            errors[0].get("message")
+            if errors and isinstance(errors[0], dict)
+            else "Interaction failed."
+        )
         raise RuntimeError(f"Gemini interaction failed: {detail}")
 
     if status == "incomplete":
@@ -389,6 +407,81 @@ def tajweed_response_schema():
     }
 
 
+def post_interaction_with_retry(key, base_request_body, candidate_models):
+    """
+    Send the Interactions API request with exponential backoff + jitter on transient
+    503 / 429 / 500 errors, falling back across available Flash models if needed.
+    """
+    last_error = "Gemini service is temporarily unavailable."
+
+    for model_id in candidate_models:
+        request_body = dict(base_request_body, model=model_id)
+
+        # Up to 3 attempts per model (initial + 2 exponential backoff retries)
+        for attempt in range(3):
+            try:
+                response = requests.post(
+                    GEMINI_INTERACTIONS_URL,
+                    headers={
+                        "x-goog-api-key": key,
+                        "Content-Type": "application/json",
+                    },
+                    json=request_body,
+                    timeout=90,
+                )
+            except requests.Timeout:
+                last_error = f"Request to {model_id} timed out."
+                if attempt < 2:
+                    time.sleep((2 ** attempt) + random.uniform(0.2, 0.8))
+                    continue
+                break
+            except requests.RequestException as exc:
+                raise RuntimeError(
+                    "Network failure while sending the recording to Gemini. Please try again."
+                ) from exc
+
+            if response.status_code == 200:
+                return response
+
+            detail = f"HTTP {response.status_code}"
+            try:
+                err_obj = response.json().get("error", {})
+                if isinstance(err_obj, dict) and err_obj.get("message"):
+                    detail = err_obj["message"]
+            except Exception:
+                if response.text:
+                    detail = response.text[:300]
+
+            # Never retry non-transient client errors
+            if response.status_code in (401, 403):
+                raise RuntimeError(
+                    "Gemini API authentication failed. Check that GEMINI_API_KEY is valid."
+                )
+            if response.status_code == 400:
+                raise RuntimeError(
+                    f"Gemini rejected the audio or request format: {detail}"
+                )
+            if response.status_code == 404:
+                last_error = f"Model '{model_id}' is unavailable on the Interactions API."
+                break
+
+            # Transient overload / rate-limit errors (503, 429, 500, 502, 504)
+            if response.status_code in (429, 500, 502, 503, 504):
+                last_error = f"Gemini request failed ({response.status_code}): {detail}"
+                if attempt < 2:
+                    delay = (1.5 * (2 ** attempt)) + random.uniform(0.1, 0.7)
+                    time.sleep(delay)
+                    continue
+                # Move on to next fallback model after retries on current model are exhausted
+                break
+
+            raise RuntimeError(f"Gemini request failed ({response.status_code}): {detail}")
+
+    raise RuntimeError(
+        f"{last_error} All configured Gemini Flash models are currently busy — please wait a few seconds and try again."
+    )
+
+
 def analyse_recitation(
     audio_bytes,
     mime_type,
@@ -407,14 +500,13 @@ def analyse_recitation(
             "The audio recording is empty. Please record your recitation and try again."
         )
 
-    # Keep inline base64 payload comfortably under the 20 MB Interactions API request cap.
     if len(audio_bytes) > 12_000_000:
         raise RuntimeError(
             "The recording is too large (over 12 MB). Please record a shorter passage."
         )
 
     normalized_mime = normalize_audio_mime_type(mime_type)
-    model_id = verify_gemini_model(key, GEMINI_MODEL)
+    candidate_models = get_available_models(key)
 
     teacher_description = (
         "a knowledgeable male Qur'an recitation teacher"
@@ -475,8 +567,7 @@ Expected text:
 
     encoded_audio = base64.b64encode(audio_bytes).decode("ascii")
 
-    request_body = {
-        "model": model_id,
+    base_request_body = {
         "system_instruction": system_instruction,
         "store": False,
         "input": [
@@ -501,48 +592,7 @@ Expected text:
         },
     }
 
-    try:
-        response = requests.post(
-            GEMINI_INTERACTIONS_URL,
-            headers={
-                "x-goog-api-key": key,
-                "Content-Type": "application/json",
-            },
-            json=request_body,
-            timeout=90,
-        )
-    except requests.Timeout as exc:
-        raise RuntimeError(
-            "The Gemini analysis timed out. Please try a shorter passage."
-        ) from exc
-    except requests.RequestException as exc:
-        raise RuntimeError(
-            "Network failure while sending the recording to Gemini. Please try again."
-        ) from exc
-
-    if response.status_code != 200:
-        detail = f"HTTP {response.status_code}"
-        try:
-            err_obj = response.json().get("error", {})
-            if isinstance(err_obj, dict) and err_obj.get("message"):
-                detail = err_obj["message"]
-        except Exception:
-            if response.text:
-                detail = response.text[:300]
-
-        if response.status_code in (401, 403):
-            raise RuntimeError(
-                "Gemini API authentication failed. Check that GEMINI_API_KEY is valid."
-            )
-        if response.status_code == 404:
-            raise RuntimeError(
-                f"Gemini model '{model_id}' was not found or is unavailable on the Interactions API."
-            )
-        if response.status_code == 400:
-            raise RuntimeError(
-                f"Gemini rejected the audio or request format: {detail}"
-            )
-        raise RuntimeError(f"Gemini request failed ({response.status_code}): {detail}")
+    response = post_interaction_with_retry(key, base_request_body, candidate_models)
 
     try:
         payload = response.json()
@@ -592,7 +642,6 @@ Expected text:
         if confidence not in ("high", "medium", "low"):
             confidence = "low"
 
-        # Prevent low-confidence observations from being silently treated as definite errors or passes.
         if confidence == "low" and status == "good":
             status = "uncertain"
 
