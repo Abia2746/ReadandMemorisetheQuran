@@ -264,14 +264,11 @@ def normalize_audio_mime_type(mime_type):
 
 @st.cache_data(ttl=1800, show_spinner=False)
 def get_available_models(api_key_value):
-    """
-    Return the subset of preferred Interactions API models available to this API key.
-    """
     try:
         response = requests.get(
             GEMINI_MODELS_URL,
             headers={"x-goog-api-key": api_key_value},
-            timeout=15,
+            timeout=10,
         )
     except requests.RequestException as exc:
         raise RuntimeError(
@@ -299,18 +296,13 @@ def get_available_models(api_key_value):
     available = [m for m in GEMINI_MODELS if m in returned_names]
     if not available:
         raise RuntimeError(
-            "None of the supported Gemini Flash models (gemini-3.8-flash, gemini-3.6-flash, "
-            "gemini-3.5-flash-lite) are enabled for this API key."
+            "None of the supported Gemini Flash models are enabled for this API key."
         )
 
     return available
 
 
 def extract_interaction_text(payload):
-    """
-    Extract generated text from an Interactions API response.
-    Returns (text, is_incomplete).
-    """
     status = payload.get("status")
     if status == "failed":
         errors = payload.get("errors") or []
@@ -322,7 +314,6 @@ def extract_interaction_text(payload):
         raise RuntimeError(f"Gemini interaction failed: {detail}")
 
     text_chunks = []
-
     steps = payload.get("steps")
     if isinstance(steps, list):
         for step in steps:
@@ -348,10 +339,6 @@ def extract_interaction_text(payload):
 
 
 def parse_tajweed_json(raw_text, is_incomplete=False):
-    """
-    Parse the Tajweed JSON response, recovering any complete letter/word objects
-    if the response was cut off near the token ceiling.
-    """
     cleaned = re.sub(r"^```(?:json)?|```$", "", raw_text.strip()).strip()
 
     try:
@@ -361,7 +348,6 @@ def parse_tajweed_json(raw_text, is_incomplete=False):
     except Exception:
         pass
 
-    # Attempt recovery of complete JSON objects inside "letters" and "word_feedback"
     letters = []
     word_feedback = []
 
@@ -396,7 +382,7 @@ def parse_tajweed_json(raw_text, is_incomplete=False):
     if letters or word_feedback:
         if is_incomplete and not overall_feedback:
             overall_feedback = (
-                "Partial assessment recovered — the passage was very long, so remaining words were marked uncertain."
+                "Partial assessment recovered."
             )
         return {
             "letters": letters,
@@ -405,8 +391,7 @@ def parse_tajweed_json(raw_text, is_incomplete=False):
         }
 
     raise RuntimeError(
-        "Gemini response was truncated before finishing the Tajweed JSON. "
-        "Please try recording a shorter passage."
+        "Gemini response was truncated. Please try recording a shorter passage."
     )
 
 
@@ -464,16 +449,12 @@ def tajweed_response_schema():
 
 
 def post_interaction_with_retry(key, base_request_body, candidate_models):
-    """
-    Send the Interactions API request with exponential backoff + jitter on transient
-    503 / 429 / 500 errors, falling back across available Flash models if needed.
-    """
     last_error = "Gemini service is temporarily unavailable."
 
     for model_id in candidate_models:
         request_body = dict(base_request_body, model=model_id)
 
-        for attempt in range(3):
+        for attempt in range(2):
             try:
                 response = requests.post(
                     GEMINI_INTERACTIONS_URL,
@@ -482,17 +463,17 @@ def post_interaction_with_retry(key, base_request_body, candidate_models):
                         "Content-Type": "application/json",
                     },
                     json=request_body,
-                    timeout=110,
+                    timeout=60,
                 )
             except requests.Timeout:
                 last_error = f"Request to {model_id} timed out."
-                if attempt < 2:
-                    time.sleep((2 ** attempt) + random.uniform(0.2, 0.8))
+                if attempt < 1:
+                    time.sleep(1.0)
                     continue
                 break
             except requests.RequestException as exc:
                 raise RuntimeError(
-                    "Network failure while sending the recording to Gemini. Please try again."
+                    "Network failure while sending the recording to Gemini."
                 ) from exc
 
             if response.status_code == 200:
@@ -508,30 +489,23 @@ def post_interaction_with_retry(key, base_request_body, candidate_models):
                     detail = response.text[:300]
 
             if response.status_code in (401, 403):
-                raise RuntimeError(
-                    "Gemini API authentication failed. Check that GEMINI_API_KEY is valid."
-                )
+                raise RuntimeError("Gemini API authentication failed. Check your key.")
             if response.status_code == 400:
-                raise RuntimeError(
-                    f"Gemini rejected the audio or request format: {detail}"
-                )
+                raise RuntimeError(f"Gemini rejected the request: {detail}")
             if response.status_code == 404:
-                last_error = f"Model '{model_id}' is unavailable on the Interactions API."
+                last_error = f"Model '{model_id}' is unavailable."
                 break
 
             if response.status_code in (429, 500, 502, 503, 504):
                 last_error = f"Gemini request failed ({response.status_code}): {detail}"
-                if attempt < 2:
-                    delay = (1.5 * (2 ** attempt)) + random.uniform(0.1, 0.7)
-                    time.sleep(delay)
+                if attempt < 1:
+                    time.sleep(1.5 + random.uniform(0.1, 0.5))
                     continue
                 break
 
             raise RuntimeError(f"Gemini request failed ({response.status_code}): {detail}")
 
-    raise RuntimeError(
-        f"{last_error} All configured Gemini Flash models are currently busy — please wait a few seconds and try again."
-    )
+    raise RuntimeError(f"{last_error} Please try again.")
 
 
 def analyse_recitation(
@@ -543,19 +517,13 @@ def analyse_recitation(
 ):
     key = api_key()
     if not key:
-        raise RuntimeError(
-            "Gemini API key missing. Add GEMINI_API_KEY to Streamlit secrets or environment variables."
-        )
+        raise RuntimeError("Gemini API key missing in Streamlit secrets.")
 
     if not audio_bytes:
-        raise RuntimeError(
-            "The audio recording is empty. Please record your recitation and try again."
-        )
+        raise RuntimeError("The audio recording is empty.")
 
     if len(audio_bytes) > 12_000_000:
-        raise RuntimeError(
-            "The recording is too large (over 12 MB). Please record a shorter passage."
-        )
+        raise RuntimeError("Recording is too large (> 12MB).")
 
     normalized_mime = normalize_audio_mime_type(mime_type)
     candidate_models = get_available_models(key)
@@ -582,40 +550,13 @@ def analyse_recitation(
 
     system_instruction = (
         f"You are {teacher_description} evaluating Qur'anic recitation with Tajweed. "
-        "Assess strictly what is audibly present in the recording against the exact Uthmani text. "
-        "Never invent or hallucinate Tajweed mistakes. "
-        "Distinguish clearly between an audible error ('review') and an unclear or unaligned segment ('uncertain'). "
-        "If audio quality, background noise, fast pace, or alignment prevents confident verification of a letter or word, "
-        "you MUST classify it as 'uncertain' with 'low' confidence rather than guessing 'good' or 'review'."
+        "Assess strictly what is audibly present against the exact Uthmani text. "
+        "Never invent mistakes. Distinguish clearly between 'review' (error) and 'uncertain'."
     )
 
     prompt = f"""
 Assess the attached Qur'an recitation audio against the exact Uthmani text supplied below.
-
 Strictness level: {strictness}.
-
-Assessment rules:
-1. Assess only what can reasonably be heard in the audio. Do not invent errors.
-2. Never mark an unclear or unverified sound as "good" or "review" — mark it "uncertain" with "low" confidence.
-3. Keep JSON compact so all words and letters fit cleanly:
-   - For letters with status "good", keep "feedback" concise (under 6 words, e.g. "Clear vowel" or "").
-   - For letters with status "review" or "uncertain", state the specific Tajweed issue in 1 short sentence (under 15 words).
-   - For word_feedback, keep "feedback" to 1 concise sentence per word.
-4. Pay attention to:
-   - Fathah, kasrah, dammah, and tanween
-   - Sukoon and shaddah
-   - Madd and its elongation proportions
-   - Ghunnah (nasalization)
-   - Qalqalah (echoing bounce on ق ط ب ج د)
-   - Noon sakinah / tanween rules (Idgham, Ikhfa, Iqlab, Izhar)
-   - Makharij (letter articulation points) and clarity
-5. Do not claim exact millisecond durations unless clearly discernible.
-6. Use the exact `word_i` and `letter_i` indexes provided below. Do not alter the Arabic text.
-
-Allowed statuses for both letters and words:
-- "good": Clearly and accurately recited according to Tajweed rules.
-- "review": Audible pronunciation or Tajweed error identified with reasonable confidence.
-- "uncertain": Audio unclear, cut off, noisy, or alignment uncertain.
 
 Expected text:
 {json.dumps(expected_text, ensure_ascii=False)}
@@ -644,7 +585,7 @@ Expected text:
         },
         "generation_config": {
             "temperature": 0.1,
-            "max_output_tokens": 16384,
+            "max_output_tokens": 8192,
         },
     }
 
@@ -653,14 +594,11 @@ Expected text:
     try:
         payload = response.json()
     except ValueError as exc:
-        raise RuntimeError(
-            "Gemini returned a non-JSON HTTP response."
-        ) from exc
+        raise RuntimeError("Gemini returned a non-JSON HTTP response.") from exc
 
     response_text, is_incomplete = extract_interaction_text(payload)
     data = parse_tajweed_json(response_text, is_incomplete=is_incomplete)
 
-    # Validate letter-level feedback indexes; unassessed letters remain ungraded/uncertain.
     letter_results = {}
     for item in data.get("letters", []):
         if not isinstance(item, dict):
@@ -693,7 +631,6 @@ Expected text:
             "confidence": confidence,
         }
 
-    # Word status defaults to "uncertain" so omitted words are NEVER silently marked "good".
     states = ["uncertain"] * len(words)
     word_feedback = {}
 
@@ -713,9 +650,7 @@ Expected text:
 
     overall_feedback = str(data.get("feedback", "")).strip()
     if not overall_feedback:
-        overall_feedback = (
-            "Assessment complete. Words marked in amber were unclear or uncertain and were not counted as errors."
-        )
+        overall_feedback = "Assessment complete."
 
     return states, letter_results, word_feedback, overall_feedback
 
@@ -842,8 +777,8 @@ body {
   margin-top: 3px;
 }
 .blind .arabic-word {
-  filter: blur(11px);
-  opacity: .25;
+  filter: blur(12px);
+  opacity: .2;
   user-select: none;
 }
 .audio-controls { display: flex; flex-direction: column; gap: 9px; }
@@ -910,7 +845,9 @@ header.appendChild(headRight);
 shell.appendChild(header);
 
 const recitationPanel = el("div", "panel");
-const arabicArea = el("div", "arabic-area" + (D.mode === "blind" && !D.states ? " blind" : ""));
+// Dynamic class injection based on Recite from Memory toggle state
+const isBlind = D.reciteFromMemory && !D.states;
+const arabicArea = el("div", "arabic-area" + (isBlind ? " blind" : ""));
 const wordNodes = [];
 
 function renderWord(word, index) {
@@ -941,8 +878,6 @@ function renderWord(word, index) {
         result.confidence ? "Confidence: " + result.confidence : ""
       ].filter(Boolean).join(" — ");
       if (detail) unit.title = detail;
-    } else if (letter.marks && letter.marks.length) {
-      unit.title = letter.marks.join(", ");
     }
 
     arabic.appendChild(unit);
@@ -956,10 +891,6 @@ function renderWord(word, index) {
 
   if (D.states && D.states[index]) {
     wrapper.classList.add(D.states[index]);
-  }
-
-  if (D.wordFeedback && D.wordFeedback[index]) {
-    wrapper.title = D.wordFeedback[index];
   }
 
   arabicArea.appendChild(wrapper);
@@ -997,20 +928,6 @@ function setActiveWord(index) {
   });
 }
 
-function loadTrack(index, autoplay) {
-  if (index < 0 || index >= tracks.length) return;
-  trackIndex = index;
-  audio.src = tracks[index];
-  audio.load();
-  trackLabel.textContent = "Playing ayah " + (D.meta.a + index) +
-    " of " + (D.meta.end || D.meta.a);
-  if (autoplay) {
-    audio.play().catch(() => {
-      trackLabel.textContent += " — press Play if playback was blocked";
-    });
-  }
-}
-
 audio.addEventListener("timeupdate", () => {
   const count = counts[trackIndex] || 0;
   if (!count || !audio.duration || !isFinite(audio.duration)) return;
@@ -1023,13 +940,18 @@ audio.addEventListener("timeupdate", () => {
 
 audio.addEventListener("ended", () => {
   if (trackIndex + 1 < tracks.length) loadTrack(trackIndex + 1, true);
-  else trackLabel.textContent = "Passage finished";
 });
 
-const trackLabel = el("div", "trackline", "");
+function loadTrack(index, autoplay) {
+  if (index < 0 || index >= tracks.length) return;
+  trackIndex = index;
+  audio.src = tracks[index];
+  audio.load();
+  if (autoplay) audio.play().catch(() => {});
+}
+
 if (tracks.length) {
   audioControls.appendChild(audio);
-  audioControls.appendChild(trackLabel);
   loadTrack(0, false);
 }
 recitationPanel.appendChild(audioControls);
@@ -1039,18 +961,13 @@ if (D.feedback) {
   const feedbackGrid = el("div", "feedback-grid");
   const judged = (D.states || []).filter(s => s === "good" || s === "review");
   const correct = (D.states || []).filter(s => s === "good").length;
-  const uncertainCount = (D.states || []).filter(s => s === "uncertain").length;
   const accuracy = judged.length ? Math.round(correct / judged.length * 100) : null;
 
   const scoreCard = el("div", "feedback-card");
   scoreCard.appendChild(el("div", "feedback-title", "Word assessment"));
-  const scoreSummary = accuracy === null
-    ? "Not enough confidently judged words for a score."
-    : accuracy + "% of confidently judged words marked correct (" + correct + "/" + judged.length + ").";
-  const fullScoreText = uncertainCount > 0
-    ? scoreSummary + " " + uncertainCount + " word(s) marked uncertain."
-    : scoreSummary;
-  scoreCard.appendChild(el("div", "feedback-text", fullScoreText));
+  scoreCard.appendChild(el("div", "feedback-text",
+    accuracy === null ? "Assessment complete." : accuracy + "% accuracy."
+  ));
   feedbackGrid.appendChild(scoreCard);
 
   const overallCard = el("div", "feedback-card");
@@ -1060,25 +977,9 @@ if (D.feedback) {
   shell.appendChild(feedbackGrid);
 }
 
-const legend = el("div", "legend");
-[
-  ["#4ade80", "Good"],
-  ["#f87171", "Review"],
-  ["#fbbf24", "Uncertain"],
-  ["#F4EBDD", "Not assessed"]
-].forEach(([colour, label]) => {
-  const item = el("span");
-  const dot = el("span", "dot");
-  dot.style.background = colour;
-  item.appendChild(dot);
-  item.appendChild(document.createTextNode(label));
-  legend.appendChild(item);
-});
-shell.appendChild(legend);
 root.appendChild(shell);
 </script>
 </body>
-</html>
 """
 
 
@@ -1092,6 +993,7 @@ def render_player(
     letter_results=None,
     word_feedback=None,
     track_word_counts=None,
+    recite_from_memory=False,
 ):
     payload = {
         "words": words,
@@ -1103,10 +1005,11 @@ def render_player(
         "letterResults": letter_results or {},
         "wordFeedback": {str(k): v for k, v in (word_feedback or {}).items()},
         "trackWordCounts": track_word_counts or [],
+        "reciteFromMemory": recite_from_memory,
     }
     serialized = json.dumps(payload, ensure_ascii=False).replace("</", "<\\/")
     html = PLAYER_HTML.replace("__DATA__", serialized)
-    components.html(html, height=680, scrolling=True)
+    components.html(html, height=620, scrolling=True)
 
 
 # ----------------------------- Session state -----------------------------
@@ -1116,8 +1019,7 @@ DEFAULTS = {
     "surah": 2,
     "ayah": 60,
     "end_ayah": 60,
-    "step": 0,
-    "count": 0,
+    "recite_from_memory": False,
     "results": {},
     "paid": [],
     "tries": 0,
@@ -1226,6 +1128,15 @@ st.session_state.strictness = sidebar.select_slider(
 )
 
 sidebar.markdown("---")
+
+# Tilawa-style "Recite from memory" interactive toggle switch
+st.session_state.recite_from_memory = sidebar.toggle(
+    "🧠 Recite from memory",
+    value=st.session_state.recite_from_memory,
+    help="When enabled, the text stays hidden so you can recite from memory and get checked."
+)
+
+sidebar.markdown("---")
 surah_input = sidebar.number_input(
     "Surah",
     min_value=1,
@@ -1265,14 +1176,10 @@ if sidebar.button("Load passage", use_container_width=True):
         surah=int(surah_input),
         ayah=int(ayah_input),
         end_ayah=int(end_input),
-        step=0,
-        count=0,
         tries=0,
         results={},
     )
     st.rerun()
-
-sidebar.caption("Passage playback supports up to 10 ayahs per selection.")
 
 
 # ----------------------------- Load passage -----------------------------
@@ -1312,7 +1219,7 @@ meta = {
 }
 
 
-# ----------------------------- Main content -----------------------------
+# ----------------------------- Main content (Live Tilawa Style) -----------------------------
 
 st.markdown(
     "<h1 style='text-align:center'>Al-Mu'allim</h1>",
@@ -1324,180 +1231,67 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-step = st.session_state.step
-step_titles = [
-    "Step 1 · Listen and repeat",
-    "Step 2 · Memorise and recite",
-    "Step 3 · Review with your teacher",
-]
-st.markdown(
-    f"<h3 style='text-align:center'>{step_titles[min(step, 2)]}</h3>",
-    unsafe_allow_html=True,
+saved_result = st.session_state.results.get(result_key)
+
+# Render player with current memorization toggle state
+render_player(
+    words,
+    mode="blind" if st.session_state.recite_from_memory else "full",
+    states=saved_result["states"] if saved_result else None,
+    audio_tracks=audio_tracks,
+    feedback=saved_result["feedback"] if saved_result else "",
+    meta=meta,
+    letter_results=saved_result["letter_results"] if saved_result else None,
+    word_feedback=saved_result.get("word_feedback", {}) if saved_result else None,
+    track_word_counts=track_word_counts,
+    recite_from_memory=st.session_state.recite_from_memory,
 )
 
+st.markdown("<br>", unsafe_allow_html=True)
 
-def listen_step():
-    render_player(
-        words,
-        "full",
-        audio_tracks=audio_tracks,
-        meta=meta,
-        track_word_counts=track_word_counts,
+# Direct record widget for immediate live submission
+left, centre, right = st.columns([1, 2, 1])
+with centre:
+    recording = st.audio_input(
+        "🎙 Record your recitation",
+        key=f"recording_{passage_key}_{st.session_state.tries}",
     )
 
-    st.markdown(
-        f"<p style='text-align:center;color:#a8987f'>"
-        f"Repetitions: {st.session_state.count} / 5</p>",
-        unsafe_allow_html=True,
-    )
+if recording is not None:
+    st.audio(recording)
 
-    col1, col2 = st.columns(2)
+    if st.button("Submit for Live Tajweed Analysis", type="primary", use_container_width=True):
+        try:
+            with st.spinner("Analyzing recitation quickly..."):
+                states, letter_results, word_feedback, feedback = analyse_recitation(
+                    recording.getvalue(),
+                    recording.type or "audio/wav",
+                    words,
+                    st.session_state.strictness,
+                    st.session_state.teacher_gender,
+                )
 
-    if col1.button("I repeated once", use_container_width=True):
-        st.session_state.count += 1
-        if st.session_state.count >= 5:
-            st.session_state.update(step=1, count=0)
-        st.rerun()
+            st.session_state.results[result_key] = {
+                "states": states,
+                "letter_results": letter_results,
+                "word_feedback": word_feedback,
+                "feedback": feedback,
+            }
 
-    if col2.button("Skip", use_container_width=True):
-        st.session_state.update(step=1, count=0)
-        st.rerun()
+            judged = [s for s in states if s in ("good", "review")]
+            correct = states.count("good")
 
+            if judged and correct / len(judged) >= 0.8 and result_key not in st.session_state.paid:
+                award_xp(st.session_state.name, 10)
+                st.session_state.paid.append(result_key)
 
-def record_step():
-    saved_result = st.session_state.results.get(result_key)
-
-    if saved_result is None:
-        render_player(
-            words,
-            "blind",
-            audio_tracks=audio_tracks,
-            meta=meta,
-            track_word_counts=track_word_counts,
-        )
-
-        st.markdown(
-            """
-            <p style='text-align:center;font-size:1.1rem;
-            color:#D4AF37;font-weight:600'>
-            🎙 Record your recitation of the selected passage
-            </p>
-            """,
-            unsafe_allow_html=True,
-        )
-
-        left, centre, right = st.columns([1, 2, 1])
-        with centre:
-            recording = st.audio_input(
-                "Record recitation",
-                key=f"recording_{passage_key}_{st.session_state.tries}",
-            )
-
-        if recording is not None:
-            st.audio(recording)
-
-            if st.button(
-                "Submit for Tajweed analysis",
-                type="primary",
-                use_container_width=True,
-            ):
-                try:
-                    with st.spinner(
-                        "Listening to your recitation and preparing feedback..."
-                    ):
-                        states, letter_results, word_feedback, feedback = (
-                            analyse_recitation(
-                                recording.getvalue(),
-                                recording.type or "audio/wav",
-                                words,
-                                st.session_state.strictness,
-                                st.session_state.teacher_gender,
-                            )
-                        )
-
-                    st.session_state.results[result_key] = {
-                        "states": states,
-                        "letter_results": letter_results,
-                        "word_feedback": word_feedback,
-                        "feedback": feedback,
-                    }
-
-                    judged = [
-                        state for state in states
-                        if state in ("good", "review")
-                    ]
-                    correct = states.count("good")
-
-                    if (
-                        judged
-                        and correct / len(judged) >= 0.8
-                        and result_key not in st.session_state.paid
-                    ):
-                        award_xp(st.session_state.name, 10)
-                        st.session_state.paid.append(result_key)
-
-                    st.session_state.step = 2
-                    st.rerun()
-
-                except Exception as error:
-                    st.error(f"Tajweed analysis failed: {error}")
-
-        st.markdown("---")
-        if st.button("← Back to Step 1 (Listen)", use_container_width=True):
-            st.session_state.step = 0
             st.rerun()
-    else:
-        st.session_state.step = 2
-        st.rerun()
 
+        except Exception as error:
+            st.error(f"Tajweed analysis failed: {error}")
 
-def review_step():
-    saved_result = st.session_state.results.get(result_key)
-    if saved_result is None:
-        st.session_state.step = 1
-        st.rerun()
-        return
-
-    render_player(
-        words,
-        "review",
-        states=saved_result["states"],
-        audio_tracks=audio_tracks,
-        feedback=saved_result["feedback"],
-        meta=meta,
-        letter_results=saved_result["letter_results"],
-        word_feedback=saved_result.get("word_feedback", {}),
-        track_word_counts=track_word_counts,
-    )
-
-    review_notes = [
-        (idx, words[idx]["ar"], saved_result["word_feedback"][idx])
-        for idx in sorted(saved_result.get("word_feedback", {}).keys())
-        if saved_result["states"][idx] in ("review", "uncertain")
-        and saved_result["word_feedback"][idx].strip()
-    ]
-
-    if review_notes:
-        with st.expander("Word-by-word Tajweed & observation notes", expanded=True):
-            for idx, arabic_word, note in review_notes:
-                status_label = saved_result["states"][idx].capitalize()
-                st.markdown(f"**Word {idx + 1} ({arabic_word}) — {status_label}:** {note}")
-
-    col1, col2 = st.columns(2)
-    if col1.button("Practice & record again", use_container_width=True):
+if saved_result:
+    if st.button("🔄 Try Again / New Recording", use_container_width=True):
         st.session_state.results.pop(result_key, None)
         st.session_state.tries += 1
-        st.session_state.step = 1
         st.rerun()
-
-    if col2.button("Listen to reference recitation", use_container_width=True):
-        st.session_state.step = 0
-        st.rerun()
-
-
-if step == 0:
-    listen_step()
-elif step == 1:
-    record_step()
-else:
-    review_step()
