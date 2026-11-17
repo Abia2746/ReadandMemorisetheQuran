@@ -1,4 +1,3 @@
-
 import base64
 import datetime
 import json
@@ -729,4 +728,3 @@ if saved:
         st.session_state.results.pop(result_key, None)
         st.session_state.tries += 1
         st.rerun()
-
