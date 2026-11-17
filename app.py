@@ -33,7 +33,6 @@ EVERY_AYAH = "https://everyayah.com/data"
 GEMINI_INTERACTIONS_URL = "https://generativelanguage.googleapis.com/v1beta/models"
 GEMINI_MODELS_URL = "https://generativelanguage.googleapis.com/v1beta/models"
 
-# Replaced the non-existent 3.8 models with actual working Google models
 GEMINI_MODELS = [
     "gemini-2.0-flash",
     "gemini-1.5-flash",
@@ -280,7 +279,6 @@ def get_available_models(api_key_value):
     returned_names = {item.get("name", "").removeprefix("models/") for item in response.json().get("models", []) if isinstance(item, dict)}
     available = [m for m in GEMINI_MODELS if m in returned_names]
     if not available:
-        # Fallback to whatever flash model is available if our hardcoded list fails
         available = [m for m in returned_names if "flash" in m]
     if not available:
         raise RuntimeError("None of the supported Gemini models are enabled.")
@@ -394,11 +392,8 @@ def tajweed_response_schema():
 
 
 def post_interaction_with_retry(key, base_request_body, candidate_models):
-    # We adapt the payload to the standard generateContent API while keeping your original retry structure
     for model_id in candidate_models:
         url = f"{GEMINI_INTERACTIONS_URL}/{model_id}:generateContent"
-        
-        # Convert custom schema structure to standard generateContent format
         body = {
             "contents": [{"parts": [{"text": base_request_body["input"][0]["text"]}, 
                                     {"inline_data": {"mime_type": base_request_body["input"][1]["mime_type"], "data": base_request_body["input"][1]["data"]}}]}],
@@ -421,7 +416,6 @@ def analyse_recitation(audio_bytes, mime_type, words, strictness, teacher_gender
     if not key: raise RuntimeError("API key missing.")
     if not audio_bytes: raise RuntimeError("Audio recording is empty.")
     
-    # COMPRESS AUDIO BEFORE SENDING (Speeds up analysis by 90%)
     audio_bytes = compress_audio(audio_bytes)
     
     normalized_mime = normalize_audio_mime_type(mime_type)
@@ -438,7 +432,6 @@ def analyse_recitation(audio_bytes, mime_type, words, strictness, teacher_gender
     }
     response = post_interaction_with_retry(key, base_request_body, candidate_models)
     
-    # Extract from standard generateContent response
     try:
         txt = "".join(p.get("text", "") for p in response.json()["candidates"][0]["content"]["parts"])
     except Exception:
@@ -573,30 +566,50 @@ if (tracks.length) {
   audio.src = tracks[0];
   audioBox.appendChild(audio);
   
+  let lastActiveIdx = -1;
+
   audio.ontimeupdate = () => {
     if (!audio.duration || isNaN(audio.duration)) return;
     
-    // EXACT TIMELINE HIGHLIGHTING
     const timeMs = audio.currentTime * 1000;
     const currentAyah = D.meta.a + trackIndex;
-    
+    let activeIdx = -1;
+
+    // 1. Primary: Exact segment timing from Quran.com API
     if (D.segments && D.segments.length > 0) {
       const active = D.segments.find(s => s.ayah === currentAyah && timeMs >= s.start && timeMs < s.end);
-      if (active) {
-        wordNodes.forEach((node, idx) => {
-          if (idx === active.word_idx) node.classList.add("active-sheikh");
-          else node.classList.remove("active-sheikh");
-        });
-        
-        // Auto-scroll to active word
-        const activeEl = wordNodes[active.word_idx];
+      if (active) activeIdx = active.word_idx;
+    }
+
+    // 2. Fallback: Linear interpolation within the current verse's words
+    if (activeIdx === -1 && D.trackWordCounts && D.trackWordCounts.length > trackIndex) {
+      let startWordIdx = 0;
+      for (let i = 0; i < trackIndex; i++) startWordIdx += D.trackWordCounts[i];
+      let wordsInThisAyah = D.trackWordCounts[trackIndex];
+
+      const pct = audio.currentTime / audio.duration;
+      const relativeIdx = Math.floor(pct * wordsInThisAyah);
+      activeIdx = startWordIdx + Math.min(relativeIdx, wordsInThisAyah - 1);
+    }
+
+    // Update classes only if the active word has changed to prevent UI freezing
+    if (activeIdx !== lastActiveIdx) {
+      wordNodes.forEach((node, idx) => {
+        if (idx === activeIdx) node.classList.add("active-sheikh");
+        else node.classList.remove("active-sheikh");
+      });
+      
+      if (activeIdx !== -1) {
+        const activeEl = wordNodes[activeIdx];
         if (activeEl) activeEl.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
       }
+      lastActiveIdx = activeIdx;
     }
   };
 
   audio.onended = () => {
     trackIndex++;
+    lastActiveIdx = -1;
     if (trackIndex < tracks.length) {
       audio.src = tracks[trackIndex];
       audio.play();
@@ -726,7 +739,6 @@ with centre:
 if recording:
     st.audio(recording)
     if st.button("Submit for Stage 3 Analysis & Flagging", type="primary", use_container_width=True):
-        # Standard spinner, no more fake progress bar freezing the app
         with st.spinner("Analyzing audio & flagging Tajweed rules..."):
             try:
                 states, l_res, w_fb, taj_assess, fb, tafsir, t_label = analyse_recitation(
