@@ -155,6 +155,15 @@ def log_recurring_error(name, rule_name):
         )
 
 
+def get_user_weaknesses(name):
+    with db() as connection:
+        rows = connection.execute(
+            "SELECT rule_name, COUNT(*) as cnt FROM error_logs WHERE name=? GROUP BY rule_name ORDER BY cnt DESC LIMIT 3",
+            (name,),
+        ).fetchall()
+    return rows
+
+
 # ----------------------------- Qur'an API -----------------------------
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -307,8 +316,9 @@ def extract_interaction_text(payload):
     return combined, (status == "incomplete")
 
 
-def parse_tajweed_json(raw_text):
+def parse_tajweed_json(raw_text, is_incomplete=False):
     cleaned = re.sub(r"^```(?:json)?|```$", "", raw_text.strip()).strip()
+
     try:
         data = json.loads(cleaned)
         if isinstance(data, dict):
@@ -316,7 +326,10 @@ def parse_tajweed_json(raw_text):
     except Exception:
         pass
 
-    letters, word_feedback, tajweed_assessments = [], [], []
+    letters = []
+    word_feedback = []
+    tajweed_assessments = []
+
     letters_match = re.search(r'"letters"\s*:\s*\[', cleaned)
     words_match = re.search(r'"word_feedback"\s*:\s*\[', cleaned)
     rules_match = re.search(r'"tajweed_assessments"\s*:\s*\[', cleaned)
@@ -345,8 +358,8 @@ def parse_tajweed_json(raw_text):
         "letters": letters,
         "word_feedback": word_feedback,
         "tajweed_assessments": tajweed_assessments,
-        "feedback": feedback_match.group(1) if feedback_match else "Evaluation complete.",
-        "teacher_label": teacher_label_match.group(1) if teacher_label_match else "Mashallah, well recited.",
+        "feedback": feedback_match.group(1) if feedback_match else "Rigorous evaluation complete.",
+        "teacher_label": teacher_label_match.group(1) if teacher_label_match else "Well recited.",
         "tafsir_summary": tafsir_match.group(1) if tafsir_match else "Contextual commentary provided.",
     }
 
@@ -416,7 +429,7 @@ def post_interaction_with_retry(key, base_request_body, candidate_models):
                     GEMINI_INTERACTIONS_URL,
                     headers={"x-goog-api-key": key, "Content-Type": "application/json"},
                     json=request_body,
-                    timeout=30,
+                    timeout=30, # Optimized timeout for speed
                 )
             except requests.Timeout:
                 last_error = f"Request to {model_id} timed out."
@@ -427,6 +440,7 @@ def post_interaction_with_retry(key, base_request_body, candidate_models):
 
             if response.status_code == 200:
                 return response
+
             if response.status_code in (429, 500, 502, 503, 504):
                 if attempt < 1:
                     time.sleep(0.8)
@@ -443,16 +457,17 @@ def analyse_recitation(audio_bytes, mime_type, words, strictness, teacher_gender
 
     normalized_mime = normalize_audio_mime_type(mime_type)
     candidate_models = get_available_models(key)
+
+    teacher_desc = "master Qur'an scholar and Tajweed authority"
     expected_text = [{"word_i": i, "ayah": w["ayah"], "text": w["ar"]} for i, w in enumerate(words)]
 
     system_instruction = (
-        f"You are a master Qur'an teacher ({teacher_gender}). Evaluate recitation with professional academic precision. "
-        "If speech is unclear, set teacher_label to 'I couldn\\'t hear you clearly. Please repeat.' "
-        "If there are errors, set teacher_label to encouraing corrective feedback. "
-        "Return concise JSON assessing Tajweed rules, word feedback, tafsir summary, and teacher label."
+        f"You are {teacher_desc}. Evaluate recitation with professional academic precision. "
+        "Return concise, high-yield JSON assessing Tajweed rules, word feedback, tafsir summary, and teacher label."
     )
 
     prompt = f"Evaluate this recitation against the Uthmani text. Strictness: {strictness}.\nExpected words: {json.dumps(expected_text, ensure_ascii=False)}"
+
     encoded_audio = base64.b64encode(audio_bytes).decode("ascii")
 
     base_request_body = {
@@ -469,13 +484,13 @@ def analyse_recitation(audio_bytes, mime_type, words, strictness, teacher_gender
         },
         "generation_config": {
             "temperature": 0.1,
-            "max_output_tokens": 2048,
+            "max_output_tokens": 2048, # Optimized for 3-5s fast generation
         },
     }
 
     response = post_interaction_with_retry(key, base_request_body, candidate_models)
     response_text, is_incomplete = extract_interaction_text(response.json())
-    data = parse_tajweed_json(response_text)
+    data = parse_tajweed_json(response_text, is_incomplete=is_incomplete)
 
     states = ["uncertain"] * len(words)
     for item in data.get("word_feedback", []):
@@ -489,7 +504,7 @@ def analyse_recitation(audio_bytes, mime_type, words, strictness, teacher_gender
         data.get("tajweed_assessments", []),
         data.get("feedback", "Evaluation complete."),
         data.get("tafsir_summary", "Contextual wisdom provided."),
-        data.get("teacher_label", "Mashallah, beautiful recitation."),
+        data.get("teacher_label", "Well recited."),
     )
 
 
@@ -612,6 +627,7 @@ const audioControls = el("div", "audio-controls");
 const audio = document.createElement("audio");
 audio.controls = true;
 const tracks = Array.isArray(D.audio) ? D.audio : [];
+let trackIndex = 0;
 if (tracks.length) {
   audio.src = tracks[0];
   audioControls.appendChild(audio);
@@ -635,55 +651,11 @@ def render_player(words, mode, states=None, audio_tracks=None, feedback="", meta
 
 # ----------------------------- Session & UI -----------------------------
 
-DEFAULTS = {"name": "", "surah": 2, "ayah": 60, "end_ayah": 60, "recite_from_memory": False, "results": {}, "paid": [], "tries": 0, "teacher_gender": "Male", "strictness": "Balanced", "theme": "Starry Night", "teacher_label": "I'm listening to your recitation...", "scholar_chat": []}
+DEFAULTS = {"name": "", "surah": 2, "ayah": 60, "end_ayah": 60, "recite_from_memory": False, "results": {}, "paid": [], "tries": 0, "teacher_gender": "Male", "strictness": "Balanced", "theme": "Starry Night", "teacher_label": "I'm listening...", "scholar_chat": []}
 for k, v in DEFAULTS.items(): st.session_state.setdefault(k, v)
 
 theme_colours = {"Starry Night": "#0a0f1c", "Brown": "#1A1510", "Black": "#000000"}
-st.markdown(f"""
-<style>
-.stApp {{ background: {theme_colours.get(st.session_state.theme, '#0a0f1c')}; color: #E8D5B5; font-family: Inter, sans-serif; }}
-h1, h2, h3, h4 {{ color: #D4AF37 !important; }}
-.teacher-container {{
-    display: flex;
-    align-items: center;
-    background: rgba(30,25,20,0.85);
-    border: 1px solid rgba(212,175,55,0.3);
-    border-radius: 20px;
-    padding: 16px 20px;
-    gap: 20px;
-    margin-bottom: 20px;
-    box-shadow: 0 8px 24px rgba(0,0,0,0.3);
-}}
-.teacher-avatar {{
-    width: 90px;
-    height: 90px;
-    border-radius: 50%;
-    object-fit: cover;
-    border: 2px solid #D4AF37;
-    box-shadow: 0 0 12px rgba(212,175,55,0.4);
-}}
-.teacher-bubble {{
-    flex-grow: 1;
-    background: rgba(255,255,255,0.04);
-    border: 1px solid rgba(255,255,255,0.08);
-    border-radius: 14px;
-    padding: 12px 16px;
-}}
-.teacher-name {{
-    color: #D4AF37;
-    font-weight: 700;
-    font-size: 0.95rem;
-    margin-bottom: 4px;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-}}
-.teacher-speech {{
-    color: #F3E5AB;
-    font-size: 1.05rem;
-    font-style: italic;
-}}
-</style>
-""", unsafe_allow_html=True)
+st.markdown(f"<style>.stApp {{ background: {theme_colours.get(st.session_state.theme, '#0a0f1c')}; color: #E8D5B5; font-family: Inter, sans-serif; }} h1, h2, h3, h4 {{ color: #D4AF37 !important; }} .teacher-badge {{ background: rgba(212, 175, 55, 0.12); border: 1px solid rgba(212, 175, 55, 0.35); border-radius: 12px; padding: 10px; text-align: center; color: #F3E5AB; font-weight: 600; margin-bottom: 16px; }}</style>", unsafe_allow_html=True)
 
 if not st.session_state.name:
     st.markdown("<div style='text-align:center;padding-top:12vh'><h1>Al-Mu'allim</h1><p>Advanced Qur'an Academy</p></div>", unsafe_allow_html=True)
@@ -698,7 +670,7 @@ if not st.session_state.name:
 sidebar = st.sidebar
 sidebar.markdown(f"<h2 style='text-align:center'>{st.session_state.name}</h2>", unsafe_allow_html=True)
 st.session_state.theme = sidebar.selectbox("Theme", ["Starry Night", "Brown", "Black"], index=["Starry Night", "Brown", "Black"].index(st.session_state.theme))
-st.session_state.teacher_gender = sidebar.selectbox("Teacher Persona", ["Male", "Female"])
+st.session_state.teacher_gender = sidebar.selectbox("Scholar voice", ["Male", "Female"])
 st.session_state.strictness = sidebar.select_slider("Strictness", ["Lenient", "Balanced", "Strict"], value=st.session_state.strictness)
 sidebar.markdown("---")
 st.session_state.recite_from_memory = sidebar.toggle("🧠 Recite from memory", value=st.session_state.recite_from_memory)
@@ -710,7 +682,7 @@ end_ayah = sidebar.number_input("Ending ayah", int(ayah), min(surah_max, int(aya
 reciter = sidebar.selectbox("Reciter", list(RECITERS.keys()))
 
 if sidebar.button("Load passage", use_container_width=True):
-    st.session_state.update(surah=int(surah), ayah=int(ayah), end_ayah=int(end_ayah), tries=0, results={}, teacher_label="I'm listening to your recitation...")
+    st.session_state.update(surah=int(surah), ayah=int(ayah), end_ayah=int(end_ayah), tries=0, results={}, teacher_label="I'm listening...")
     st.rerun()
 
 passage_key = f"{surah}:{ayah}-{end_ayah}"
@@ -728,20 +700,7 @@ meta = {"s": surah, "a": ayah, "end": end_ayah, "xp": xp, "streak": streak}
 
 st.markdown("<h1 style='text-align:center'>Al-Mu'allim</h1>", unsafe_allow_html=True)
 st.markdown(f"<p style='text-align:center;color:#a8987f'>Surah {surah} · Ayahs {ayah}–{end_ayah}</p>", unsafe_allow_html=True)
-
-# Teacher Avatar & Live Status Display (Omar for Male, Noor for Female matching uploaded photo references)
-teacher_name = "Ustadh Omar" if st.session_state.teacher_gender == "Male" else "Ustadha Noor"
-avatar_url = "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150&auto=format&fit=crop&q=80" if st.session_state.teacher_gender == "Male" else "https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=150&auto=format&fit=crop&q=80"
-
-st.markdown(f"""
-<div class="teacher-container">
-    <img src="{avatar_url}" class="teacher-avatar" alt="Teacher Avatar">
-    <div class="teacher-bubble">
-        <div class="teacher-name">💬 {teacher_name}</div>
-        <div class="teacher-speech">"{st.session_state.teacher_label}"</div>
-    </div>
-</div>
-""", unsafe_allow_html=True)
+st.markdown(f"<div class='teacher-badge'>💬 Master Teacher: <em>\"{st.session_state.teacher_label}\"</em></div>", unsafe_allow_html=True)
 
 saved = st.session_state.results.get(result_key)
 render_player(words, "blind" if st.session_state.recite_from_memory else "full", states=saved["states"] if saved else None, audio_tracks=audio_tracks, feedback=saved["feedback"] if saved else "", meta=meta, letter_results=saved["letter_results"] if saved else None, word_feedback=saved.get("word_feedback", {}) if saved else None, track_word_counts=track_word_counts, recite_from_memory=st.session_state.recite_from_memory)
@@ -749,13 +708,13 @@ render_player(words, "blind" if st.session_state.recite_from_memory else "full",
 st.markdown("<br>", unsafe_allow_html=True)
 _, centre, _ = st.columns([1, 2, 1])
 with centre:
-    recording = st.audio_input("🎙 Record live recitation", key=f"rec_{passage_key}_{st.session_state.tries}")
+    recording = st.audio_input("🎙 Record recitation", key=f"rec_{passage_key}_{st.session_state.tries}")
 
 if recording:
     st.audio(recording)
-    if st.button("Submit for Live Tajweed Assessment", type="primary", use_container_width=True):
+    if st.button("Submit for Fast Masterclass Analysis", type="primary", use_container_width=True):
         try:
-            with st.spinner("Analyzing live recitation & Tajweed rules..."):
+            with st.spinner("Analyzing recitation rapidly (~3s)..."):
                 states, l_res, w_fb, taj_assess, fb, tafsir, t_label = analyse_recitation(
                     recording.getvalue(), recording.type or "audio/wav", words, st.session_state.strictness, st.session_state.teacher_gender
                 )
