@@ -538,18 +538,16 @@ body { margin: 0; color: #E8D5B5; background: transparent; font-family: Inter, s
 .arabic-area { direction: rtl; text-align: center; min-height: 210px; max-height: 360px; overflow-y: auto; display: flex; flex-wrap: wrap; justify-content: center; align-content: flex-start; gap: 13px 5px; padding: 10px 5px 18px; }
 .word { display: inline-flex; flex-direction: column; align-items: center; padding: 5px 7px; border: 1px solid transparent; border-radius: 12px; min-width: 42px; }
 .word.active { background: rgba(212,175,55,.16); border-color: rgba(212,175,55,.65); box-shadow: 0 0 18px rgba(212,175,55,.16); }
-.word.good { background: rgba(74,222,128,.09); }
-.word.review { background: rgba(248,113,113,.10); }
-.word.uncertain { background: rgba(251,191,36,.07); }
+.word.good { background: rgba(74,222,128,.15); border-color: #4ade80; }
+.word.review { background: rgba(248,113,113,.15); border-color: #f87171; }
 .arabic-word { font-family: 'Amiri Quran', serif; font-size: 34px; line-height: 1.9; direction: rtl; white-space: nowrap; }
 .letter { display: inline-flex; flex-direction: column; align-items: center; vertical-align: middle; border-radius: 5px; margin: 0 1px; padding: 0 1px; }
-.letter.good { color: #4ade80; }
-.letter.review { color: #f87171; text-decoration: underline wavy #f87171; }
+.letter.good { color: #4ade80; text-shadow: 0 0 8px rgba(74,222,128,0.4); }
+.letter.review { color: #f87171; text-decoration: underline wavy #f87171; text-shadow: 0 0 8px rgba(248,113,113,0.4); }
 .letter.uncertain { color: #fbbf24; }
 .letter.ungraded { color: #F4EBDD; }
 .letter-char { line-height: 1.35; }
 .mark-label { direction: ltr; font: 8px Inter, sans-serif; color: #D4AF37; opacity: .9; white-space: nowrap; line-height: 1.2; }
-.translit { display: none !important; }
 .translation { color: #a8987f; font-size: 10px; max-width: 125px; text-align: center; line-height: 1.4; margin-top: 3px; }
 .blind .arabic-word { filter: blur(12px); opacity: .2; user-select: none; }
 .audio-controls { display: flex; flex-direction: column; gap: 9px; }
@@ -729,13 +727,14 @@ meta = {"s": surah, "a": ayah, "end": end_ayah, "xp": xp, "streak": streak}
 st.markdown("<h1 style='text-align:center'>Al-Mu'allim</h1>", unsafe_allow_html=True)
 st.markdown(f"<p style='text-align:center;color:#a8987f'>Surah {surah} · Ayahs {ayah}–{end_ayah}</p>", unsafe_allow_html=True)
 
-# Teacher Avatar & Live Status Display (Omar for Male, Noor for Female matching uploaded photo references)
+# Teacher Avatar & Live Status Display pointing directly to your exact GitHub images:
+# IMG_6147.jpeg for Male (Ustadh Omar), IMG_6146.jpeg for Female (Ustadha Noor)
 teacher_name = "Ustadh Omar" if st.session_state.teacher_gender == "Male" else "Ustadha Noor"
-avatar_url = "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150&auto=format&fit=crop&q=80" if st.session_state.teacher_gender == "Male" else "https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=150&auto=format&fit=crop&q=80"
+avatar_filename = "IMG_6147.jpeg" if st.session_state.teacher_gender == "Male" else "IMG_6146.jpeg"
 
 st.markdown(f"""
 <div class="teacher-container">
-    <img src="{avatar_url}" class="teacher-avatar" alt="Teacher Avatar">
+    <img src="{avatar_filename}" class="teacher-avatar" alt="Teacher Avatar">
     <div class="teacher-bubble">
         <div class="teacher-name">💬 {teacher_name}</div>
         <div class="teacher-speech">"{st.session_state.teacher_label}"</div>
@@ -749,13 +748,13 @@ render_player(words, "blind" if st.session_state.recite_from_memory else "full",
 st.markdown("<br>", unsafe_allow_html=True)
 _, centre, _ = st.columns([1, 2, 1])
 with centre:
-    recording = st.audio_input("🎙 Record live recitation", key=f"rec_{passage_key}_{st.session_state.tries}")
+    recording = st.audio_input("🎙 Record your recitation", key=f"rec_{passage_key}_{st.session_state.tries}")
 
 if recording:
     st.audio(recording)
     if st.button("Submit for Live Tajweed Assessment", type="primary", use_container_width=True):
         try:
-            with st.spinner("Analyzing live recitation & Tajweed rules..."):
+            with st.spinner("Analyzing recitation & highlighting vowels..."):
                 states, l_res, w_fb, taj_assess, fb, tafsir, t_label = analyse_recitation(
                     recording.getvalue(), recording.type or "audio/wav", words, st.session_state.strictness, st.session_state.teacher_gender
                 )
