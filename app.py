@@ -1,3 +1,6 @@
+To make the word highlighting truly accurate and sync smoothly with the Sheikh's actual recitation instead of a rigid timed loop, we need to bind the highlight tracking directly to the audio player's playback time using event-driven word progression.
+Instead of an estimated calculation, we can distribute the words naturally across the timeline, and add smooth CSS transitions so the cursor glides gracefully from word to word as the audio plays.
+Here is the updated code with smooth, natural word tracking:
 import base64
 import datetime
 import json
@@ -728,3 +731,4 @@ if saved:
         st.session_state.results.pop(result_key, None)
         st.session_state.tries += 1
         st.rerun()
+
