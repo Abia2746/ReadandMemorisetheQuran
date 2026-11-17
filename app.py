@@ -408,7 +408,7 @@ def ask_teacher_scholar(query, surah, start_ayah, end_ayah):
     return "Scholar consultation currently unavailable."
 
 
-# ----------------------------- Player HTML with Accurate Syllable-Weighted Audio Sync -----------------------------
+# ----------------------------- Player HTML with Smooth Custom Easing Sync -----------------------------
 
 PLAYER_HTML = r"""
 <!DOCTYPE html>
@@ -426,8 +426,8 @@ body { margin: 0; color: #E8D5B5; background: transparent; font-family: Inter, s
 .meta { color: #a8987f; font-size: 12px; margin-top: 4px; }
 .pill { border: 1px solid rgba(212,175,55,.3); color: #D4AF37; border-radius: 99px; padding: 6px 10px; font-size: 12px; }
 .arabic-area { direction: rtl; text-align: center; min-height: 210px; max-height: 360px; overflow-y: auto; display: flex; flex-wrap: wrap; justify-content: center; align-content: flex-start; gap: 14px 6px; padding: 10px 5px 18px; }
-.word { display: inline-flex; flex-direction: column; align-items: center; padding: 6px 8px; border: 1px solid transparent; border-radius: 12px; min-width: 42px; transition: all 0.15s ease-out; }
-.word.active-sheikh { background: rgba(212,175,55,0.32); border-color: #D4AF37; box-shadow: 0 0 20px rgba(212,175,55,0.6); transform: scale(1.08); }
+.word { display: inline-flex; flex-direction: column; align-items: center; padding: 6px 8px; border: 1px solid transparent; border-radius: 12px; min-width: 42px; transition: background 0.3s cubic-bezier(0.4, 0, 0.2, 1), transform 0.3s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
+.word.active-sheikh { background: rgba(212,175,55,0.35); border-color: #D4AF37; box-shadow: 0 0 22px rgba(212,175,55,0.7); transform: scale(1.08); }
 .arabic-word { font-family: 'Amiri Quran', serif; font-size: 36px; line-height: 1.9; direction: rtl; white-space: nowrap; }
 .letter { display: inline-flex; flex-direction: column; align-items: center; vertical-align: middle; border-radius: 6px; margin: 0 1px; padding: 0 2px; }
 .letter.good { color: #4ade80 !important; text-shadow: 0 0 10px rgba(74,222,128,0.6); background: rgba(74,222,128,0.1); }
@@ -457,7 +457,7 @@ const header = el("div", "panel topline");
 const headLeft = el("div");
 headLeft.appendChild(el("div", "brand", "Al-Mu'allim Academy · Stage 1 & 3"));
 const endAyah = D.meta.end && D.meta.end !== D.meta.a ? "–" + D.meta.end : "";
-headLeft.appendChild(el("div", "meta", "Surah " + D.meta.s + " · Ayahs " + D.meta.a + (endAyah)));
+headLeft.appendChild(el("meta", "meta", "Surah " + D.meta.s + " · Ayahs " + D.meta.a + (endAyah)));
 header.appendChild(headLeft);
 
 const headRight = el("div", "topline");
@@ -470,8 +470,15 @@ const recitationPanel = el("div", "panel");
 const arabicArea = el("div", "arabic-area");
 const wordNodes = [];
 
-// Compute weighted word durations based on letter and character length so longer words hold highlight longer
-const wordWeights = D.words.map(w => Math.max(1, (w.ar || "").length));
+// Natural phonetic weight distribution: longer words or words with madd / shaddah hold slightly longer duration
+const wordWeights = D.words.map(w => {
+  let len = (w.ar || "").length;
+  // Boost weight for words containing elongated madd or shaddah marks for natural pacing
+  if ((w.ar || "").includes("َ") || (w.ar || "").includes("ُ") || (w.ar || "").includes("ِ") || (w.ar || "").includes("ّ")) {
+    len += 1.5;
+  }
+  return Math.max(1.5, len);
+});
 const totalWeight = wordWeights.reduce((a, b) => a + b, 0);
 
 D.words.forEach((word, index) => {
@@ -504,14 +511,11 @@ if (tracks.length) {
   audio.src = tracks[0];
   audioBox.appendChild(audio);
   
-  // Accurate weighted cumulative timing sync for Sheikh's voice
   audio.ontimeupdate = () => {
     if (!audio.duration || isNaN(audio.duration)) return;
-    const currentTime = audio.currentTime;
-    const duration = audio.duration;
-    const audioProgress = currentTime / duration;
+    const audioProgress = audio.currentTime / audio.duration;
     
-    // Convert linear progress into weighted cumulative word progress
+    // Smooth phonetic progression mapping
     let accumulatedWeight = 0;
     const targetWeightSum = audioProgress * totalWeight;
     let activeIdx = 0;
@@ -635,7 +639,7 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-# Render Player with Weighted Audio-Sync Highlighting
+# Render Player with Smooth Phonetic Weighted Sync
 saved = st.session_state.results.get(result_key)
 render_player(
     words, "blind" if st.session_state.recite_from_memory else "full",
