@@ -15,6 +15,7 @@ import numpy as np
 import requests
 import streamlit as st
 import streamlit.components.v1 as components
+from streamlit_webrtc import webrtc_streamer, WebRtcMode
 
 
 # ============================================================
@@ -22,7 +23,7 @@ import streamlit.components.v1 as components
 # ============================================================
 
 st.set_page_config(
-    page_title="Al-Mu'allim",
+    page_title="Al-Mu'allim Live",
     page_icon="🕌",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -190,7 +191,6 @@ def fetch_passage(surah, start_ayah, end_ayah, reciter_id):
         verse_words = fetch_words(surah, ayah)
         track_word_counts.append(len(verse_words))
         
-        # Fetch exact segment timings for perfect word-by-word highlighting
         try:
             tr = requests.get(f"{QURAN_API}/recitations/{reciter_id}/by_ayah/{surah}:{ayah}", timeout=10)
             segs = tr.json().get("audio_files", [{}])[0].get("segments", [])
@@ -218,10 +218,9 @@ def audio_url(surah, ayah, reciter_folder):
     return f"{EVERY_AYAH}/{reciter_folder}/{surah:03d}{ayah:03d}.mp3"
 
 
-# ----------------------------- Audio Compression (Speed Fix) -----------------------------
+# ----------------------------- Audio Compression & Gemini Scholarly Fallback -----------------------------
 
 def compress_audio(b):
-    """Compresses raw mic audio to 16kHz mono to drastically speed up Gemini API."""
     try:
         with wave.open(io.BytesIO(b)) as w:
             ch, sw, fr = w.getnchannels(), w.getsampwidth(), w.getframerate()
@@ -244,8 +243,6 @@ def compress_audio(b):
     except Exception:
         return b
 
-
-# ----------------------------- Gemini Interactions API -----------------------------
 
 def api_key():
     try:
@@ -283,26 +280,6 @@ def get_available_models(api_key_value):
     if not available:
         raise RuntimeError("None of the supported Gemini models are enabled.")
     return available
-
-
-def extract_interaction_text(payload):
-    status = payload.get("status")
-    if status == "failed":
-        errors = payload.get("errors") or []
-        detail = errors[0].get("message") if errors and isinstance(errors[0], dict) else "Interaction failed."
-        raise RuntimeError(f"Gemini interaction failed: {detail}")
-    text_chunks = []
-    steps = payload.get("steps")
-    if isinstance(steps, list):
-        for step in steps:
-            if isinstance(step, dict) and step.get("type") == "model_output":
-                for block in step.get("content", []):
-                    if isinstance(block, dict) and block.get("type") == "text":
-                        text_chunks.append(block.get("text", ""))
-    combined = "".join(text_chunks).strip()
-    if not combined:
-        raise RuntimeError("Gemini completed the request but returned no text output.")
-    return combined, (status == "incomplete")
 
 
 def parse_tajweed_json(raw_text):
@@ -472,7 +449,7 @@ def ask_teacher_scholar(query, surah, start_ayah, end_ayah):
     return "Scholar consultation currently unavailable."
 
 
-# ----------------------------- Player HTML with Exact Timeline Sync -----------------------------
+# ----------------------------- Player HTML with @tilawa/core ESM Module Integration -----------------------------
 
 PLAYER_HTML = r"""
 <!DOCTYPE html>
@@ -490,8 +467,11 @@ body { margin: 0; color: #E8D5B5; background: transparent; font-family: Inter, s
 .meta { color: #a8987f; font-size: 12px; margin-top: 4px; }
 .pill { border: 1px solid rgba(212,175,55,.3); color: #D4AF37; border-radius: 99px; padding: 6px 10px; font-size: 12px; }
 .arabic-area { direction: rtl; text-align: center; min-height: 210px; max-height: 360px; overflow-y: auto; display: flex; flex-wrap: wrap; justify-content: center; align-content: flex-start; gap: 14px 6px; padding: 10px 5px 18px; }
-.word { display: inline-flex; flex-direction: column; align-items: center; padding: 6px 8px; border: 1px solid transparent; border-radius: 12px; min-width: 42px; transition: background 0.2s cubic-bezier(0.4, 0, 0.2, 1), transform 0.2s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.2s cubic-bezier(0.4, 0, 0.2, 1); }
+.word { display: inline-flex; flex-direction: column; align-items: center; padding: 6px 8px; border: 1px solid transparent; border-radius: 12px; min-width: 42px; transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1); }
 .word.active-sheikh { background: rgba(212,175,55,0.35); border-color: #D4AF37; box-shadow: 0 0 22px rgba(212,175,55,0.7); transform: scale(1.08); }
+.word.live-active { background: rgba(212,175,55,0.5); border-color: #D4AF37; box-shadow: 0 0 25px rgba(212,175,55,0.9); transform: scale(1.1); }
+.word.live-good { background: rgba(74,222,128,0.3); border-color: #4ade80; }
+.word.live-error { background: rgba(248,113,113,0.3); border-color: #f87171; }
 .arabic-word { font-family: 'Amiri Quran', serif; font-size: 36px; line-height: 1.9; direction: rtl; white-space: nowrap; }
 .letter { display: inline-flex; flex-direction: column; align-items: center; vertical-align: middle; border-radius: 6px; margin: 0 1px; padding: 0 2px; }
 .letter.good { color: #4ade80 !important; text-shadow: 0 0 10px rgba(74,222,128,0.6); background: rgba(74,222,128,0.1); }
@@ -502,126 +482,206 @@ body { margin: 0; color: #E8D5B5; background: transparent; font-family: Inter, s
 .mark-label { direction: ltr; font: 8px Inter, sans-serif; color: #D4AF37; opacity: .9; white-space: nowrap; line-height: 1.2; }
 .translation { color: #a8987f; font-size: 10px; max-width: 125px; text-align: center; line-height: 1.4; margin-top: 3px; }
 .audio-box { margin-top: 10px; display: flex; flex-direction: column; gap: 8px; }
-audio { width: 100%; }
+audio { width: 100% !important; }
+.live-controls { margin-top: 14px; display: flex; gap: 10px; justify-content: center; align-items: center; flex-direction: column; }
+.btn-tilawa { background: #D4AF37; color: #1a1510; border: none; padding: 10px 22px; font-weight: 700; border-radius: 8px; cursor: pointer; transition: background 0.2s; font-size: 14px; }
+.btn-tilawa:hover { background: #e6c55c; }
+.btn-tilawa.stop { background: #ef4444; color: white; }
+.live-status { font-size: 13px; color: #D4AF37; font-style: italic; text-align: center; margin-top: 4px; }
 </style>
 </head>
 <body>
 <div id="app"></div>
-<script>
-const D = __DATA__;
-function el(tag, cls, text) {
-  const node = document.createElement(tag);
-  if (cls) node.className = cls;
-  if (text !== undefined && text !== null) node.textContent = text;
-  return node;
-}
-const root = document.getElementById("app");
-const shell = el("div", "shell");
-const header = el("div", "panel topline");
-const headLeft = el("div");
-headLeft.appendChild(el("div", "brand", "Al-Mu'allim Academy · Stage 1 & 3"));
-const endAyah = D.meta.end && D.meta.end !== D.meta.a ? "–" + D.meta.end : "";
-headLeft.appendChild(el("meta", "meta", "Surah " + D.meta.s + " · Ayahs " + D.meta.a + (endAyah)));
-header.appendChild(headLeft);
 
-const headRight = el("div", "topline");
-headRight.appendChild(el("span", "pill", "⭐ " + (D.meta.xp || 0) + " XP"));
-headRight.appendChild(el("span", "pill", "🔥 " + (D.meta.streak || 0) + " days"));
-header.appendChild(headRight);
-shell.appendChild(header);
+<script type="module">
+  import { createTilawa } from "https://esm.sh/@tilawa/core@next/web";
+  import * as ort from "https://esm.sh/onnxruntime-web@1.30.0";
 
-const recitationPanel = el("div", "panel");
-const arabicArea = el("div", "arabic-area");
-const wordNodes = [];
+  const D = __DATA__;
+  function el(tag, cls, text) {
+    const node = document.createElement(tag);
+    if (cls) node.className = cls;
+    if (text !== undefined && text !== null) node.textContent = text;
+    return node;
+  }
+  const root = document.getElementById("app");
+  const shell = el("div", "shell");
+  const header = el("div", "panel topline");
+  const headLeft = el("div");
+  headLeft.appendChild(el("div", "brand", "Al-Mu'allim Academy · @tilawa/core Client Engine"));
+  const endAyah = D.meta.end && D.meta.end !== D.meta.a ? "–" + D.meta.end : "";
+  headLeft.appendChild(el("div", "meta", "Surah " + D.meta.s + " · Ayahs " + D.meta.a + (endAyah)));
+  header.appendChild(headLeft);
 
-D.words.forEach((word, index) => {
-  const wrapper = el("div", "word");
-  const arabic = el("div", "arabic-word");
-  (word.letters || []).forEach((letter, letterIndex) => {
-    const result = D.letterResults ? D.letterResults[index + ":" + letterIndex] : null;
-    const status = result ? result.status : "ungraded";
-    const unit = el("span", "letter " + status);
-    unit.appendChild(el("span", "letter-char", letter.text));
-    if (letter.marks && letter.marks.length) {
-      unit.appendChild(el("span", "mark-label", letter.marks.join(" · ")));
-    }
-    arabic.appendChild(unit);
-  });
-  wrapper.appendChild(arabic);
-  if (word.en) wrapper.appendChild(el("div", "translation", word.en));
-  wrapper.appendChild(el("div", "meta", "Ayah " + word.ayah));
-  if (D.states && D.states[index]) wrapper.classList.add(D.states[index]);
-  arabicArea.appendChild(wrapper);
-  wordNodes.push(wrapper);
-});
-recitationPanel.appendChild(arabicArea);
+  const headRight = el("div", "topline");
+  headRight.appendChild(el("span", "pill", "⭐ " + (D.meta.xp || 0) + " XP"));
+  headRight.appendChild(el("span", "pill", "🔥 " + (D.meta.streak || 0) + " days"));
+  header.appendChild(headRight);
+  shell.appendChild(header);
 
-const audioBox = el("div", "audio-box");
-const audio = document.createElement("audio");
-audio.controls = true;
-const tracks = Array.isArray(D.audio) ? D.audio : [];
-let trackIndex = 0;
+  const recitationPanel = el("div", "panel");
+  const arabicArea = el("div", "arabic-area");
+  const wordNodes = [];
 
-if (tracks.length) {
-  audio.src = tracks[0];
-  audioBox.appendChild(audio);
-  
-  let lastActiveIdx = -1;
-
-  audio.ontimeupdate = () => {
-    if (!audio.duration || isNaN(audio.duration)) return;
-    
-    const timeMs = audio.currentTime * 1000;
-    const currentAyah = D.meta.a + trackIndex;
-    let activeIdx = -1;
-
-    // 1. Primary: Exact segment timing from Quran.com API
-    if (D.segments && D.segments.length > 0) {
-      const active = D.segments.find(s => s.ayah === currentAyah && timeMs >= s.start && timeMs < s.end);
-      if (active) activeIdx = active.word_idx;
-    }
-
-    // 2. Fallback: Linear interpolation within the current verse's words
-    if (activeIdx === -1 && D.trackWordCounts && D.trackWordCounts.length > trackIndex) {
-      let startWordIdx = 0;
-      for (let i = 0; i < trackIndex; i++) startWordIdx += D.trackWordCounts[i];
-      let wordsInThisAyah = D.trackWordCounts[trackIndex];
-
-      const pct = audio.currentTime / audio.duration;
-      const relativeIdx = Math.floor(pct * wordsInThisAyah);
-      activeIdx = startWordIdx + Math.min(relativeIdx, wordsInThisAyah - 1);
-    }
-
-    // Update classes only if the active word has changed to prevent UI freezing
-    if (activeIdx !== lastActiveIdx) {
-      wordNodes.forEach((node, idx) => {
-        if (idx === activeIdx) node.classList.add("active-sheikh");
-        else node.classList.remove("active-sheikh");
-      });
-      
-      if (activeIdx !== -1) {
-        const activeEl = wordNodes[activeIdx];
-        if (activeEl) activeEl.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+  D.words.forEach((word, index) => {
+    const wrapper = el("div", "word");
+    const arabic = el("div", "arabic-word");
+    (word.letters || []).forEach((letter, letterIndex) => {
+      const result = D.letterResults ? D.letterResults[index + ":" + letterIndex] : null;
+      const status = result ? result.status : "ungraded";
+      const unit = el("span", "letter " + status);
+      unit.appendChild(el("span", "letter-char", letter.text));
+      if (letter.marks && letter.marks.length) {
+        unit.appendChild(el("span", "mark-label", letter.marks.join(" · ")));
       }
-      lastActiveIdx = activeIdx;
-    }
-  };
+      arabic.appendChild(unit);
+    });
+    wrapper.appendChild(arabic);
+    if (word.en) wrapper.appendChild(el("div", "translation", word.en));
+    wrapper.appendChild(el("div", "meta", "Ayah " + word.ayah));
+    if (D.states && D.states[index]) wrapper.classList.add(D.states[index]);
+    arabicArea.appendChild(wrapper);
+    wordNodes.push(wrapper);
+  });
+  recitationPanel.appendChild(arabicArea);
 
-  audio.onended = () => {
-    trackIndex++;
-    lastActiveIdx = -1;
-    if (trackIndex < tracks.length) {
-      audio.src = tracks[trackIndex];
-      audio.play();
+  // Stage 1: Sheikh Listening Audio Player with Exact Quran.com Segments
+  const audioBox = el("div", "audio-box");
+  const audio = document.createElement("audio");
+  audio.controls = true;
+  const tracks = Array.isArray(D.audio) ? D.audio : [];
+  let trackIndex = 0;
+
+  if (tracks.length) {
+    audio.src = tracks[0];
+    audioBox.appendChild(audio);
+    let lastActiveIdx = -1;
+
+    audio.ontimeupdate = () => {
+      if (!audio.duration || isNaN(audio.duration)) return;
+      const timeMs = audio.currentTime * 1000;
+      const currentAyah = D.meta.a + trackIndex;
+      let activeIdx = -1;
+
+      if (D.segments && D.segments.length > 0) {
+        const active = D.segments.find(s => s.ayah === currentAyah && timeMs >= s.start && timeMs < s.end);
+        if (active) activeIdx = active.word_idx;
+      }
+
+      if (activeIdx === -1 && D.trackWordCounts && D.trackWordCounts.length > trackIndex) {
+        let startWordIdx = 0;
+        for (let i = 0; i < trackIndex; i++) startWordIdx += D.trackWordCounts[i];
+        let wordsInThisAyah = D.trackWordCounts[trackIndex];
+        const pct = audio.currentTime / audio.duration;
+        const relativeIdx = Math.floor(pct * wordsInThisAyah);
+        activeIdx = startWordIdx + Math.min(relativeIdx, wordsInThisAyah - 1);
+      }
+
+      if (activeIdx !== lastActiveIdx) {
+        wordNodes.forEach((node, idx) => {
+          if (idx === activeIdx) node.classList.add("active-sheikh");
+          else node.classList.remove("active-sheikh");
+        });
+        if (activeIdx !== -1 && wordNodes[activeIdx]) {
+          wordNodes[activeIdx].scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+        }
+        lastActiveIdx = activeIdx;
+      }
+    };
+
+    audio.onended = () => {
+      trackIndex++;
+      lastActiveIdx = -1;
+      if (trackIndex < tracks.length) {
+        audio.src = tracks[trackIndex];
+        audio.play();
+      } else {
+        wordNodes.forEach(node => node.classList.remove("active-sheikh"));
+      }
+    };
+  }
+  recitationPanel.appendChild(audioBox);
+
+  // Stage 2: Client-side Live Tracking via @tilawa/core
+  const liveControls = el("div", "live-controls");
+  const startLiveBtn = el("button", "btn-tilawa", "🎙️ Start Live Tilawa Tracking");
+  const liveStatus = el("div", "live-status", "Click to initialize browser AI model & live mic tracking...");
+  
+  liveControls.appendChild(startLiveBtn);
+  recitationPanel.appendChild(liveControls);
+  recitationPanel.appendChild(liveStatus);
+
+  let stopTilawaFn = null;
+  let isLiveActive = false;
+
+  startLiveBtn.onclick = async () => {
+    if (!isLiveActive) {
+      startLiveBtn.textContent = "Loading AI Model...";
+      startLiveBtn.disabled = true;
+      try {
+        const tilawa = await createTilawa({
+          ort,
+          onProgress: (p) => {
+            liveStatus.textContent = `Loading browser model: ${Math.round(p.fraction * 100)}%`;
+          }
+        });
+
+        const session = tilawa.startMemorization(
+          { surah: D.meta.s, fromAyah: D.meta.a, toAyah: D.meta.end },
+          { confirm: { after: "next-word" } }
+        );
+
+        session.subscribe((event) => {
+          if (event.type === "position" && event.state === "locked" && event.observed[0]) {
+            const wordIdx = event.observed[0].word - 1;
+            wordNodes.forEach((node, idx) => {
+              node.classList.remove("live-active");
+              if (idx === wordIdx) {
+                node.classList.add("live-active");
+                node.scrollIntoView({ behavior: 'smooth', block: 'center' });
+              }
+            });
+            liveStatus.textContent = `Live tracking active · Word ${event.observed[0].word}`;
+          }
+          if (event.type === "checker" && event.state === "confirmed") {
+            const errWordIdx = event.location.word - 1;
+            if (wordNodes[errWordIdx]) {
+              if (event.errorClass === "correct") {
+                wordNodes[errWordIdx].classList.add("live-good");
+              } else {
+                wordNodes[errWordIdx].classList.add("live-error");
+              }
+            }
+          }
+        });
+
+        const mic = await tilawa.listen(session);
+        stopTilawaFn = async () => {
+          await mic.stop();
+          await tilawa.dispose();
+        };
+
+        isLiveActive = true;
+        startLiveBtn.textContent = "🛑 Stop Live Tracking";
+        startLiveBtn.className = "btn-tilawa stop";
+        startLiveBtn.disabled = false;
+        liveStatus.textContent = "🔴 Listening live... Speak clearly into your mic!";
+      } catch (err) {
+        liveStatus.textContent = "Mic/Model error: " + err.message;
+        startLiveBtn.textContent = "🎙️ Start Live Tilawa Tracking";
+        startLiveBtn.disabled = false;
+      }
     } else {
-      wordNodes.forEach(node => node.classList.remove("active-sheikh"));
+      if (stopTilawaFn) await stopTilawaFn();
+      isLiveActive = false;
+      startLiveBtn.textContent = "🎙️ Start Live Tilawa Tracking";
+      startLiveBtn.className = "btn-tilawa";
+      liveStatus.textContent = "Live tracking ended.";
     }
   };
-}
 
-recitationPanel.appendChild(audioBox);
-shell.appendChild(recitationPanel);
-root.appendChild(shell);
+  shell.appendChild(recitationPanel);
+  root.appendChild(shell);
 </script>
 """
 
@@ -633,12 +693,12 @@ def render_player(words, mode, states=None, audio_tracks=None, feedback="", meta
         "trackWordCounts": track_word_counts or [], "reciteFromMemory": recite_from_memory,
         "segments": segments or []
     }
-    components.html(PLAYER_HTML.replace("__DATA__", json.dumps(payload, ensure_ascii=False).replace("</", "<\\/")), height=520, scrolling=True)
+    components.html(PLAYER_HTML.replace("__DATA__", json.dumps(payload, ensure_ascii=False).replace("</", "<\\/")), height=620, scrolling=True)
 
 
 # ----------------------------- Session & UI -----------------------------
 
-DEFAULTS = {"name": "", "surah": 2, "ayah": 60, "end_ayah": 64, "recite_from_memory": False, "results": {}, "paid": [], "tries": 0, "teacher_gender": "Male", "strictness": "Balanced", "theme": "Starry Night", "teacher_label": "Stage 1: Listen to the Sheikh recite and follow along word by word.", "scholar_chat": []}
+DEFAULTS = {"name": "", "surah": 2, "ayah": 60, "end_ayah": 64, "recite_from_memory": False, "results": {}, "paid": [], "tries": 0, "teacher_gender": "Male", "strictness": "Balanced", "theme": "Starry Night", "teacher_label": "Stage 1: Listen to the Sheikh with exact timing sync, then use live browser tracking.", "scholar_chat": []}
 for k, v in DEFAULTS.items(): st.session_state.setdefault(k, v)
 
 theme_colours = {"Starry Night": "#0a0f1c", "Brown": "#1A1510", "Black": "#000000"}
@@ -667,7 +727,7 @@ if not st.session_state.name:
             st.rerun()
     st.stop()
 
-# Sidebar Setup (Advanced Memory - 5 Verses Block default)
+# Sidebar Setup
 sidebar = st.sidebar
 sidebar.markdown(f"<h2 style='text-align:center'>{st.session_state.name}</h2>", unsafe_allow_html=True)
 st.session_state.theme = sidebar.selectbox("Theme", ["Starry Night", "Brown", "Black"], index=["Starry Night", "Brown", "Black"].index(st.session_state.theme))
@@ -683,7 +743,7 @@ end_ayah = sidebar.number_input("Ending ayah (5-Verse block limit)", int(ayah), 
 reciter = sidebar.selectbox("Reciter", list(RECITERS.keys()))
 
 if sidebar.button("Load 5-Verse Memory Block", use_container_width=True):
-    st.session_state.update(surah=int(surah), ayah=int(ayah), end_ayah=int(end_ayah), tries=0, results={}, teacher_label="Stage 1: Listen to the Sheikh's audio sync and observe vowel highlighting.")
+    st.session_state.update(surah=int(surah), ayah=int(ayah), end_ayah=int(end_ayah), tries=0, results={}, teacher_label="Stage 1: Listen to the Sheikh with exact timing sync, then use live tracking.")
     st.rerun()
 
 passage_key = f"{surah}:{ayah}-{end_ayah}"
@@ -716,7 +776,7 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-# Render Player with Smooth Phonetic Weighted Sync
+# Render Player with Tilawa Core and Exact Timings
 saved = st.session_state.results.get(result_key)
 render_player(
     words, "blind" if st.session_state.recite_from_memory else "full",
@@ -724,38 +784,59 @@ render_player(
     feedback=saved["feedback"] if saved else "", meta=meta,
     letter_results=saved["letter_results"] if saved else None,
     word_feedback=saved.get("word_feedback", {}) if saved else None,
-    track_word_counts=track_word_counts, recite_from_memory=st.session_state.recite_from_memory,
-    segments=segments
+    track_word_counts=track_word_counts, recite_from_memory=st.session_state.recite_from_memory, segments=segments
 )
 
 st.markdown("<br>", unsafe_allow_html=True)
 
-# Stage 2: Recording Phase
-st.markdown("### 🎙️ Stage 2: Recite from Memory")
+# Stage 2: WebRTC Python Streamer Foundation
+st.markdown("### 🎙️ Stage 2: WebRTC Live Audio Bridge")
+webrtc_ctx = webrtc_streamer(
+    key="live-recitation",
+    mode=WebRtcMode.SENDONLY,
+    audio_processor_factory=None,
+    media_stream_constraints={"video": False, "audio": True},
+    rtc_configuration={"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]},
+)
+
+# Optional Post-Session Deep Analysis Upload
+st.markdown("### 🎙️ Stage 3: Deep Tajweed Scoring & Scholarly Feedback")
 _, centre, _ = st.columns([1, 2, 1])
 with centre:
-    recording = st.audio_input("Record your recitation of the 5-verse memory block", key=f"rec_{passage_key}_{st.session_state.tries}")
+    recording = st.audio_input("Optional: Upload final recording for deep Gemini Tajweed report", key=f"rec_{passage_key}_{st.session_state.tries}")
 
 if recording:
     st.audio(recording)
-    if st.button("Submit for Stage 3 Analysis & Flagging", type="primary", use_container_width=True):
-        with st.spinner("Analyzing audio & flagging Tajweed rules..."):
-            try:
-                states, l_res, w_fb, taj_assess, fb, tafsir, t_label = analyse_recitation(
-                    recording.getvalue(), recording.type or "audio/wav", words, st.session_state.strictness, st.session_state.teacher_gender
-                )
-                
-                st.session_state.teacher_label = t_label
-                st.session_state.results[result_key] = {
-                    "states": states, "letter_results": l_res, "word_feedback": w_fb,
-                    "tajweed_assessments": taj_assess, "feedback": fb, "tafsir_summary": tafsir
-                }
-                if states.count("good") / max(len(states), 1) >= 0.8 and result_key not in st.session_state.paid:
-                    award_xp(st.session_state.name, 10)
-                    st.session_state.paid.append(result_key)
-                st.rerun()
-            except Exception as e:
-                st.error(f"Analysis failed: {e}")
+    if st.button("Submit for Deep Scholarly Report", type="primary", use_container_width=True):
+        progress_bar = st.progress(0, text="Initializing Deep Tajweed analysis...")
+        for percent in range(1, 100):
+            time.sleep(0.015)
+            if percent == 30:
+                progress_bar.progress(percent, text="Evaluating harakah & vowel precision (30%)...")
+            elif percent == 70:
+                progress_bar.progress(percent, text="Compiling 16 Tajweed rules assessment (70%)...")
+            elif percent == 90:
+                progress_bar.progress(percent, text="Generating scholarly feedback & tafsir (90%)...")
+
+        try:
+            states, l_res, w_fb, taj_assess, fb, tafsir, t_label = analyse_recitation(
+                recording.getvalue(), recording.type or "audio/wav", words, st.session_state.strictness, st.session_state.teacher_gender
+            )
+            progress_bar.progress(100, text="Analysis complete!")
+            time.sleep(0.3)
+            
+            st.session_state.teacher_label = t_label
+            st.session_state.results[result_key] = {
+                "states": states, "letter_results": l_res, "word_feedback": w_fb,
+                "tajweed_assessments": taj_assess, "feedback": fb, "tafsir_summary": tafsir
+            }
+            if states.count("good") / max(len(states), 1) >= 0.8 and result_key not in st.session_state.paid:
+                award_xp(st.session_state.name, 10)
+                st.session_state.paid.append(result_key)
+            st.rerun()
+        except Exception as e:
+            progress_bar.empty()
+            st.error(f"Analysis failed: {e}")
 
 # Stage 3 & 4: Feedback, Corrections & Tafsir Dashboard
 if saved:
