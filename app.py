@@ -92,6 +92,23 @@ HARAKAH_NAMES = {
 }
 
 
+# ----------------------------- Helper to load local image as Base64 -----------------------------
+
+def get_image_base64(filename):
+    try:
+        path = pathlib.Path(__file__).with_name(filename)
+        if path.exists():
+            with open(path, "rb") as f:
+                encoded = base64.b64encode(f.read()).decode("utf-8")
+                return f"data:image/jpeg;base64,{encoded}"
+    except Exception:
+        pass
+    return ""
+
+OMAR_B64 = get_image_base64("IMG_6147.jpeg")
+NOOR_B64 = get_image_base64("IMG_6146.jpeg")
+
+
 # ----------------------------- Database & Analytics -----------------------------
 
 try:
@@ -536,14 +553,14 @@ body { margin: 0; color: #E8D5B5; background: transparent; font-family: Inter, s
 .meta { color: #a8987f; font-size: 12px; margin-top: 4px; }
 .pill { border: 1px solid rgba(212,175,55,.3); color: #D4AF37; border-radius: 99px; padding: 6px 10px; font-size: 12px; }
 .arabic-area { direction: rtl; text-align: center; min-height: 210px; max-height: 360px; overflow-y: auto; display: flex; flex-wrap: wrap; justify-content: center; align-content: flex-start; gap: 13px 5px; padding: 10px 5px 18px; }
-.word { display: inline-flex; flex-direction: column; align-items: center; padding: 5px 7px; border: 1px solid transparent; border-radius: 12px; min-width: 42px; }
-.word.active { background: rgba(212,175,55,.16); border-color: rgba(212,175,55,.65); box-shadow: 0 0 18px rgba(212,175,55,.16); }
+.word { display: inline-flex; flex-direction: column; align-items: center; padding: 5px 7px; border: 1px solid transparent; border-radius: 12px; min-width: 42px; transition: all 0.3s; }
+.word.active { background: rgba(212,175,55,.25); border-color: #D4AF37; box-shadow: 0 0 20px rgba(212,175,55,.4); transform: scale(1.05); }
 .word.good { background: rgba(74,222,128,.15); border-color: #4ade80; }
 .word.review { background: rgba(248,113,113,.15); border-color: #f87171; }
 .arabic-word { font-family: 'Amiri Quran', serif; font-size: 34px; line-height: 1.9; direction: rtl; white-space: nowrap; }
 .letter { display: inline-flex; flex-direction: column; align-items: center; vertical-align: middle; border-radius: 5px; margin: 0 1px; padding: 0 1px; }
-.letter.good { color: #4ade80; text-shadow: 0 0 8px rgba(74,222,128,0.4); }
-.letter.review { color: #f87171; text-decoration: underline wavy #f87171; text-shadow: 0 0 8px rgba(248,113,113,0.4); }
+.letter.good { color: #4ade80; text-shadow: 0 0 8px rgba(74,222,128,0.5); }
+.letter.review { color: #f87171; text-decoration: underline wavy #f87171; text-shadow: 0 0 8px rgba(248,113,113,0.5); }
 .letter.uncertain { color: #fbbf24; }
 .letter.ungraded { color: #F4EBDD; }
 .letter-char { line-height: 1.35; }
@@ -551,7 +568,7 @@ body { margin: 0; color: #E8D5B5; background: transparent; font-family: Inter, s
 .translation { color: #a8987f; font-size: 10px; max-width: 125px; text-align: center; line-height: 1.4; margin-top: 3px; }
 .blind .arabic-word { filter: blur(12px); opacity: .2; user-select: none; }
 .audio-controls { display: flex; flex-direction: column; gap: 9px; }
-audio { width: 100%; }
+audio { width: 100%; margin-top: 8px; }
 </style>
 </head>
 <body>
@@ -568,7 +585,7 @@ const root = document.getElementById("app");
 const shell = el("div", "shell");
 const header = el("div", "panel topline");
 const headLeft = el("div");
-headLeft.appendChild(el("div", "brand", "Al-Mu'allim"));
+headLeft.appendChild(el("div", "brand", "Al-Mu'allim Academy"));
 const endAyah = D.meta.end && D.meta.end !== D.meta.a ? "–" + D.meta.end : "";
 headLeft.appendChild(el("div", "meta", "Surah " + D.meta.s + " · Ayah " + D.meta.a + endAyah));
 header.appendChild(headLeft);
@@ -582,7 +599,6 @@ shell.appendChild(header);
 const recitationPanel = el("div", "panel");
 const isBlind = D.reciteFromMemory && !D.states;
 const arabicArea = el("div", "arabic-area" + (isBlind ? " blind" : ""));
-const wordNodes = [];
 
 D.words.forEach((word, index) => {
   const wrapper = el("div", "word");
@@ -602,7 +618,6 @@ D.words.forEach((word, index) => {
   wrapper.appendChild(el("div", "meta", "Ayah " + word.ayah));
   if (D.states && D.states[index]) wrapper.classList.add(D.states[index]);
   arabicArea.appendChild(wrapper);
-  wordNodes.push(wrapper);
 });
 recitationPanel.appendChild(arabicArea);
 
@@ -628,7 +643,7 @@ def render_player(words, mode, states=None, audio_tracks=None, feedback="", meta
         "wordFeedback": {str(k): v for k, v in (word_feedback or {}).items()},
         "trackWordCounts": track_word_counts or [], "reciteFromMemory": recite_from_memory,
     }
-    components.html(PLAYER_HTML.replace("__DATA__", json.dumps(payload, ensure_ascii=False).replace("</", "<\\/")), height=620, scrolling=True)
+    components.html(PLAYER_HTML.replace("__DATA__", json.dumps(payload, ensure_ascii=False).replace("</", "<\\/")), height=540, scrolling=True)
 
 
 # ----------------------------- Session & UI -----------------------------
@@ -692,7 +707,7 @@ if not st.session_state.name:
             st.rerun()
     st.stop()
 
-# Sidebar
+# Sidebar Settings
 sidebar = st.sidebar
 sidebar.markdown(f"<h2 style='text-align:center'>{st.session_state.name}</h2>", unsafe_allow_html=True)
 st.session_state.theme = sidebar.selectbox("Theme", ["Starry Night", "Brown", "Black"], index=["Starry Night", "Brown", "Black"].index(st.session_state.theme))
@@ -727,14 +742,13 @@ meta = {"s": surah, "a": ayah, "end": end_ayah, "xp": xp, "streak": streak}
 st.markdown("<h1 style='text-align:center'>Al-Mu'allim</h1>", unsafe_allow_html=True)
 st.markdown(f"<p style='text-align:center;color:#a8987f'>Surah {surah} · Ayahs {ayah}–{end_ayah}</p>", unsafe_allow_html=True)
 
-# Teacher Avatar & Live Status Display pointing directly to your exact GitHub images:
-# IMG_6147.jpeg for Male (Ustadh Omar), IMG_6146.jpeg for Female (Ustadha Noor)
+# Teacher Avatar & Live Status Display using robust Base64 data
 teacher_name = "Ustadh Omar" if st.session_state.teacher_gender == "Male" else "Ustadha Noor"
-avatar_filename = "IMG_6147.jpeg" if st.session_state.teacher_gender == "Male" else "IMG_6146.jpeg"
+active_avatar_b64 = OMAR_B64 if st.session_state.teacher_gender == "Male" else NOOR_B64
 
 st.markdown(f"""
 <div class="teacher-container">
-    <img src="{avatar_filename}" class="teacher-avatar" alt="Teacher Avatar">
+    <img src="{active_avatar_b64}" class="teacher-avatar" alt="Teacher Avatar">
     <div class="teacher-bubble">
         <div class="teacher-name">💬 {teacher_name}</div>
         <div class="teacher-speech">"{st.session_state.teacher_label}"</div>
@@ -748,13 +762,13 @@ render_player(words, "blind" if st.session_state.recite_from_memory else "full",
 st.markdown("<br>", unsafe_allow_html=True)
 _, centre, _ = st.columns([1, 2, 1])
 with centre:
-    recording = st.audio_input("🎙 Record your recitation", key=f"rec_{passage_key}_{st.session_state.tries}")
+    recording = st.audio_input("🎙 Record recitation for instant Tajweed Flagging", key=f"rec_{passage_key}_{st.session_state.tries}")
 
 if recording:
     st.audio(recording)
-    if st.button("Submit for Live Tajweed Assessment", type="primary", use_container_width=True):
+    if st.button("Submit for Instant Green / Red Letter Flagging", type="primary", use_container_width=True):
         try:
-            with st.spinner("Analyzing recitation & highlighting vowels..."):
+            with st.spinner("Analyzing recitation & highlighting vowels in real-time..."):
                 states, l_res, w_fb, taj_assess, fb, tafsir, t_label = analyse_recitation(
                     recording.getvalue(), recording.type or "audio/wav", words, st.session_state.strictness, st.session_state.teacher_gender
                 )
