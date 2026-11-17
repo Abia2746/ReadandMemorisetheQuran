@@ -15,7 +15,6 @@ import numpy as np
 import requests
 import streamlit as st
 import streamlit.components.v1 as components
-from streamlit_webrtc import webrtc_streamer, WebRtcMode
 
 
 # ============================================================
@@ -449,7 +448,7 @@ def ask_teacher_scholar(query, surah, start_ayah, end_ayah):
     return "Scholar consultation currently unavailable."
 
 
-# ----------------------------- Player HTML with @tilawa/core ESM Module Integration -----------------------------
+# ----------------------------- Player HTML with Official @tilawa/core ESM Module -----------------------------
 
 PLAYER_HTML = r"""
 <!DOCTYPE html>
@@ -508,7 +507,7 @@ audio { width: 100% !important; }
   const shell = el("div", "shell");
   const header = el("div", "panel topline");
   const headLeft = el("div");
-  headLeft.appendChild(el("div", "brand", "Al-Mu'allim Academy · @tilawa/core Client Engine"));
+  headLeft.appendChild(el("div", "brand", "Al-Mu'allim Academy · @tilawa/core Engine"));
   const endAyah = D.meta.end && D.meta.end !== D.meta.a ? "–" + D.meta.end : "";
   headLeft.appendChild(el("div", "meta", "Surah " + D.meta.s + " · Ayahs " + D.meta.a + (endAyah)));
   header.appendChild(headLeft);
@@ -605,7 +604,7 @@ audio { width: 100% !important; }
   // Stage 2: Client-side Live Tracking via @tilawa/core
   const liveControls = el("div", "live-controls");
   const startLiveBtn = el("button", "btn-tilawa", "🎙️ Start Live Tilawa Tracking");
-  const liveStatus = el("div", "live-status", "Click to initialize browser AI model & live mic tracking...");
+  const liveStatus = el("div", "live-status", "Click to download/load on-device AI model & start live mic tracking...");
   
   liveControls.appendChild(startLiveBtn);
   recitationPanel.appendChild(liveControls);
@@ -622,7 +621,7 @@ audio { width: 100% !important; }
         const tilawa = await createTilawa({
           ort,
           onProgress: (p) => {
-            liveStatus.textContent = `Loading browser model: ${Math.round(p.fraction * 100)}%`;
+            liveStatus.textContent = `Loading browser model (${p.stage}): ${Math.round(p.fraction * 100)}%`;
           }
         });
 
@@ -698,7 +697,7 @@ def render_player(words, mode, states=None, audio_tracks=None, feedback="", meta
 
 # ----------------------------- Session & UI -----------------------------
 
-DEFAULTS = {"name": "", "surah": 2, "ayah": 60, "end_ayah": 64, "recite_from_memory": False, "results": {}, "paid": [], "tries": 0, "teacher_gender": "Male", "strictness": "Balanced", "theme": "Starry Night", "teacher_label": "Stage 1: Listen to the Sheikh with exact timing sync, then use live browser tracking.", "scholar_chat": []}
+DEFAULTS = {"name": "", "surah": 2, "ayah": 60, "end_ayah": 64, "recite_from_memory": False, "results": {}, "paid": [], "tries": 0, "teacher_gender": "Male", "strictness": "Balanced", "theme": "Starry Night", "teacher_label": "Stage 1: Listen to the Sheikh with exact timing sync, then start live browser tracking.", "scholar_chat": []}
 for k, v in DEFAULTS.items(): st.session_state.setdefault(k, v)
 
 theme_colours = {"Starry Night": "#0a0f1c", "Brown": "#1A1510", "Black": "#000000"}
@@ -743,7 +742,7 @@ end_ayah = sidebar.number_input("Ending ayah (5-Verse block limit)", int(ayah), 
 reciter = sidebar.selectbox("Reciter", list(RECITERS.keys()))
 
 if sidebar.button("Load 5-Verse Memory Block", use_container_width=True):
-    st.session_state.update(surah=int(surah), ayah=int(ayah), end_ayah=int(end_ayah), tries=0, results={}, teacher_label="Stage 1: Listen to the Sheikh with exact timing sync, then use live tracking.")
+    st.session_state.update(surah=int(surah), ayah=int(ayah), end_ayah=int(end_ayah), tries=0, results={}, teacher_label="Stage 1: Listen to the Sheikh with exact timing sync, then start live browser tracking.")
     st.rerun()
 
 passage_key = f"{surah}:{ayah}-{end_ayah}"
@@ -788,16 +787,6 @@ render_player(
 )
 
 st.markdown("<br>", unsafe_allow_html=True)
-
-# Stage 2: WebRTC Python Streamer Foundation
-st.markdown("### 🎙️ Stage 2: WebRTC Live Audio Bridge")
-webrtc_ctx = webrtc_streamer(
-    key="live-recitation",
-    mode=WebRtcMode.SENDONLY,
-    audio_processor_factory=None,
-    media_stream_constraints={"video": False, "audio": True},
-    rtc_configuration={"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]},
-)
 
 # Optional Post-Session Deep Analysis Upload
 st.markdown("### 🎙️ Stage 3: Deep Tajweed Scoring & Scholarly Feedback")
