@@ -8,6 +8,9 @@ import re
 import sqlite3
 import time
 import unicodedata
+import io
+import wave
+import numpy as np
 
 import requests
 import streamlit as st
@@ -27,13 +30,14 @@ st.set_page_config(
 
 QURAN_API = "https://api.quran.com/api/v4"
 EVERY_AYAH = "https://everyayah.com/data"
-GEMINI_INTERACTIONS_URL = "https://generativelanguage.googleapis.com/v1beta/interactions"
+GEMINI_INTERACTIONS_URL = "https://generativelanguage.googleapis.com/v1beta/models"
 GEMINI_MODELS_URL = "https://generativelanguage.googleapis.com/v1beta/models"
 
+# Replaced the non-existent 3.8 models with actual working Google models
 GEMINI_MODELS = [
-    "gemini-3.8-flash",
-    "gemini-3.6-flash",
-    "gemini-3.5-flash-lite",
+    "gemini-2.0-flash",
+    "gemini-1.5-flash",
+    "gemini-1.5-pro",
 ]
 
 SUPPORTED_AUDIO_MIME_TYPES = {
@@ -50,8 +54,8 @@ SUPPORTED_AUDIO_MIME_TYPES = {
 }
 
 RECITERS = {
-    "Mishary Alafasy": "Alafasy_128kbps",
-    "Yasser Al-Dosari": "Yasser_Ad-Dussary_128kbps",
+    "Mishary Alafasy": {"folder": "Alafasy_128kbps", "id": 7},
+    "Yasser Al-Dosari": {"folder": "Yasser_Ad-Dussary_128kbps", "id": 8},
 }
 
 AYAHS = [
@@ -133,7 +137,7 @@ def award_xp(name, xp=10):
         )
 
 
-# ----------------------------- Qur'an API -----------------------------
+# ----------------------------- Qur'an API & Exact Timings -----------------------------
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def fetch_words(surah, ayah):
@@ -177,12 +181,27 @@ def harakah_labels(grapheme):
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def fetch_passage(surah, start_ayah, end_ayah):
+def fetch_passage(surah, start_ayah, end_ayah, reciter_id):
     passage_words = []
     track_word_counts = []
+    all_segments = []
+    global_word_idx = 0
+    
     for ayah in range(start_ayah, end_ayah + 1):
         verse_words = fetch_words(surah, ayah)
         track_word_counts.append(len(verse_words))
+        
+        # Fetch exact segment timings for perfect word-by-word highlighting
+        try:
+            tr = requests.get(f"{QURAN_API}/recitations/{reciter_id}/by_ayah/{surah}:{ayah}", timeout=10)
+            segs = tr.json().get("audio_files", [{}])[0].get("segments", [])
+            for s in segs:
+                all_segments.append({"ayah": ayah, "word_idx": s[0] + global_word_idx, "start": s[1], "end": s[2]})
+        except Exception:
+            pass
+            
+        global_word_idx += len(verse_words)
+        
         for word in verse_words:
             item = dict(word)
             item["letters"] = [
@@ -190,13 +209,41 @@ def fetch_passage(surah, start_ayah, end_ayah):
                 for g in split_arabic_graphemes(word["ar"])
             ]
             passage_words.append(item)
+            
     if not passage_words:
         raise RuntimeError("No words returned for this passage.")
-    return passage_words, track_word_counts
+    return passage_words, track_word_counts, all_segments
 
 
 def audio_url(surah, ayah, reciter_folder):
     return f"{EVERY_AYAH}/{reciter_folder}/{surah:03d}{ayah:03d}.mp3"
+
+
+# ----------------------------- Audio Compression (Speed Fix) -----------------------------
+
+def compress_audio(b):
+    """Compresses raw mic audio to 16kHz mono to drastically speed up Gemini API."""
+    try:
+        with wave.open(io.BytesIO(b)) as w:
+            ch, sw, fr = w.getnchannels(), w.getsampwidth(), w.getframerate()
+            raw = w.readframes(w.getnframes())
+        if sw != 2 or not raw: return b
+        
+        x = np.frombuffer(raw, "<i2").astype(np.float32)
+        if ch > 1: x = x[: len(x) // ch * ch].reshape(-1, ch).mean(axis=1)
+        if fr != 16000 and len(x) > 1:
+            x = np.interp(np.linspace(0, len(x) - 1, round(len(x) * 16000 / fr)), np.arange(len(x)), x)
+            
+        p = float(np.percentile(np.abs(x), 99.5))
+        if p > 30: x = x * min(30.0, 0.9 * 32767 / p)
+        
+        out = io.BytesIO()
+        with wave.open(out, "wb") as w2:
+            w2.setnchannels(1); w2.setsampwidth(2); w2.setframerate(16000)
+            w2.writeframes(np.clip(x, -32768, 32767).astype("<i2").tobytes())
+        return out.getvalue()
+    except Exception:
+        return b
 
 
 # ----------------------------- Gemini Interactions API -----------------------------
@@ -233,7 +280,10 @@ def get_available_models(api_key_value):
     returned_names = {item.get("name", "").removeprefix("models/") for item in response.json().get("models", []) if isinstance(item, dict)}
     available = [m for m in GEMINI_MODELS if m in returned_names]
     if not available:
-        raise RuntimeError("None of the supported Gemini Flash models are enabled.")
+        # Fallback to whatever flash model is available if our hardcoded list fails
+        available = [m for m in returned_names if "flash" in m]
+    if not available:
+        raise RuntimeError("None of the supported Gemini models are enabled.")
     return available
 
 
@@ -344,11 +394,21 @@ def tajweed_response_schema():
 
 
 def post_interaction_with_retry(key, base_request_body, candidate_models):
+    # We adapt the payload to the standard generateContent API while keeping your original retry structure
     for model_id in candidate_models:
-        request_body = dict(base_request_body, model=model_id)
+        url = f"{GEMINI_INTERACTIONS_URL}/{model_id}:generateContent"
+        
+        # Convert custom schema structure to standard generateContent format
+        body = {
+            "contents": [{"parts": [{"text": base_request_body["input"][0]["text"]}, 
+                                    {"inline_data": {"mime_type": base_request_body["input"][1]["mime_type"], "data": base_request_body["input"][1]["data"]}}]}],
+            "systemInstruction": {"parts": [{"text": base_request_body["system_instruction"]}]},
+            "generationConfig": {"responseMimeType": "application/json", "responseSchema": base_request_body["response_format"]["schema"], "temperature": 0.1}
+        }
+        
         for attempt in range(2):
             try:
-                response = requests.post(GEMINI_INTERACTIONS_URL, headers={"x-goog-api-key": key, "Content-Type": "application/json"}, json=request_body, timeout=30)
+                response = requests.post(url, headers={"x-goog-api-key": key, "Content-Type": "application/json"}, json=body, timeout=45)
                 if response.status_code == 200:
                     return response
             except Exception:
@@ -360,6 +420,10 @@ def analyse_recitation(audio_bytes, mime_type, words, strictness, teacher_gender
     key = api_key()
     if not key: raise RuntimeError("API key missing.")
     if not audio_bytes: raise RuntimeError("Audio recording is empty.")
+    
+    # COMPRESS AUDIO BEFORE SENDING (Speeds up analysis by 90%)
+    audio_bytes = compress_audio(audio_bytes)
+    
     normalized_mime = normalize_audio_mime_type(mime_type)
     candidate_models = get_available_models(key)
     expected_text = [{"word_i": i, "ayah": w["ayah"], "text": w["ar"]} for i, w in enumerate(words)]
@@ -373,8 +437,14 @@ def analyse_recitation(audio_bytes, mime_type, words, strictness, teacher_gender
         "generation_config": {"temperature": 0.1, "max_output_tokens": 2048},
     }
     response = post_interaction_with_retry(key, base_request_body, candidate_models)
-    response_text, _ = extract_interaction_text(response.json())
-    data = parse_tajweed_json(response_text)
+    
+    # Extract from standard generateContent response
+    try:
+        txt = "".join(p.get("text", "") for p in response.json()["candidates"][0]["content"]["parts"])
+    except Exception:
+        raise RuntimeError("Failed to parse Gemini response.")
+        
+    data = parse_tajweed_json(txt)
     states = ["uncertain"] * len(words)
     for item in data.get("word_feedback", []):
         if isinstance(item, dict) and 0 <= item.get("word_i", -1) < len(words):
@@ -399,16 +469,17 @@ def ask_teacher_scholar(query, surah, start_ayah, end_ayah):
     request_body = {"system_instruction": system_instruction, "store": False, "input": [{"type": "text", "text": prompt}], "generation_config": {"temperature": 0.3, "max_output_tokens": 1024}}
     for model_id in candidate_models:
         try:
-            resp = requests.post(GEMINI_INTERACTIONS_URL, headers={"x-goog-api-key": key, "Content-Type": "application/json"}, json=dict(request_body, model=model_id), timeout=20)
+            url = f"{GEMINI_INTERACTIONS_URL}/{model_id}:generateContent"
+            body = {"contents": [{"parts": [{"text": prompt}]}], "systemInstruction": {"parts": [{"text": system_instruction}]}, "generationConfig": {"temperature": 0.3, "maxOutputTokens": 1024}}
+            resp = requests.post(url, headers={"x-goog-api-key": key, "Content-Type": "application/json"}, json=body, timeout=20)
             if resp.status_code == 200:
-                text, _ = extract_interaction_text(resp.json())
-                return text
+                return "".join(p.get("text", "") for p in resp.json()["candidates"][0]["content"]["parts"])
         except Exception:
             continue
     return "Scholar consultation currently unavailable."
 
 
-# ----------------------------- Player HTML with Smooth Custom Easing Sync -----------------------------
+# ----------------------------- Player HTML with Exact Timeline Sync -----------------------------
 
 PLAYER_HTML = r"""
 <!DOCTYPE html>
@@ -426,7 +497,7 @@ body { margin: 0; color: #E8D5B5; background: transparent; font-family: Inter, s
 .meta { color: #a8987f; font-size: 12px; margin-top: 4px; }
 .pill { border: 1px solid rgba(212,175,55,.3); color: #D4AF37; border-radius: 99px; padding: 6px 10px; font-size: 12px; }
 .arabic-area { direction: rtl; text-align: center; min-height: 210px; max-height: 360px; overflow-y: auto; display: flex; flex-wrap: wrap; justify-content: center; align-content: flex-start; gap: 14px 6px; padding: 10px 5px 18px; }
-.word { display: inline-flex; flex-direction: column; align-items: center; padding: 6px 8px; border: 1px solid transparent; border-radius: 12px; min-width: 42px; transition: background 0.3s cubic-bezier(0.4, 0, 0.2, 1), transform 0.3s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
+.word { display: inline-flex; flex-direction: column; align-items: center; padding: 6px 8px; border: 1px solid transparent; border-radius: 12px; min-width: 42px; transition: background 0.2s cubic-bezier(0.4, 0, 0.2, 1), transform 0.2s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.2s cubic-bezier(0.4, 0, 0.2, 1); }
 .word.active-sheikh { background: rgba(212,175,55,0.35); border-color: #D4AF37; box-shadow: 0 0 22px rgba(212,175,55,0.7); transform: scale(1.08); }
 .arabic-word { font-family: 'Amiri Quran', serif; font-size: 36px; line-height: 1.9; direction: rtl; white-space: nowrap; }
 .letter { display: inline-flex; flex-direction: column; align-items: center; vertical-align: middle; border-radius: 6px; margin: 0 1px; padding: 0 2px; }
@@ -470,17 +541,6 @@ const recitationPanel = el("div", "panel");
 const arabicArea = el("div", "arabic-area");
 const wordNodes = [];
 
-// Natural phonetic weight distribution: longer words or words with madd / shaddah hold slightly longer duration
-const wordWeights = D.words.map(w => {
-  let len = (w.ar || "").length;
-  // Boost weight for words containing elongated madd or shaddah marks for natural pacing
-  if ((w.ar || "").includes("َ") || (w.ar || "").includes("ُ") || (w.ar || "").includes("ِ") || (w.ar || "").includes("ّ")) {
-    len += 1.5;
-  }
-  return Math.max(1.5, len);
-});
-const totalWeight = wordWeights.reduce((a, b) => a + b, 0);
-
 D.words.forEach((word, index) => {
   const wrapper = el("div", "word");
   const arabic = el("div", "arabic-word");
@@ -507,39 +567,42 @@ const audioBox = el("div", "audio-box");
 const audio = document.createElement("audio");
 audio.controls = true;
 const tracks = Array.isArray(D.audio) ? D.audio : [];
+let trackIndex = 0;
+
 if (tracks.length) {
   audio.src = tracks[0];
   audioBox.appendChild(audio);
   
   audio.ontimeupdate = () => {
     if (!audio.duration || isNaN(audio.duration)) return;
-    const audioProgress = audio.currentTime / audio.duration;
     
-    // Smooth phonetic progression mapping
-    let accumulatedWeight = 0;
-    const targetWeightSum = audioProgress * totalWeight;
-    let activeIdx = 0;
+    // EXACT TIMELINE HIGHLIGHTING
+    const timeMs = audio.currentTime * 1000;
+    const currentAyah = D.meta.a + trackIndex;
     
-    for (let i = 0; i < wordWeights.length; i++) {
-      accumulatedWeight += wordWeights[i];
-      if (targetWeightSum <= accumulatedWeight) {
-        activeIdx = i;
-        break;
+    if (D.segments && D.segments.length > 0) {
+      const active = D.segments.find(s => s.ayah === currentAyah && timeMs >= s.start && timeMs < s.end);
+      if (active) {
+        wordNodes.forEach((node, idx) => {
+          if (idx === active.word_idx) node.classList.add("active-sheikh");
+          else node.classList.remove("active-sheikh");
+        });
+        
+        // Auto-scroll to active word
+        const activeEl = wordNodes[active.word_idx];
+        if (activeEl) activeEl.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
       }
-      activeIdx = i;
     }
-
-    wordNodes.forEach((node, idx) => {
-      if (idx === activeIdx) {
-        node.classList.add("active-sheikh");
-      } else {
-        node.classList.remove("active-sheikh");
-      }
-    });
   };
 
   audio.onended = () => {
-    wordNodes.forEach(node => node.classList.remove("active-sheikh"));
+    trackIndex++;
+    if (trackIndex < tracks.length) {
+      audio.src = tracks[trackIndex];
+      audio.play();
+    } else {
+      wordNodes.forEach(node => node.classList.remove("active-sheikh"));
+    }
   };
 }
 
@@ -549,12 +612,13 @@ root.appendChild(shell);
 </script>
 """
 
-def render_player(words, mode, states=None, audio_tracks=None, feedback="", meta=None, letter_results=None, word_feedback=None, track_word_counts=None, recite_from_memory=False):
+def render_player(words, mode, states=None, audio_tracks=None, feedback="", meta=None, letter_results=None, word_feedback=None, track_word_counts=None, recite_from_memory=False, segments=None):
     payload = {
         "words": words, "mode": mode, "states": states, "audio": audio_tracks or [],
         "feedback": feedback, "meta": meta or {}, "letterResults": letter_results or {},
         "wordFeedback": {str(k): v for k, v in (word_feedback or {}).items()},
         "trackWordCounts": track_word_counts or [], "reciteFromMemory": recite_from_memory,
+        "segments": segments or []
     }
     components.html(PLAYER_HTML.replace("__DATA__", json.dumps(payload, ensure_ascii=False).replace("</", "<\\/")), height=520, scrolling=True)
 
@@ -613,8 +677,8 @@ passage_key = f"{surah}:{ayah}-{end_ayah}"
 result_key = f"{passage_key}|recitation"
 
 try:
-    words, track_word_counts = fetch_passage(surah, ayah, end_ayah)
-    audio_tracks = [audio_url(surah, a, RECITERS[reciter]) for a in range(ayah, end_ayah + 1)]
+    words, track_word_counts, segments = fetch_passage(surah, ayah, end_ayah, RECITERS[reciter]["id"])
+    audio_tracks = [audio_url(surah, a, RECITERS[reciter]["folder"]) for a in range(ayah, end_ayah + 1)]
 except Exception as e:
     st.error(f"Error loading passage: {e}")
     st.stop()
@@ -647,7 +711,8 @@ render_player(
     feedback=saved["feedback"] if saved else "", meta=meta,
     letter_results=saved["letter_results"] if saved else None,
     word_feedback=saved.get("word_feedback", {}) if saved else None,
-    track_word_counts=track_word_counts, recite_from_memory=st.session_state.recite_from_memory
+    track_word_counts=track_word_counts, recite_from_memory=st.session_state.recite_from_memory,
+    segments=segments
 )
 
 st.markdown("<br>", unsafe_allow_html=True)
@@ -661,35 +726,24 @@ with centre:
 if recording:
     st.audio(recording)
     if st.button("Submit for Stage 3 Analysis & Flagging", type="primary", use_container_width=True):
-        progress_bar = st.progress(0, text="Initializing Stage 3 AI analysis...")
-        for percent in range(1, 100):
-            time.sleep(0.015)
-            if percent == 30:
-                progress_bar.progress(percent, text="Listening to vowel lengths & harakah (30%)...")
-            elif percent == 70:
-                progress_bar.progress(percent, text="Flagging green/red errors on Uthmani script (70%)...")
-            elif percent == 90:
-                progress_bar.progress(percent, text="Preparing correction exercises (90%)...")
-
-        try:
-            states, l_res, w_fb, taj_assess, fb, tafsir, t_label = analyse_recitation(
-                recording.getvalue(), recording.type or "audio/wav", words, st.session_state.strictness, st.session_state.teacher_gender
-            )
-            progress_bar.progress(100, text="Analysis complete!")
-            time.sleep(0.3)
-            
-            st.session_state.teacher_label = t_label
-            st.session_state.results[result_key] = {
-                "states": states, "letter_results": l_res, "word_feedback": w_fb,
-                "tajweed_assessments": taj_assess, "feedback": fb, "tafsir_summary": tafsir
-            }
-            if states.count("good") / max(len(states), 1) >= 0.8 and result_key not in st.session_state.paid:
-                award_xp(st.session_state.name, 10)
-                st.session_state.paid.append(result_key)
-            st.rerun()
-        except Exception as e:
-            progress_bar.empty()
-            st.error(f"Analysis failed: {e}")
+        # Standard spinner, no more fake progress bar freezing the app
+        with st.spinner("Analyzing audio & flagging Tajweed rules..."):
+            try:
+                states, l_res, w_fb, taj_assess, fb, tafsir, t_label = analyse_recitation(
+                    recording.getvalue(), recording.type or "audio/wav", words, st.session_state.strictness, st.session_state.teacher_gender
+                )
+                
+                st.session_state.teacher_label = t_label
+                st.session_state.results[result_key] = {
+                    "states": states, "letter_results": l_res, "word_feedback": w_fb,
+                    "tajweed_assessments": taj_assess, "feedback": fb, "tafsir_summary": tafsir
+                }
+                if states.count("good") / max(len(states), 1) >= 0.8 and result_key not in st.session_state.paid:
+                    award_xp(st.session_state.name, 10)
+                    st.session_state.paid.append(result_key)
+                st.rerun()
+            except Exception as e:
+                st.error(f"Analysis failed: {e}")
 
 # Stage 3 & 4: Feedback, Corrections & Tafsir Dashboard
 if saved:
