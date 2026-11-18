@@ -34,9 +34,12 @@ GEMINI_INTERACTIONS_URL = "https://generativelanguage.googleapis.com/v1beta/mode
 GEMINI_MODELS_URL = "https://generativelanguage.googleapis.com/v1beta/models"
 
 GEMINI_MODELS = [
-    "gemini-2.0-flash",
-    "gemini-1.5-flash",
-    "gemini-1.5-pro",
+    "gemini-3.8-flash",
+    "gemini-3.6-flash",
+    "gemini-3.5-flash",
+    "gemini-3.5-flash-lite",
+    "gemini-3.1-flash-lite",
+    "gemini-2.5-flash",
 ]
 
 SUPPORTED_AUDIO_MIME_TYPES = {
@@ -272,12 +275,19 @@ def get_available_models(api_key_value):
         raise RuntimeError("Network error connecting to Gemini API.") from exc
     if response.status_code in (401, 403):
         raise RuntimeError("Invalid or unauthorized GEMINI_API_KEY.")
-    returned_names = {item.get("name", "").removeprefix("models/") for item in response.json().get("models", []) if isinstance(item, dict)}
-    available = [m for m in GEMINI_MODELS if m in returned_names]
+    if response.status_code != 200:
+        raise RuntimeError(f"Gemini model lookup failed (HTTP {response.status_code}).")
+    models = response.json().get("models", [])
+    supported = {
+        item.get("name", "").removeprefix("models/")
+        for item in models if isinstance(item, dict)
+        and "generateContent" in item.get("supportedGenerationMethods", ["generateContent"])
+    }
+    available = [name for name in GEMINI_MODELS if name in supported]
     if not available:
-        available = [m for m in returned_names if "flash" in m]
+        available = sorted((name for name in supported if "flash" in name and "live" not in name and "image" not in name), reverse=True)
     if not available:
-        raise RuntimeError("None of the supported Gemini models are enabled.")
+        raise RuntimeError("No Gemini Flash model supporting generateContent is available for this key.")
     return available
 
 
@@ -368,13 +378,14 @@ def tajweed_response_schema():
 
 
 def post_interaction_with_retry(key, base_request_body, candidate_models):
+    last_error = "No model succeeded."
     for model_id in candidate_models:
         url = f"{GEMINI_INTERACTIONS_URL}/{model_id}:generateContent"
         body = {
             "contents": [{"parts": [{"text": base_request_body["input"][0]["text"]}, 
                                     {"inline_data": {"mime_type": base_request_body["input"][1]["mime_type"], "data": base_request_body["input"][1]["data"]}}]}],
             "systemInstruction": {"parts": [{"text": base_request_body["system_instruction"]}]},
-            "generationConfig": {"responseMimeType": "application/json", "responseSchema": base_request_body["response_format"]["schema"], "temperature": 0.1}
+            "generationConfig": {"responseMimeType": "application/json", "responseSchema": base_request_body["response_format"]["schema"], "temperature": 0.1, "maxOutputTokens": 4096}
         }
         
         for attempt in range(2):
@@ -382,9 +393,16 @@ def post_interaction_with_retry(key, base_request_body, candidate_models):
                 response = requests.post(url, headers={"x-goog-api-key": key, "Content-Type": "application/json"}, json=body, timeout=45)
                 if response.status_code == 200:
                     return response
-            except Exception:
-                pass
-    raise RuntimeError("Gemini service temporarily unavailable.")
+                try:
+                    detail = response.json().get("error", {}).get("message", "")
+                except ValueError:
+                    detail = ""
+                last_error = f"{model_id}: HTTP {response.status_code}" + (f" — {detail[:180]}" if detail else "")
+                if response.status_code in (400, 401, 403, 404):
+                    break
+            except requests.RequestException as exc:
+                last_error = f"{model_id}: network or timeout error ({type(exc).__name__})"
+    raise RuntimeError("AI audio review is currently unavailable. " + last_error)
 
 
 def analyse_recitation(audio_bytes, mime_type, words, strictness, teacher_gender):
@@ -397,8 +415,22 @@ def analyse_recitation(audio_bytes, mime_type, words, strictness, teacher_gender
     normalized_mime = normalize_audio_mime_type(mime_type)
     candidate_models = get_available_models(key)
     expected_text = [{"word_i": i, "ayah": w["ayah"], "text": w["ar"]} for i, w in enumerate(words)]
-    system_instruction = f"You are a master Qur'an teacher ({teacher_gender}). Evaluate recitation with professional academic precision. Return precise JSON assessing letter-by-letter Tajweed statuses ('good' or 'review'), word feedback, tafsir summary, and teacher label."
-    prompt = f"Evaluate this recitation against the Uthmani text. Strictness: {strictness}.\nExpected words: {json.dumps(expected_text, ensure_ascii=False)}"
+    system_instruction = (
+        f"You are an AI Qur'an practice assistant in a {teacher_gender.lower()} tutor persona, "
+        "not a certified scholar or a human listening teacher. Use the reference in Hafs. "
+        "Assess ONLY observations supported by the recording. If a vowel, articulation point, "
+        "elongation or specific Tajweed rule cannot be heard reliably, label it 'uncertain'. "
+        "Do not invent a score, mistake, timestamp, rule assessment or evidence. "
+        "Distinguish actual omission and substitution from pronunciation uncertainty. "
+        "Focus on a few actionable corrections, accounting for noise and accent. "
+        "The supplied reference identifies expected words, not what was actually spoken. "
+        "Return the requested JSON."
+    )
+    prompt = (
+        f"Review this recitation carefully, emphasizing verifiable observations. "
+        f"Strictness: {strictness}. If the audio is insufficiently clear, return uncertain. "
+        f"Expected words: {json.dumps(expected_text, ensure_ascii=False)}"
+    )
     encoded_audio = base64.b64encode(audio_bytes).decode("ascii")
     base_request_body = {
         "system_instruction": system_instruction, "store": False,
@@ -1136,31 +1168,22 @@ render_player(
 st.markdown("<br>", unsafe_allow_html=True)
 
 # Optional Post-Session Deep Analysis Upload
-st.markdown("### 🎙️ Stage 3: Deep Tajweed Scoring & Scholarly Feedback")
+st.markdown("### 🎙️ Stage 3: Recorded Recitation Review")
+st.caption("AI-assisted practice feedback, not a certified teacher's Tajweed assessment. Subtle vowel and articulation details may be uncertain.")
 _, centre, _ = st.columns([1, 2, 1])
 with centre:
-    recording = st.audio_input("Optional: Upload final recording for deep Gemini Tajweed report", key=f"rec_{passage_key}_{st.session_state.tries}")
+    recording = st.audio_input("Record a short passage for optional AI review", key=f"rec_{passage_key}_{st.session_state.tries}")
 
 if recording:
     st.audio(recording)
-    if st.button("Submit for Deep Scholarly Report", type="primary", use_container_width=True):
-        progress_bar = st.progress(0, text="Initializing Deep Tajweed analysis...")
-        for percent in range(1, 100):
-            time.sleep(0.015)
-            if percent == 30:
-                progress_bar.progress(percent, text="Evaluating harakah & vowel precision (30%)...")
-            elif percent == 70:
-                progress_bar.progress(percent, text="Compiling 16 Tajweed rules assessment (70%)...")
-            elif percent == 90:
-                progress_bar.progress(percent, text="Generating scholarly feedback & tafsir (90%)...")
-
+    if st.button("Review my recording with AI", type="primary", use_container_width=True):
         try:
-            states, l_res, w_fb, taj_assess, fb, tafsir, t_label = analyse_recitation(
-                recording.getvalue(), recording.type or "audio/wav", words, st.session_state.strictness, st.session_state.teacher_gender
-            )
-            progress_bar.progress(100, text="Analysis complete!")
-            time.sleep(0.3)
-            
+            with st.spinner("Reviewing your recording..."):
+                states, l_res, w_fb, taj_assess, fb, tafsir, t_label = analyse_recitation(
+                    recording.getvalue(), recording.type or "audio/wav", words,
+                    st.session_state.strictness, st.session_state.teacher_gender
+                )
+
             st.session_state.teacher_label = t_label
             st.session_state.results[result_key] = {
                 "states": states, "letter_results": l_res, "word_feedback": w_fb,
@@ -1171,8 +1194,7 @@ if recording:
                 st.session_state.paid.append(result_key)
             st.rerun()
         except Exception as e:
-            progress_bar.empty()
-            st.error(f"Analysis failed: {e}")
+            st.error(f"AI recording review failed: {e}")
 
 # Stage 3 & 4: Feedback, Corrections & Tafsir Dashboard
 if saved:
@@ -1181,12 +1203,13 @@ if saved:
     c1, c2 = st.columns(2)
     with c1: 
         st.markdown("#### 🔍 Stage 3: What to Repeat & Correct")
-        st.success(saved["feedback"])
+        st.info(saved["feedback"])
     with c2: 
         st.markdown("#### 📖 Stage 4: Tafsir Context & Meaning")
         st.info(saved.get("tafsir_summary", ""))
 
-    st.markdown("#### 🛠️ Detailed 16-Rule Tajweed Breakdown")
+    st.markdown("#### 🛠️ Possible Tajweed Practice Points")
+    st.caption("Preliminary AI observations: verify subtle makharij, harakat and elongation with a qualified teacher.")
     for ta in saved.get("tajweed_assessments", []):
         correctly_applied = ta.get("applied_correctly", True)
         icon = "✅" if correctly_applied else "❌"
