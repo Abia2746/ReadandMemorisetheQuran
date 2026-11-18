@@ -9,7 +9,7 @@ A responsive original Qur'an learning application built with Streamlit and Strea
 - **Listen** — reciter playback for the selected ayahs, with word highlighting only where timestamp data exists.
 - **Cloud Live transcription (beta, recommended on iPad)** — after pressing Start, the app requests microphone permission and obtains a short-lived, single-use Gemini token from Streamlit. Your browser streams 16 kHz PCM audio directly to the `gemini-3.5-transcribe-live` model, and returned interim/final Arabic text drives approximate word highlighting. The permanent `GEMINI_API_KEY` stays on the server. This needs an API key with access to the model and may use the account's API quota.
 - **Browser word-following fallback** — local browser speech-recognition APIs are offered as an alternative, but Safari may fail even when the microphone itself is working. A separate audio-level test helps distinguish those failures.
-- **Experimental on-device tracking** — opt-in \`@tilawa/core\` / ONNX Runtime WASM engine; the model may not run on all devices. It is not required for Read, Memorise, or Listen.
+- **Qur'an-specific on-device tracking (preview)** — integrates open-source `@tilawa/core@next/web` 1.0 preview API. First use downloads a mobile-oriented acoustic model and Quran reference. Its iOS Safari support is not yet validated. This does not replace a Tajweed teacher.
 - **Record and review** — optional Gemini-assisted feedback from recorded audio, using the account owner's configured API key. This is AI practice feedback, not qualified Tajweed certification.
 - **Ask the teacher** — questions about vocabulary, verses, and terminology. Responses may be inaccurate and should be verified for religious rulings.
 - **Journey** — a local repetition counter plus existing XP and streak tracking.
@@ -57,3 +57,9 @@ Cloud Live is an optional third-party transcription service. Microphone audio is
 ## Automated checks
 
 The GitHub workflow in \`.github/workflows/validate-studio.yml\` validates Python syntax, frontend JavaScript syntax, and presence of the design assets on new commits.
+
+## Open-source recognition credit
+
+The on-device listener is provided by the **Tilawa** open-source project (`@tilawa/core`, [yazinsai/tilawa](https://github.com/yazinsai/tilawa)). Code is MIT-licensed, while the model/dataset components have separate attribution requirements explained in the upstream [NOTICE.md](https://github.com/yazinsai/tilawa/blob/main/NOTICE.md). The reader and interface in this project remain independently implemented. This project is **not affiliated with or endorsed by Tilawa or Tarteel**. Tarteel does not offer a public recognition API at the time of writing.
+
+Tilawa's 1.0-rc support matrix explicitly lists **iOS Safari as untested**. It checks word errors and skips, not fine articulation or Tajweed; users should not interpret a locked word position as certified pronunciation correctness. Test on real devices before advertising reliable recitation following.
