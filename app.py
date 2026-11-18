@@ -610,7 +610,7 @@ h1,h2,h3 {color:#e9bd61!important;}
   async function loadTrackingEngine() {
     const [core, runtime] = await Promise.all([
       import("https://esm.sh/@tilawa/core@next/web"),
-      import("https://esm.sh/onnxruntime-web@1.30.0")
+      import("https://esm.sh/onnxruntime-web@1.30.0/wasm")
     ]);
     if (typeof core.createTilawa !== "function") throw new Error("Tracking engine did not expose createTilawa.");
     createTilawa = core.createTilawa;
@@ -826,7 +826,7 @@ h1,h2,h3 {color:#e9bd61!important;}
     });
   engineSelect.setAttribute("aria-label", "Live tracking engine");
   const engineHelp = el("div", "tracker-hint",
-    "Browser speech may send audio to your browser provider. On-device AI keeps inference local but needs a compatible model. Neither mode alone verifies Tajweed.");
+    "iPad mode: browser speech follows approximate Arabic words and may use your browser's speech service. Experimental local AI loads a large model. Detailed Tajweed still requires recording review and teacher verification.");
   liveControls.insertBefore(engineSelect, startLiveBtn);
   liveControls.insertBefore(engineHelp, startLiveBtn);
   const heardText = el("div", "heard-text");
@@ -881,7 +881,13 @@ h1,h2,h3 {color:#e9bd61!important;}
     if(index<0||index>=wordNodes.length)return;
     wordNodes.forEach((node,i)=>{
       node.classList.toggle("live-active",i===index);
-      if(confirmed && i<=index)node.classList.add("live-heard");
+      if(confirmed && i<=index){
+        node.classList.add("live-heard");
+        if(memoryHidden){
+          const visibleArabic=node.querySelector(".arabic-word");
+          if(visibleArabic) visibleArabic.style.filter="none";
+        }
+      }
     });
     const node=wordNodes[index];
     if(node)node.scrollIntoView({behavior:"smooth",block:"nearest",inline:"center"});
