@@ -114,7 +114,7 @@ export default function(component) {
   micPanel.appendChild(micTop);
   const micBody=CE("div","am-scaffold");
   const micDescription=CE("p","am-note",
-     "Cloud Live sends your recitation audio to Gemini after you press Start. It can return Arabic words while you speak, but it does not certify vowels or Tajweed. It may use your Gemini API quota.");
+     "Quran-specific tracking uses an on-device recitation model with word-progress events. First use downloads a large model; iPad Safari support varies. Cloud Live remains an optional fallback.");
   const micControls=CE("div","am-control-row");
   const micButton=btn("🎙 Start listening","am-button am-primary");
 
@@ -123,7 +123,7 @@ export default function(component) {
   [
     ["cloud",D.cloudAvailable?"Cloud Live · recommended":"Cloud Live · requires API key"],
     ["browser","Safari/browser recogniser · fallback"],
-    ["local","On-device AI · experimental"]
+    ["local","Quran-specific model · on-device beta"]
   ].forEach(([value,label])=>{
     const op=CE("option","",label);op.value=value;engineSelect.appendChild(op);
   });
@@ -131,7 +131,7 @@ export default function(component) {
   // when microphone audio capture succeeds. Never silently select it.
   const isAppleWebKit=/iPad|iPhone|iPod/.test(navigator.userAgent||"")||
     (navigator.platform==="MacIntel"&&navigator.maxTouchPoints>1);
-  engineSelect.value=(D.cloudAvailable||isAppleWebKit)?"cloud":"browser";
+  engineSelect.value="local";
   append(micControls,micButton,engineSelect);
   const meter=CE("div","am-meter"),meterFill=CE("div","");
   meter.appendChild(meterFill);
@@ -792,47 +792,156 @@ export default function(component) {
   }
 
   async function localLive(){
-    // Experimental, only selected explicitly. Browser speech remains the default.
-    const [core,runtime]=await Promise.all([
-      import("https://esm.sh/@tilawa/core@next/web"),
-      import("https://esm.sh/onnxruntime-web@1.30.0/wasm")
+    // Quran-specific on-device speech recognition from open-source @tilawa/core.
+    // Uses the SDK's documented SessionRunner / createTilawaSession / feed APIs.
+    // The previous code called nonexistent createTilawa() and model.listen().
+    if(!navigator.mediaDevices?.getUserMedia)throw Error("Microphone unavailable. Open on HTTPS.");
+    if(typeof BigInt64Array==="undefined")throw Error("This browser cannot run the Quran model.");
+    setStatus("Preparing the Quran-specific recognition model (first visit downloads about 90 MB)...","active");
+    const src="https://github.com/yazinsai/tilawa/releases/download/v0.2.0/";
+    const quranUrl="https://raw.githubusercontent.com/yazinsai/tilawa/main/web/frontend/public/quran.json";
+    const [core,ortModule]=await Promise.all([
+      import("https://esm.sh/@tilawa/core?bundle"),
+      import("https://esm.sh/onnxruntime-web@1.22.0/wasm?bundle")
     ]);
-    const ort=runtime;
+    if(typeof core.createTilawaSession!=="function")throw Error("The Quran SDK is not available from its module source.");
+    const ort=ortModule.default?.InferenceSession?ortModule.default:ortModule;
+    if(!ort.InferenceSession || !ort.Tensor)throw Error("The ONNX model runtime is unavailable on this iPad.");
     if(ort.env?.wasm){
-      ort.env.wasm.wasmPaths="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.30.0/dist/";
-      ort.env.wasm.numThreads=1;ort.env.wasm.proxy=false;
+      ort.env.wasm.numThreads=1;
+      ort.env.wasm.proxy=false;
+      ort.env.wasm.wasmPaths="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.22.0/dist/";
     }
-    if(typeof core.createTilawa!=="function")throw new Error("The experimental engine is unavailable.");
-    setStatus("Loading the optional on-device Quran tracking model...","active");
-    const model=await core.createTilawa({ort,onProgress:p=>setStatus("Loading model · "+String(p.stage||"")+
-      " "+Math.round((p.fraction||0)*100)+"%","active")});
-    let mic;
-    try{
-      const session=model.startMemorization({surah:Number(meta.s),fromAyah:Number(meta.a),toAyah:Number(meta.end)},
-        {confirm:{after:"next-word"}});
-      const offsets=[];let current=0;
-      (D.trackWordCounts||[]).forEach(n=>{offsets.push(current);current+=n});
-      const locate=o=>{
-        const verse=(o.ayah??o.verse??meta.a)-meta.a;
-        const word=o.word-1;
-        if(verse<0||verse>=offsets.length||word<0||word>=D.trackWordCounts[verse])return -1;
-        return offsets[verse]+word;
+    async function getAsset(url,label){
+      setStatus("Downloading Quran model assets · "+label+"...","active");
+      const response=await fetch(url,{mode:"cors"});
+      if(!response.ok)throw Error(label+" download returned HTTP "+response.status);
+      return response;
+    }
+    const [modelResponse,vocabResponse,tokensResponse,quranResponse]=await Promise.all([
+      getAsset(src+"fastconformer_full_mixed.onnx","acoustic model"),
+      getAsset(src+"vocab.json","vocabulary"),
+      getAsset(src+"quran_ctc_tokens.json","Quran token index"),
+      getAsset(quranUrl,"Quran database")
+    ]);
+    const [modelBytes,vocab,quranCtcTokens,quran]=await Promise.all([
+      modelResponse.arrayBuffer(),vocabResponse.json(),tokensResponse.json(),quranResponse.json()
+    ]);
+    setStatus("Loading Quran acoustic model. This can take a moment on iPad...","active");
+    let sessionOrt;
+    try {
+      sessionOrt=await ort.InferenceSession.create(modelBytes,{executionProviders:["wasm"]});
+    }catch(error){
+      throw Error("On-device Quran model could not run on this browser: "+String(error?.message||error));
+    }
+    let stream=null,ctx=null,sourceNode=null,processor=null,sink=null;
+    let closed=false,feeding=false,pending=[];
+    let currentVerse=Number(meta.a);
+    const getGlobalWord=(ayah,localIndex)=>{
+      if(Number(ayah)<Number(meta.a)||Number(ayah)>Number(meta.end))return -1;
+      const counts=Array.isArray(D.trackWordCounts)?D.trackWordCounts:[];
+      const verseIdx=Number(ayah)-Number(meta.a);
+      const index=Number(localIndex);
+      // SDK word_progress.word_index is zero based.
+      if(!Number.isInteger(index)||index<0||index>=Number(counts[verseIdx]))return -1;
+      return counts.slice(0,verseIdx).reduce((a,b)=>a+Number(b||0),0)+index;
+    };
+    const runner={
+      async run(inputAudio){
+        const signal=new ort.Tensor("float32",inputAudio,[1,inputAudio.length]);
+        const length=new ort.Tensor("int64",BigInt64Array.from([BigInt(inputAudio.length)]),[1]);
+        const result=await sessionOrt.run({audio_signal:signal,length});
+        const tensor=result[sessionOrt.outputNames[0]];
+        const dims=tensor.dims;
+        return {
+          logprobs:tensor.data,
+          timeSteps:Number(dims[dims.length-2]),
+          vocabSize:Number(dims[dims.length-1])
+        };
+      }
+    };
+    const session=core.createTilawaSession(runner,{vocab,quranCtcTokens,quran},{
+      config:"balanced",
+      onOutput:(message)=>{
+        if(!live||closed||!message)return;
+        if(message.type==="verse_match"&&Number(message.surah)===Number(meta.s)){
+          currentVerse=Number(message.ayah);
+          setStatus("Quran-specific model matched ayah "+currentVerse+". Listening for words...","active");
+        }else if(message.type==="word_progress"&&Number(message.surah)===Number(meta.s)){
+          const verse=Number(message.ayah);
+          const i=getGlobalWord(verse,message.word_index);
+          if(i>=0){
+            mark(i,true);
+            setStatus("Quran model following ayah "+verse+" · word "+(Number(message.word_index)+1),"active");
+          }
+        }
+      }
+    });
+    const cleanup=async()=>{
+      closed=true;pending=[];
+      if(processor)processor.onaudioprocess=null;
+      try{processor?.disconnect()}catch(_){}
+      try{sourceNode?.disconnect()}catch(_){}
+      try{sink?.disconnect()}catch(_){}
+      try{stream?.getTracks().forEach(track=>track.stop())}catch(_){}
+      try{await ctx?.close()}catch(_){}
+      try{await sessionOrt?.release()}catch(_){}
+    };
+    cleanupLive=cleanup;
+    try {
+      stream=await navigator.mediaDevices.getUserMedia({audio:{
+        echoCancellation:true,noiseSuppression:true,autoGainControl:true
+      }});
+      ctx=new (window.AudioContext||window.webkitAudioContext)();
+      await ctx.resume();
+      sourceNode=ctx.createMediaStreamSource(stream);
+      processor=ctx.createScriptProcessor(4096,1,1);
+      sink=ctx.createGain();sink.gain.value=0;
+      sourceNode.connect(processor);processor.connect(sink);sink.connect(ctx.destination);
+      let resampleRemainder=0;
+      const resample=input=>{
+        const ratio=ctx.sampleRate/16000,output=[];
+        for(let p=resampleRemainder;p<input.length;p+=ratio){
+          const index=Math.floor(p),weight=p-index;
+          output.push(input[index]*(1-weight)+input[Math.min(index+1,input.length-1)]*weight);
+        }
+        resampleRemainder=(resampleRemainder+Math.ceil(input.length/ratio)*ratio)-input.length;
+        if(!Number.isFinite(resampleRemainder)||resampleRemainder>=ratio||resampleRemainder<0)resampleRemainder=0;
+        return output;
       };
-      session.subscribe(event=>{
-        if(!live)return;
-        if(event.type==="position"&&event.state==="locked"&&event.observed?.[0]){
-          const idx=locate(event.observed[0]);
-          if(idx>=0){mark(idx,false);setStatus("Local model following · "+Math.round(100*(idx+1)/Math.max(1,words.length))+"%","active")}
-        }
-        if(event.type==="checker"&&event.state==="confirmed"){
-          const idx=locate(event.location);
-          if(idx>=0){mark(idx,event.errorClass==="correct")}
-        }
-      });
-      mic=await model.listen(session);
-    }catch(e){await model.dispose();throw e}
-    cleanupLive=async()=>{try{await mic?.stop()}finally{await model.dispose()}};
-    setStatus("Local model listening. Word tracking is experimental.","active");
+      const flush=async()=>{
+        if(feeding||closed||!live||pending.length<4800)return;
+        feeding=true;
+        try{
+          while(pending.length>=4800&&!closed&&live){
+            const part=Float32Array.from(pending.splice(0,4800));
+            await session.feed(part);
+          }
+        }catch(error){
+          setStatus("Quran recognition error: "+String(error?.message||error),"error");
+          closed=true;
+          void stopLive();
+        }finally{feeding=false}
+      };
+      processor.onaudioprocess=event=>{
+        if(closed||!live)return;
+        const input=event.inputBuffer.getChannelData(0);
+        event.outputBuffer.getChannelData(0).fill(0);
+        const resampled=resample(input);
+        // Keep at most two seconds of queued audio to avoid CPU overload.
+        if(pending.length<32000)pending.push(...resampled);
+        let rms=0;
+        for(let i=0;i<input.length;i++)rms+=input[i]*input[i];
+        meterFill.style.width=Math.min(100,Math.sqrt(rms/input.length)*850)+"%";
+        void flush();
+      };
+      setStatus("Quran-specific model listening · recite your selected ayah...","active");
+      micText.textContent="Quran model loaded. Microphone audio stays on this device during recognition.";
+    }catch(error){
+      await cleanup();
+      cleanupLive=null;
+      throw error;
+    }
   }
   micButton.onclick=async()=>{
     if(live){await stopLive();return}
