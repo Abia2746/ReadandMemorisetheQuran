@@ -114,7 +114,7 @@ export default function(component) {
   micPanel.appendChild(micTop);
   const micBody=CE("div","am-scaffold");
   const micDescription=CE("p","am-note",
-     "Quran-specific tracking uses an on-device recitation model with word-progress events. First use downloads a large model; iPad Safari support varies. Cloud Live remains an optional fallback.");
+     "Recite the displayed ayahs and the Quran-specific listener follows your place. In Memorise mode each recognised word reveals its Arabic. In Read mode the word lights up. This beta cannot check Tajweed vowels.");
   const micControls=CE("div","am-control-row");
   const micButton=btn("🎙 Start listening","am-button am-primary");
 
@@ -136,13 +136,7 @@ export default function(component) {
   const meter=CE("div","am-meter"),meterFill=CE("div","");
   meter.appendChild(meterFill);
   const micText=CE("div","am-note","Ready to begin live recitation.");
-  const micMessage=CE("div","am-note",D.cloudError || (
-    D.cloudAvailable
-      ? "Cloud Live is ready to request a short-lived session token. Audio is sent to Google only after you press Start."
-      : isAppleWebKit
-        ? "Safari blocks speech recognition on some iPads (service-not-allowed). Microphone access is working; live highlighting needs Cloud Live, which requires GEMINI_API_KEY in Streamlit secrets. You can still use Record and review below."
-        : "Cloud Live needs GEMINI_API_KEY in Streamlit secrets. Browser recognition may be unavailable even if the mic test succeeds."
-  ));
+  const micMessage=CE("div","am-note","Quran-specific local tracking selected. Audio stays on your device; the mobile recognition model downloads on first use. Cloud Live remains available in the menu.");
   append(micBody,micDescription,micControls,meter,micText,micMessage);
   micPanel.appendChild(micBody);
   main.appendChild(micPanel);
@@ -408,7 +402,9 @@ export default function(component) {
   resetBtn.onclick=()=>{currentWord=-1;confirmedWord=-1;progressFill.style.width="0%";setStatus("Ready to practise from the beginning.");transcript.textContent="";renderWords()};
   recordHint.onclick=()=>{
     micPanel.scrollIntoView({behavior:"smooth",block:"center"});
-    if(!live)micButton.focus();
+    // Start capture from the original tap, preserving the iPad user gesture.
+    if(!live)void micButton.onclick();
+    else micButton.focus();
   };
   repeatCount.textContent=String(repetitions)+" repetitions";
   repeatButton.onclick=()=>{
@@ -810,7 +806,13 @@ export default function(component) {
     return mod;
   });
   let tilawaSdkReady=null,tilawaSdkError=null;
-  tilawaSdkModule.then(m=>{tilawaSdkReady=m}).catch(e=>{tilawaSdkError=e});
+  tilawaSdkModule.then(m=>{
+    tilawaSdkReady=m;
+    if(!live)micText.textContent="Quran recognition SDK is ready. The model downloads when you first start reciting.";
+  }).catch(e=>{
+    tilawaSdkError=e;
+    micText.textContent="The Quran SDK could not initialise. Cloud Live is available as a fallback.";
+  });
   async function localLive(prepared){
     // prepareMicrophone() is invoked synchronously in the button event, before
     // asynchronous model downloads, to preserve Safari's user gesture.
