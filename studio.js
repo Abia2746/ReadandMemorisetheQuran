@@ -21,11 +21,15 @@ export default function(component) {
   append(brandText,CE("strong","", "Al-Mu'allim"),CE("small","", "Your Qur'an companion"));
   append(brand,seal,brandText);
   const headRight=CE("div","am-head-right");
+  const versionChip=CE("span","am-chip","Qur'an listener · R3");
+  versionChip.setAttribute("title","Build 2026-11-18 R3 · Qur'an-specific on-device SDK");
   append(headRight,
+    versionChip,
     CE("span","am-chip","✧ "+String(meta.xp||0)+" XP"),
     CE("span","am-chip","✺ "+String(meta.streak||0)+" day streak"));
   append(header,brand,headRight);
   const app=CE("section","am-app");
+  app.dataset.build="quran-listener-r3-20261118";
   app.appendChild(header);
   root.appendChild(app);
   const tabs=CE("div","am-tabs");
@@ -127,15 +131,15 @@ export default function(component) {
   ].forEach(([value,label])=>{
     const op=CE("option","",label);op.value=value;engineSelect.appendChild(op);
   });
-  // iPad Safari often blocks the browser's speech recognition service even
-  // when microphone audio capture succeeds. Never silently select it.
+  // iPad Safari often blocks built-in SpeechRecognition.
+  // Prefer the Quran-specific model, which identifies the passage itself.
   const isAppleWebKit=/iPad|iPhone|iPod/.test(navigator.userAgent||"")||
     (navigator.platform==="MacIntel"&&navigator.maxTouchPoints>1);
   engineSelect.value="local";
   append(micControls,micButton,engineSelect);
   const meter=CE("div","am-meter"),meterFill=CE("div","");
   meter.appendChild(meterFill);
-  const micText=CE("div","am-note","Ready to begin live recitation.");
+  const micText=CE("div","am-note","Preparing Qur’an recognition SDK…");
   const micMessage=CE("div","am-note","Quran-specific local tracking selected. Audio stays on your device; the mobile recognition model downloads on first use. Cloud Live remains available in the menu.");
   append(micBody,micDescription,micControls,meter,micText,micMessage);
   micPanel.appendChild(micBody);
@@ -799,7 +803,7 @@ export default function(component) {
   // the legacy createTilawaSession() SDK. Import once on page mount so
   // prepareMicrophone() can be called synchronously in the iPad tap handler.
   const tilawaSdkModule=import(
-    "https://esm.sh/@tilawa/core@next/web?bundle&deps=onnxruntime-web@1.30.0"
+    "https://esm.sh/@tilawa/core@1.0.0-rc.0/web?bundle&deps=onnxruntime-web@1.30.0"
   ).then(mod=>{
     if(typeof mod.createTilawa!=="function"||typeof mod.prepareMicrophone!=="function")
       throw Error("Tilawa Quran SDK exports are unavailable.");
@@ -808,10 +812,16 @@ export default function(component) {
   let tilawaSdkReady=null,tilawaSdkError=null;
   tilawaSdkModule.then(m=>{
     tilawaSdkReady=m;
-    if(!live)micText.textContent="Quran recognition SDK is ready. The model downloads when you first start reciting.";
+    if(!live){
+      micText.textContent="Qur'an SDK ready · tap Start listening to load the model and begin.";
+      micMessage.textContent="R3 · Qur'an-specific on-device recognition selected. First use downloads the model. Cloud Live is an optional fallback.";
+    }
   }).catch(e=>{
     tilawaSdkError=e;
-    micText.textContent="The Quran SDK could not initialise. Cloud Live is available as a fallback.";
+    const reason=String(e?.message||e).slice(0,220);
+    micText.textContent="Qur'an SDK failed to load: "+reason;
+    micMessage.textContent="If the model module cannot load, the reader still works. Cloud Live is an alternate transcription method.";
+    setStatus("Recognition engine unavailable: "+reason,"error");
   });
   async function localLive(prepared){
     // prepareMicrophone() is invoked synchronously in the button event, before
@@ -914,7 +924,7 @@ export default function(component) {
       if(!audio.paused)audio.pause();
       if(engineSelect.value==="local"){
         if(tilawaSdkError)throw Error("Quran SDK could not load: "+String(tilawaSdkError?.message||tilawaSdkError));
-        if(!tilawaSdkReady)throw Error("Quran SDK is still initializing. Tap Start again once it finishes.");
+        if(!tilawaSdkReady)throw Error("The Qur'an SDK has not loaded. Check the loading status shown below the button, then tap again.");
         // MUST precede every await in this click handler for iPad Safari.
         preparedLocalMic=tilawaSdkReady.prepareMicrophone();
       }
