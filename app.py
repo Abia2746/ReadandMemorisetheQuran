@@ -524,6 +524,30 @@ audio {filter:sepia(.25);}
 .track-progress-fill {height:100%;width:0;background:linear-gradient(90deg,#c18d35,#f4dc9b);transition:width .25s;}
 .teacher-note {font-size:12px;color:#d9c09b;line-height:1.5;margin:9px 0;}
 @media(max-width:640px){.shell{padding:8px;gap:10px}.panel{padding:12px;border-radius:18px}.arabic-area{max-height:520px;padding:18px 4px;gap:12px 2px}.arabic-word{font-size:32px}.word{padding:5px;min-width:30px}.pill{padding:7px 10px}.brand{font-size:13px}.mushaf-intro .bismillah{font-size:27px}}
+
+/* Continuous Mushaf layout: preserve Arabic joining and avoid translation overlap */
+body {background:#241812;}
+.shell {max-width:1050px;}
+.arabic-area {display:block;direction:rtl;text-align:justify;text-align-last:center;max-height:690px;min-height:300px;overflow-y:auto;padding:26px 22px 44px;line-height:3.05;word-spacing:.15em;scroll-padding-top:80px;}
+.word {display:inline;position:relative;min-width:0;padding:0 2px;margin:0 3px;border:0;border-radius:6px;line-height:inherit;vertical-align:baseline;white-space:nowrap;}
+.arabic-word {display:inline;font-family:'Amiri Quran',serif;font-size:clamp(33px,4vw,49px);line-height:inherit;direction:rtl;white-space:nowrap;}
+.letter {display:inline;vertical-align:baseline;margin:0;padding:0;border-radius:3px;}
+.letter-char {display:inline;line-height:inherit;}
+.word .meta,.translation {display:none!important;}
+.mark-label {display:none!important;}
+.verse-marker {font:600 17px Inter,sans-serif;color:#e8c575;display:inline-block;direction:ltr;vertical-align:middle;margin:0 9px;}
+.word.active-sheikh,.word.live-active {transform:none;background:#d9aa483b;box-shadow:0 0 0 4px #d9aa4820;border:0;}
+.word.live-good {background:#2cae6d36;border:0;}
+.word.live-error {background:#ef756b36;border:0;}
+.live-controls {margin:10px auto;position:relative;}
+.btn-tilawa {font-size:16px;min-height:60px;padding:17px 32px;}
+.tracker-panel {background:#1a120e;border-radius:16px;}
+.panel {overflow:hidden;}
+.stApp {background:#241812!important;}
+[data-testid="stHeader"] {background:#241812!important;}
+h1,h2,h3 {color:#e9bd61!important;}
+.teacher-container {background:#302119!important;border-color:#98723f!important;}
+@media(max-width:700px){.arabic-area{padding:15px 9px 30px;line-height:2.85;text-align:right}.arabic-word{font-size:35px}.word{margin:0 2px}.panel{padding:12px}.shell{padding:6px}}
 </style>
 </head>
 <body>
@@ -579,6 +603,8 @@ audio {filter:sepia(.25);}
   toolbar.append(memoryBtn, marksBtn);
   recitationPanel.appendChild(toolbar);
   const arabicArea = el("div", "arabic-area");
+  arabicArea.setAttribute("lang", "ar");
+  arabicArea.setAttribute("aria-label", "Qur'an passage in Uthmani script");
   const wordNodes = [];
 
   D.words.forEach((word, index) => {
@@ -595,9 +621,11 @@ audio {filter:sepia(.25);}
       arabic.appendChild(unit);
     });
     wrapper.appendChild(arabic);
-    if (word.en) { const translation = el("div", "translation", word.en); if (D.reciteFromMemory) translation.style.display = "none"; wrapper.appendChild(translation); }
+    // Keep translations out of the continuous Arabic Mushaf; show them in a separate study panel.
     if (D.reciteFromMemory) { arabic.style.filter = "blur(9px)"; arabic.style.transition = "filter 180ms ease"; wrapper.dataset.memoryHidden = "true"; }
-    wrapper.appendChild(el("div", "meta", "Ayah " + word.ayah));
+    if (index === D.words.length - 1 || D.words[index + 1].ayah !== word.ayah) {
+      wrapper.appendChild(el("span", "verse-marker", "۞ " + word.ayah));
+    }
     if (D.states && D.states[index]) wrapper.classList.add(D.states[index]);
     arabicArea.appendChild(wrapper);
     wordNodes.push(wrapper);
@@ -611,8 +639,7 @@ audio {filter:sepia(.25);}
     wordNodes.forEach(node => {
       const ar = node.querySelector(".arabic-word");
       if (ar) ar.style.filter = memoryHidden && !node.classList.contains("live-good") ? "blur(9px)" : "none";
-      const translation = node.querySelector(".translation");
-      if (translation) translation.style.display = memoryHidden ? "none" : "";
+      // The Mushaf does not interleave translations with Arabic words.
     });
   };
   marksBtn.onclick = () => {
@@ -677,6 +704,7 @@ audio {filter:sepia(.25);}
       }
     };
   }
+  // Audio playback is secondary to live recitation.
   recitationPanel.appendChild(audioBox);
 
   // Stage 2: Client-side Live Tracking via @tilawa/core
@@ -693,8 +721,8 @@ audio {filter:sepia(.25);}
   trackerPanel.appendChild(progressTrack);
   liveControls.appendChild(trackerPanel);
   liveControls.appendChild(startLiveBtn);
-  recitationPanel.appendChild(liveControls);
-  recitationPanel.appendChild(liveStatus);
+  recitationPanel.insertBefore(liveControls, arabicArea);
+  recitationPanel.insertBefore(liveStatus, arabicArea);
 
   let stopTilawaFn = null;
   let isLiveActive = false;
@@ -812,7 +840,7 @@ def render_player(words, mode, states=None, audio_tracks=None, feedback="", meta
         "trackWordCounts": track_word_counts or [], "reciteFromMemory": recite_from_memory,
         "segments": segments or []
     }
-    components.html(PLAYER_HTML.replace("__DATA__", json.dumps(payload, ensure_ascii=False).replace("</", "<\\/")), height=620, scrolling=True)
+    components.html(PLAYER_HTML.replace("__DATA__", json.dumps(payload, ensure_ascii=False).replace("</", "<\\/")), height=850, scrolling=True)
 
 
 # ----------------------------- Session & UI -----------------------------
@@ -823,7 +851,7 @@ for k, v in DEFAULTS.items(): st.session_state.setdefault(k, v)
 theme_colours = {"Starry Night": "#0a0f1c", "Brown": "#1A1510", "Black": "#000000"}
 st.markdown(f"""
 <style>
-.stApp {{ background: {theme_colours.get(st.session_state.theme, '#0a0f1c')}; color: #E8D5B5; font-family: Inter, sans-serif; }}
+.stApp {{ background: #241812; color: #E8D5B5; font-family: Inter, sans-serif; }}
 h1, h2, h3, h4 {{ color: #D4AF37 !important; }}
 .teacher-container {{
     display: flex; align-items: center; background: rgba(30,25,20,0.85);
@@ -878,7 +906,7 @@ except Exception as e:
 xp, streak, _ = get_user(st.session_state.name)
 meta = {"s": surah, "a": ayah, "end": end_ayah, "xp": xp, "streak": streak}
 
-st.markdown("<h1 style='text-align:center'>Al-Mu'allim Academy</h1>", unsafe_allow_html=True)
+st.markdown("<h1 style='text-align:center;font-size:clamp(1.5rem,4vw,2.4rem)'>✦ Al-Mu'allim ✦</h1>", unsafe_allow_html=True)
 st.markdown(f"<p style='text-align:center;color:#a8987f'>Surah {surah} · Ayahs {ayah}–{end_ayah} (Advanced 5-Verse Memory Block)</p>", unsafe_allow_html=True)
 
 # Teacher Avatar & Stage Guidance
