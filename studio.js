@@ -117,7 +117,7 @@ export default function(component) {
      "Cloud Live sends your recitation audio to Gemini after you press Start. It can return Arabic words while you speak, but it does not certify vowels or Tajweed. It may use your Gemini API quota.");
   const micControls=CE("div","am-control-row");
   const micButton=btn("🎙 Start listening","am-button am-primary");
-  const micTest=btn("◌ Test mic");
+
   const engineSelect=CE("select","am-input");
   engineSelect.setAttribute("aria-label","Speech recognition method");
   [
@@ -132,7 +132,7 @@ export default function(component) {
   const isAppleWebKit=/iPad|iPhone|iPod/.test(navigator.userAgent||"")||
     (navigator.platform==="MacIntel"&&navigator.maxTouchPoints>1);
   engineSelect.value=(D.cloudAvailable||isAppleWebKit)?"cloud":"browser";
-  append(micControls,micButton,micTest,engineSelect);
+  append(micControls,micButton,engineSelect);
   const meter=CE("div","am-meter"),meterFill=CE("div","");
   meter.appendChild(meterFill);
   const micText=CE("div","am-note","No audio test has been performed.");
@@ -447,32 +447,6 @@ export default function(component) {
     };
     measure();
   }
-  let micTesting=false;
-  micTest.onclick=async()=>{
-    if(micTesting||live){micText.textContent="Stop live tracking before checking the microphone.";return}
-    micTesting=true;micTest.disabled=true;
-    micText.textContent="Requesting microphone permission...";
-    let ctx,stream;
-    try{
-      if(!navigator.mediaDevices?.getUserMedia)throw new Error("Microphone access is not available on this page.");
-      stream=await navigator.mediaDevices.getUserMedia({audio:true});
-      ctx=new (window.AudioContext||window.webkitAudioContext)();
-      await ctx.resume();
-      const source=ctx.createMediaStreamSource(stream);
-      const analyser=ctx.createAnalyser();analyser.fftSize=1024;source.connect(analyser);
-      let running=true;updateMeter(analyser,()=>running);
-      micText.textContent="Microphone access granted. Speak to check the level meter.";
-      await new Promise(resolve=>setTimeout(resolve,3200));
-      running=false;cancelAnimationFrame(meterAnimation);
-      micText.textContent="Microphone test finished. If the meter moved, audio capture works; recognition is tested separately.";
-    }catch(e){micText.textContent="Microphone unavailable: "+String(e?.message||e)}
-    finally{
-      meterFill.style.width="0%";
-      stream?.getTracks().forEach(t=>t.stop());
-      try{await ctx?.close()}catch(_){}
-      micTesting=false;micTest.disabled=false;
-    }
-  };
   let watchdog=null,restartHandle=null;
   function clearTimers(){
     if(watchdog!==null)clearTimeout(watchdog);
@@ -501,7 +475,7 @@ export default function(component) {
       if(watchdog!==null)clearTimeout(watchdog);
       watchdog=setTimeout(()=>{
         if(!closed&&!received){
-          setStatus("Microphone opened, but Safari returned no speech results. Try the mic test or recorded review.","error");
+          setStatus("Safari returned no speech results. Select Cloud Live or use recorded review.","error");
           transcript.textContent="No words recognised. This is a browser limitation, not evidence of a recitation mistake.";
         }
       },11500);
@@ -536,7 +510,7 @@ export default function(component) {
       const err=e.error||"unknown";
       if(closed)return;
       setStatus(err==="no-speech"?"No clear speech heard. Try a short ayah.":
-        "Speech recognition error: "+err+". Try the microphone test.", "error");
+        "Speech recognition error: "+err+". Try Cloud Live or recorded review.", "error");
       if(err==="service-not-allowed"){
         closed=true;
         setStatus("Safari blocked its speech-recognition service. Your microphone works; choose Cloud Live (requires a configured Gemini API key).","error");
@@ -740,7 +714,7 @@ export default function(component) {
               if(closed||gotTranscript)return;
               setStatus(maxRms>0.012
                 ? "Voice audio is being captured, but Gemini has not returned a transcript yet. Try a short pause or restart."
-                : "The microphone connection is open but little sound is reaching it. Try Check mic.","error");
+                : "The microphone connection is open but little sound is reaching it. Check Safari microphone permission.","error");
             },14000);
             settled=true;
             resolve();
@@ -824,7 +798,7 @@ export default function(component) {
   }
   micButton.onclick=async()=>{
     if(live){await stopLive();return}
-    if(starting||micTesting)return;
+    if(starting)return;
     starting=true;micButton.disabled=true;
     setStatus("Preparing microphone...","idle");
     try{
