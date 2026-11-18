@@ -613,6 +613,7 @@ export default function(component) {
     const id=String(Date.now())+"-"+Math.random().toString(36).slice(2,8);
     micButton.textContent="Connecting securely...";
     setStatus("Requesting a one-session cloud transcription token...","active");
+    try{sessionStorage.setItem("amuallim:pendingCloudRequest",id)}catch(_){}
     component.setTriggerValue("request_cloud",{
       id, tab:currentTab==="cover"?"cover":"read",
       cursor:confirmedWord
@@ -956,8 +957,13 @@ export default function(component) {
     }finally{starting=false}
   };
   selectTab(currentTab);
-  if(cloudSession?.token && !tokenConsumed()){
-    // Streamlit supplied a token after the user's explicit Start request.
+  let pendingCloudRequest=null;
+  try{pendingCloudRequest=sessionStorage.getItem("amuallim:pendingCloudRequest")}catch(_){}
+  if(cloudSession?.token && !tokenConsumed() &&
+      pendingCloudRequest===cloudSession.id){
+    // Only a freshly requested Cloud session may override the Quran listener.
+    // An old token retained by Streamlit must never silently start Gemini.
+    try{sessionStorage.removeItem("amuallim:pendingCloudRequest")}catch(_){}
     engineSelect.value="cloud";
     Promise.resolve().then(()=>{if(!live&&!starting)void micButton.onclick()});
   }
