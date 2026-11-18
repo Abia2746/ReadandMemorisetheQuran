@@ -9,7 +9,7 @@ import os
 import requests
 
 MODEL = "gemini-3.5-transcribe-live"
-TOKEN_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/auth_tokens"
+TOKEN_ENDPOINT = "https://generativelanguage.googleapis.com/v1alpha/auth_tokens"
 
 
 def configured_api_key():
