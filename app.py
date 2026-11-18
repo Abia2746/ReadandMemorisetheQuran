@@ -607,6 +607,88 @@ h1,h2,h3 {color:#e9bd61!important;}
 .word-detail-arabic{font:43px/1.9 'Amiri Quran',serif;direction:rtl;color:#f7e5c3;}
 .word-detail-marks{font:12px/1.9 Inter,sans-serif;color:#e0ae65;margin:10px 0 13px;overflow-wrap:anywhere;}
 .word-tap-hint{font:12px Inter,sans-serif;color:#cdb890;flex-basis:100%;text-align:center;}
+
+/* English-first cover mode: no Arabic, transliteration or rule labels unless requested. */
+.mushaf-intro .bismillah[hidden], .cover-hints[hidden] {display:none!important;}
+.cover-english, .cover-verse {display:none;}
+.arabic-area.cover-mode {
+  direction:ltr;
+  display:flex;
+  flex-wrap:wrap;
+  align-content:flex-start;
+  align-items:stretch;
+  justify-content:center;
+  gap:13px 10px;
+  text-align:center;
+  line-height:1.5;
+  padding:30px 16px;
+  font-family:Inter,sans-serif;
+}
+.arabic-area.cover-mode .word {
+  display:inline-flex;
+  flex-direction:column;
+  justify-content:center;
+  align-items:center;
+  text-align:center;
+  vertical-align:top;
+  min-width:108px;
+  max-width:215px;
+  flex:0 1 auto;
+  margin:0;
+  padding:14px 12px;
+  border-radius:14px;
+  border:1px solid rgba(218,176,94,.29);
+  background:rgba(70,48,34,.64);
+  color:#f5e6ce;
+  box-shadow:0 5px 16px rgba(0,0,0,.12);
+  white-space:normal;
+  overflow-wrap:anywhere;
+}
+.arabic-area.cover-mode .arabic-word,
+.arabic-area.cover-mode .verse-marker {display:none!important;}
+.arabic-area.cover-mode .cover-english {
+  display:block;
+  font:600 clamp(13px,1.5vw,17px)/1.55 Inter,sans-serif;
+  color:#f4e4cc;
+}
+.arabic-area.cover-mode .cover-verse {
+  display:block;
+  direction:ltr;
+  margin-top:5px;
+  font:11px Inter,sans-serif;
+  color:#d8b772;
+}
+.arabic-area.cover-mode .cover-hints:not([hidden]) {
+  display:flex;
+  width:100%;
+  flex-direction:column;
+  gap:8px;
+  margin-top:10px;
+  padding-top:10px;
+  border-top:1px solid rgba(230,183,99,.2);
+}
+.cover-transliteration {
+  color:#f2cb7e;
+  font:600 13px/1.5 Inter,sans-serif;
+  overflow-wrap:anywhere;
+}
+.cover-vowels {display:flex;justify-content:center;flex-wrap:wrap;gap:5px;}
+.cover-hint-heading {width:100%;font:11px Inter,sans-serif;color:#cbbb9e;margin-bottom:1px;}
+.cover-vowel-chip {
+  display:inline-flex;
+  padding:4px 6px;
+  border-radius:7px;
+  background:rgba(202,152,57,.2);
+  color:#ffe0a1;
+  font:11px/1.5 Inter,sans-serif;
+}
+.cover-hint-empty {color:#cbbb9e;font:12px Inter,sans-serif;}
+.arabic-area.cover-mode .word.live-active {border:1px solid #e4b558;background:rgba(216,172,78,.22);}
+@media(max-width:640px) {
+  .arabic-area.cover-mode {gap:8px 6px;padding:18px 8px;}
+  .arabic-area.cover-mode .word {min-width:100px;max-width:165px;padding:11px 8px;}
+  .arabic-area.cover-mode .cover-english {font-size:13px;}
+}
 </style>
 </head>
 <body>
@@ -663,14 +745,15 @@ h1,h2,h3 {color:#e9bd61!important;}
   }
   recitationPanel.appendChild(intro);
   const toolbar = el("div", "study-toolbar");
-  const memoryBtn = el("button", "tool-btn", D.reciteFromMemory ? "◉ Memory mode" : "◉ Reading mode");
+  const memoryBtn = el("button", "tool-btn", D.reciteFromMemory ? "◉ Cover mode" : "◉ Reading mode");
   memoryBtn.type = "button";
   memoryBtn.setAttribute("aria-pressed", String(!!D.reciteFromMemory));
   const marksBtn = el("button", "tool-btn", "Show vowels + transliteration");
   marksBtn.type = "button";
   marksBtn.setAttribute("aria-pressed", "false");
   toolbar.append(memoryBtn, marksBtn);
-  toolbar.append(el("span", "word-tap-hint", "Tap any Arabic word for its vowels, transliteration and meaning"));
+  const toolbarHint = el("span", "word-tap-hint", "Tap an Arabic word to study it");
+  toolbar.append(toolbarHint);
   recitationPanel.appendChild(toolbar);
   const arabicArea = el("div", "arabic-area");
   arabicArea.setAttribute("lang", "ar");
@@ -684,20 +767,36 @@ h1,h2,h3 {color:#e9bd61!important;}
     // Splitting connected Arabic letters across spans destroys the Mushaf typography.
     arabic.textContent = word.ar || (word.letters || []).map(l => l.text).join("");
     arabic.setAttribute("lang", "ar");
-    wrapper.title = "Study this word: " + [word.tr, word.en].filter(Boolean).join(" — ");
+    wrapper.title = "Tap to study this word";
     wrapper.tabIndex = 0;
     wrapper.setAttribute("role", "button");
-    wrapper.setAttribute("aria-label", "Study Arabic word " + (word.tr || word.ar));
+    wrapper.setAttribute("aria-label", "Word " + (index + 1) + " study controls");
     wrapper.onclick = () => showWordDetails(index);
     wrapper.onkeydown = (event) => {
       if(event.key==="Enter" || event.key===" "){event.preventDefault();showWordDetails(index);}
     };
     wrapper.appendChild(arabic);
-    // Keep Arabic flowing continuously; render study annotations separately.
-    if (D.reciteFromMemory) { arabic.style.filter = "blur(9px)"; arabic.style.transition = "filter 180ms ease"; wrapper.dataset.memoryHidden = "true"; }
+    // Cover mode displays an English clue, not a blurred Arabic word.
+    const englishClue = el("span", "cover-english", word.en || "Meaning unavailable");
+    wrapper.appendChild(englishClue);
+    const coverHints = el("div", "cover-hints");
+    coverHints.hidden = true;
+    if (word.tr) coverHints.appendChild(el("div", "cover-transliteration", word.tr));
+    const vowelNames = (word.letters || []).flatMap(letter => letter.marks || []);
+    if (vowelNames.length) {
+      const vowels = el("div", "cover-vowels");
+      vowels.appendChild(el("div", "cover-hint-heading", "Vowel & letter signs"));
+      vowelNames.forEach(mark => vowels.appendChild(el("span", "cover-vowel-chip", mark)));
+      coverHints.appendChild(vowels);
+    }
+    if (!word.tr && !vowelNames.length) {
+      coverHints.appendChild(el("span", "cover-hint-empty", "No pronunciation hints available"));
+    }
+    wrapper.appendChild(coverHints);
     if (index === D.words.length - 1 || D.words[index + 1].ayah !== word.ayah) {
       const arabicNumber=String(word.ayah).replace(/[0-9]/g,d=>"٠١٢٣٤٥٦٧٨٩"[Number(d)]);
       wrapper.appendChild(el("span", "verse-marker", "۝" + arabicNumber));
+      wrapper.appendChild(el("span", "cover-verse", "Ayah " + word.ayah));
     }
     if (D.states && D.states[index]) wrapper.classList.add(D.states[index]);
     arabicArea.appendChild(wrapper);
@@ -709,8 +808,12 @@ h1,h2,h3 {color:#e9bd61!important;}
   detailPanel.setAttribute("aria-live", "polite");
   recitationPanel.appendChild(detailPanel);
   function showWordDetails(index) {
-    if(memoryHidden) {
-      liveStatus.textContent="Memory test is active. Switch to Reading mode to inspect individual words.";
+    if (memoryHidden) {
+      const hints = wordNodes[index]?.querySelector(".cover-hints");
+      if (hints) {
+        hints.hidden = !hints.hidden;
+        if (!hints.hidden) wordNodes[index].scrollIntoView({behavior:"smooth",block:"nearest"});
+      }
       return;
     }
     const word = D.words[index];
@@ -753,30 +856,49 @@ h1,h2,h3 {color:#e9bd61!important;}
   studyPanel.appendChild(studyGrid);
   recitationPanel.appendChild(studyPanel);
   let memoryHidden = !!D.reciteFromMemory;
+  let hintsVisible = false;
+  function applyDisplayMode() {
+    const cover = memoryHidden;
+    arabicArea.classList.toggle("cover-mode", cover);
+    arabicArea.setAttribute("lang", cover ? "en" : "ar");
+    arabicArea.setAttribute("aria-label", cover
+      ? "English memory clues. Tap a clue to reveal its pronunciation hints."
+      : "Qur'an passage in Uthmani script");
+    memoryBtn.textContent = cover ? "◉ Cover mode" : "◉ Reading mode";
+    memoryBtn.setAttribute("aria-pressed", String(cover));
+    marksBtn.textContent = hintsVisible
+      ? "Hide hints"
+      : (cover ? "Show hints" : "Show vowels + transliteration");
+    marksBtn.setAttribute("aria-pressed", String(hintsVisible));
+    toolbarHint.textContent = cover
+      ? "English clues only · tap a clue for its transliteration and vowel hints"
+      : "Tap an Arabic word to study it";
+    studyPanel.hidden = cover || !hintsVisible;
+    const basmalah = intro.querySelector(".bismillah");
+    if (basmalah) basmalah.hidden = cover;
+    if (cover) detailPanel.hidden = true;
+    wordNodes.forEach((node,index) => {
+      node.title = cover ? "Tap for pronunciation hints" : "Study this word";
+      node.setAttribute("aria-label", cover
+        ? "English clue "+(index+1)+": "+(D.words[index].en || "Meaning unavailable")+". Tap for pronunciation hints."
+        : "Study Arabic word "+(D.words[index].tr || D.words[index].ar));
+      const hints=node.querySelector(".cover-hints");
+      if(hints) hints.hidden = !cover || !hintsVisible;
+    });
+  }
   memoryBtn.onclick = () => {
     memoryHidden = !memoryHidden;
-    memoryBtn.textContent = memoryHidden ? "◉ Memory mode" : "◉ Reading mode";
-    memoryBtn.setAttribute("aria-pressed", String(memoryHidden));
-    if (memoryHidden) {
-      studyPanel.hidden = true;
-      detailPanel.hidden = true;
-      marksBtn.setAttribute("aria-pressed", "false");
-      marksBtn.textContent = "Show vowels + transliteration";
-    }
-    wordNodes.forEach(node => {
-      const ar = node.querySelector(".arabic-word");
-      if (ar) ar.style.filter = memoryHidden && !node.classList.contains("live-good") ? "blur(9px)" : "none";
-      // The Mushaf does not interleave translations with Arabic words.
-    });
+    hintsVisible = false;
+    applyDisplayMode();
   };
   marksBtn.onclick = () => {
-    if (memoryHidden) { liveStatus.textContent = "Switch to reading mode to view the pronunciation guide."; return; }
-    const showing = marksBtn.getAttribute("aria-pressed") !== "true";
-    marksBtn.setAttribute("aria-pressed", String(showing));
-    marksBtn.textContent = showing ? "Hide pronunciation guide" : "Show vowels + transliteration";
-    studyPanel.hidden = !showing;
-    if (showing) studyPanel.scrollIntoView({behavior:"smooth",block:"nearest"});
+    hintsVisible = !hintsVisible;
+    applyDisplayMode();
+    if (hintsVisible && !memoryHidden) {
+      studyPanel.scrollIntoView({behavior:"smooth",block:"nearest"});
+    }
   };
+  applyDisplayMode();
 
   // Stage 1: Sheikh Listening Audio Player with Exact Quran.com Segments
   const audioBox = el("div", "audio-box");
@@ -942,10 +1064,7 @@ h1,h2,h3 {color:#e9bd61!important;}
       node.classList.toggle("live-active",i===index);
       if(confirmed && i<=index){
         node.classList.add("live-heard");
-        if(memoryHidden){
-          const visibleArabic=node.querySelector(".arabic-word");
-          if(visibleArabic) visibleArabic.style.filter="none";
-        }
+        // Never reveal Arabic automatically in Cover mode; the English clue remains the test.
       }
     });
     const node=wordNodes[index];
@@ -1060,7 +1179,7 @@ h1,h2,h3 {color:#e9bd61!important;}
               node.classList.remove("live-active");
               if (idx === wordIdx) {
                 node.classList.add("live-active");
-                if (memoryHidden) { const arabic = node.querySelector(".arabic-word"); if (arabic) arabic.style.filter = "none"; }
+                // In Cover mode, only English clues and explicitly requested hints are shown.
                 node.scrollIntoView({ behavior: 'smooth', block: 'center' });
               }
             });
@@ -1177,7 +1296,7 @@ st.session_state.theme = sidebar.selectbox("Theme", ["Starry Night", "Brown", "B
 st.session_state.teacher_gender = sidebar.selectbox("Teacher Persona", ["Male", "Female"])
 st.session_state.strictness = sidebar.select_slider("Strictness", ["Lenient", "Balanced", "Strict"], value=st.session_state.strictness)
 sidebar.markdown("---")
-st.session_state.recite_from_memory = sidebar.toggle("🧠 Blind Memory Mode", value=st.session_state.recite_from_memory)
+st.session_state.recite_from_memory = sidebar.toggle("🧠 Cover mode · English clues", value=st.session_state.recite_from_memory)
 
 surah = sidebar.number_input("Surah", 1, 114, int(st.session_state.surah))
 surah_max = AYAHS[int(surah)]
