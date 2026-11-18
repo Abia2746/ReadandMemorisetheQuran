@@ -135,7 +135,7 @@ export default function(component) {
   append(micControls,micButton,engineSelect);
   const meter=CE("div","am-meter"),meterFill=CE("div","");
   meter.appendChild(meterFill);
-  const micText=CE("div","am-note","No audio test has been performed.");
+  const micText=CE("div","am-note","Ready to begin live recitation.");
   const micMessage=CE("div","am-note",D.cloudError || (
     D.cloudAvailable
       ? "Cloud Live is ready to request a short-lived session token. Audio is sent to Google only after you press Start."
@@ -310,7 +310,7 @@ export default function(component) {
     hear.onclick=()=>{
       const idx=Number(w.ayah)-Number(meta.a);
       if(idx<0||idx>=playlist.length)return;
-      playingIndex=idx;audio.src=playlist[idx];
+      playingIndex=idx;currentAudioIdx=-1;audio.src=playlist[idx];
       audio.play().catch(()=>setStatus("Audio playback did not start. Use the player controls.","error"));
     };
     const close=btn("Close");close.onclick=()=>{detail.hidden=true};
@@ -411,26 +411,54 @@ export default function(component) {
   audio.onended=()=>{
     playingIndex++;
     if(playingIndex<playlist.length){
-      audio.src=playlist[playingIndex];audio.play().catch(()=>{});
+      currentAudioIdx=-1;audio.src=playlist[playingIndex];audio.play().catch(()=>{});
     } else {
       playingIndex=0;currentAudioIdx=-1;playCaption.textContent="Playback finished.";
       if(!live)wordNodes.forEach(el=>el.classList.remove("am-active"));
     }
   };
+  // The playback file is a single ayah. Never reuse another verse's timings.
+  // When exact per-word timestamps are absent, distribute playback across words
+  // by Arabic letter weight. This is an approximation, not phonetic alignment.
+  function playbackWordAt(ayah,elapsed,duration){
+    const exact=audioSegments.filter(s=>Number(s.ayah)===ayah&&
+      Number.isFinite(Number(s.start))&&Number.isFinite(Number(s.end))&&
+      Number(s.end)>Number(s.start));
+    if(exact.length){
+      const segment=exact.find(s=>elapsed>=Number(s.start)&&elapsed<Number(s.end));
+      if(segment&&Number.isInteger(Number(segment.word_idx)))
+        return {index:Number(segment.word_idx),estimated:false};
+      // Do not jump to a different ayah when no timestamp covers a pause.
+      const prior=exact.filter(s=>elapsed>=Number(s.start)).pop();
+      if(prior)return {index:Number(prior.word_idx),estimated:false};
+    }
+    const indices=[];
+    words.forEach((w,i)=>{if(Number(w.ayah)===ayah)indices.push(i)});
+    if(!indices.length||!Number.isFinite(duration)||duration<=0)return null;
+    const weights=indices.map(i=>Math.max(2,(words[i].ar||"").replace(/[\u064B-\u065F\u0670]/g,"").length));
+    const total=weights.reduce((a,b)=>a+b,0);
+    const fraction=Math.min(.999999,Math.max(0,elapsed/duration));
+    let accumulated=0;
+    for(let i=0;i<indices.length;i++){
+      accumulated+=weights[i]/total;
+      if(fraction<accumulated)return {index:indices[i],estimated:true};
+    }
+    return {index:indices[indices.length-1],estimated:true};
+  }
   audio.ontimeupdate=()=>{
     if(live)return;
     const ayah=Number(meta.a)+playingIndex;
-    const pos=audio.currentTime*1000;
-    const timed=audioSegments.find(s=>Number(s.ayah)===ayah&&pos>=s.start&&pos<s.end);
-    if(timed && Number.isInteger(timed.word_idx)){
-      const i=timed.word_idx;
-      if(i>=0&&i<wordNodes.length&&i!==currentAudioIdx){
+    const found=playbackWordAt(ayah,audio.currentTime*1000,audio.duration*1000);
+    if(found && found.index>=0&&found.index<wordNodes.length){
+      const i=found.index;
+      if(i!==currentAudioIdx){
         currentAudioIdx=i;
         wordNodes.forEach((el,j)=>el.classList.toggle("am-active",j===i));
+        wordNodes[i]?.scrollIntoView({behavior:"smooth",block:"nearest",inline:"nearest"});
       }
     }
     playCaption.textContent="Playing ayah "+ayah+" of "+meta.end+
-      (timed?" · audio word timing":" · timing unavailable");
+      (found?(found.estimated?" · approximate word following":" · timed word following"):" · loading audio");
   };
   function updateMeter(analyser,stopAt) {
     const buffer=new Uint8Array(analyser.fftSize);
@@ -640,7 +668,7 @@ export default function(component) {
       }
     };
     setStatus("Connecting to Gemini's live transcription service...","active");
-    const url="wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContentConstrained?access_token="+encodeURIComponent(token);
+    const url="wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContentConstrained?access_token="+encodeURIComponent(token);
     socket=new WebSocket(url);
     await new Promise((resolve,reject)=>{
       let setupStarted=false,settled=false;
