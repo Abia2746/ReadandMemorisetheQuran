@@ -5,8 +5,10 @@ All user data is passed as structured JSON through data; never interpolate
 user input into HTML, CSS or JavaScript source.
 """
 from pathlib import Path
+import time
 
 import streamlit as st
+from live_auth import configured_api_key, issue_live_token
 
 _ROOT = Path(__file__).resolve().parent
 _STUDIO_CSS = (_ROOT / "studio.css").read_text(encoding="utf-8")
@@ -45,7 +47,18 @@ def render_studio(
         1 for x in (review or {}).get("states", [])
         if x in {"good", "review"}
     )
+    cloud_session = st.session_state.get("_am_live_cloud_session")
+    cloud_view = st.session_state.get("_am_live_cloud_view", {})
+    # The token is short-lived and can be used to initiate one session only.
+    if cloud_session and time.time() >= cloud_session.get("startUntil", 0):
+        cloud_session = None
+        st.session_state.pop("_am_live_cloud_session", None)
     data = {
+        "cloudAvailable": bool(configured_api_key()),
+        "cloudSession": cloud_session,
+        "cloudError": st.session_state.get("_am_live_cloud_error", ""),
+        "resumeTab": cloud_view.get("tab"),
+        "resumeWord": cloud_view.get("cursor", -1),
         "words": words,
         "meta": meta,
         "audio": tracks or [],
@@ -63,4 +76,49 @@ def render_studio(
         "wordFeedback": (review or {}).get("word_feedback", {}),
     }
     key = f"studio_{meta['s']}_{meta['a']}_{meta['end']}"
-    return _studio(data=data, key=key)
+    result = _studio(
+        data=data,
+        key=key,
+        on_request_cloud_change=lambda: None,
+    )
+    request = result.get("request_cloud")
+    if isinstance(request, dict):
+        request_id = str(request.get("id", ""))[:80]
+        if request_id and request_id != st.session_state.get("_am_live_request_id"):
+            st.session_state["_am_live_request_id"] = request_id
+            requested_tab = request.get("tab", "read")
+            if requested_tab not in ("read", "cover"):
+                requested_tab = "read"
+            cursor = request.get("cursor", -1)
+            if not isinstance(cursor, int) or isinstance(cursor, bool):
+                cursor = -1
+            st.session_state["_am_live_cloud_view"] = {
+                "tab": requested_tab,
+                "cursor": max(-1, min(cursor, len(words) - 1)),
+            }
+            # Limit accidental repeated requests from the same browser session.
+            now = time.time()
+            attempts = [
+                t for t in st.session_state.get("_am_live_request_times", [])
+                if now - t < 3600
+            ]
+            attempts.append(now)
+            st.session_state["_am_live_request_times"] = attempts
+            if len(attempts) > 8:
+                st.session_state["_am_live_cloud_error"] = (
+                    "This session has requested too many live connections. "
+                    "Try again later or use Browser recognition."
+                )
+                st.session_state.pop("_am_live_cloud_session", None)
+            else:
+                try:
+                    token = issue_live_token()
+                    token["id"] = request_id
+                    token["startUntil"] = now + 85
+                    st.session_state["_am_live_cloud_session"] = token
+                    st.session_state["_am_live_cloud_error"] = ""
+                except RuntimeError as exc:
+                    st.session_state.pop("_am_live_cloud_session", None)
+                    st.session_state["_am_live_cloud_error"] = str(exc)
+            st.rerun()
+    return result
