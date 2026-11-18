@@ -56,7 +56,7 @@ class LiveAuthTests(unittest.TestCase):
             'v1beta.GenerativeService.BidiGenerateContentConstrained',
         ):
             self.assertIn(expected, text)
-        self.assertNotIn("GEMINI_API_KEY", text)
+        self.assertNotIn("private-test-key", text)
         self.assertNotIn("YOUR_API_KEY", text)
 
 
