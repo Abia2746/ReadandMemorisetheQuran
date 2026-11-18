@@ -214,6 +214,9 @@ export default function(component) {
   let currentTab=["read","cover"].includes(D.resumeTab)?D.resumeTab:(D.mode==="blind"?"cover":"read");
   let showHints=false,showTajweed=false;
   let currentWord=-1,confirmedWord=Number.isInteger(D.resumeWord)?Math.max(-1,Math.min(words.length-1,D.resumeWord)):-1;
+  // A locked position only establishes that individual word. Never reveal
+  // all intervening Arabic words after a skip, seek or erroneous match.
+  const confirmedIndices=new Set();
   let wordNodes=[];
   let live=false,starting=false,cleanupLive=null,recognition=null;
   let meterAnimation=0,micStream=null,micContext=null;
@@ -265,13 +268,16 @@ export default function(component) {
   function mark(index,confirm){
     if(index<0||index>=words.length)return;
     currentWord=index;
-    if(confirm)confirmedWord=Math.max(confirmedWord,index);
+    if(confirm){
+      confirmedIndices.add(index);
+      confirmedWord=Math.max(confirmedWord,index);
+    }
     wordNodes.forEach((el,i)=>{
       el.classList.toggle("am-active",i===index);
-      el.classList.toggle("am-confirmed",i<=confirmedWord&&i!==index);
+      el.classList.toggle("am-confirmed",confirmedIndices.has(i)&&i!==index);
       // Memorisation begins with English-only clues. Confirmed words reveal
       // their actual Arabic text progressively as the learner recites.
-      if(currentTab==="cover" && i<=confirmedWord && !el.querySelector(".am-revealed-ar")){
+      if(currentTab==="cover" && confirmedIndices.has(i) && !el.querySelector(".am-revealed-ar")){
         el.appendChild(CE("span","am-revealed-ar",words[i].ar||""));
       }
     });
@@ -348,8 +354,8 @@ export default function(component) {
       el.addEventListener("click",view);
       el.addEventListener("keydown",e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();view()}});
       if(i===currentWord)el.classList.add("am-active");
-      else if(i<=confirmedWord)el.classList.add("am-confirmed");
-      if(cover && i<=confirmedWord){
+      else if(confirmedIndices.has(i))el.classList.add("am-confirmed");
+      if(cover && confirmedIndices.has(i)){
         el.appendChild(CE("span","am-revealed-ar",w.ar||""));
       }
       textArea.appendChild(el);
@@ -403,7 +409,7 @@ export default function(component) {
   }
   toggleHint.onclick=()=>{showHints=!showHints;renderWords()};
   toggleColour.onclick=()=>{showTajweed=!showTajweed;renderWords()};
-  resetBtn.onclick=()=>{currentWord=-1;confirmedWord=-1;progressFill.style.width="0%";setStatus("Ready to practise from the beginning.");transcript.textContent="";renderWords()};
+  resetBtn.onclick=()=>{currentWord=-1;confirmedWord=-1;confirmedIndices.clear();progressFill.style.width="0%";setStatus("Ready to practise from the beginning.");transcript.textContent="";renderWords()};
   recordHint.onclick=()=>{
     micPanel.scrollIntoView({behavior:"smooth",block:"center"});
     // Start capture from the original tap, preserving the iPad user gesture.
