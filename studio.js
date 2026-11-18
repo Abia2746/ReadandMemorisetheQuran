@@ -271,6 +271,11 @@ export default function(component) {
     wordNodes.forEach((el,i)=>{
       el.classList.toggle("am-active",i===index);
       el.classList.toggle("am-confirmed",i<=confirmedWord&&i!==index);
+      // Memorisation begins with English-only clues. Confirmed words reveal
+      // their actual Arabic text progressively as the learner recites.
+      if(currentTab==="cover" && i<=confirmedWord && !el.querySelector(".am-revealed-ar")){
+        el.appendChild(CE("span","am-revealed-ar",words[i].ar||""));
+      }
     });
     progressFill.style.width=Math.round(100*(index+1)/Math.max(1,words.length))+"%";
     wordNodes[index]?.scrollIntoView({behavior:"smooth",block:"nearest",inline:"nearest"});
@@ -346,6 +351,9 @@ export default function(component) {
       el.addEventListener("keydown",e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();view()}});
       if(i===currentWord)el.classList.add("am-active");
       else if(i<=confirmedWord)el.classList.add("am-confirmed");
+      if(cover && i<=confirmedWord){
+        el.appendChild(CE("span","am-revealed-ar",w.ar||""));
+      }
       textArea.appendChild(el);
       wordNodes.push(el);
       if(i===words.length-1 || Number(words[i+1].ayah)!==Number(w.ayah)){
@@ -905,8 +913,12 @@ export default function(component) {
           const index=Math.floor(p),weight=p-index;
           output.push(input[index]*(1-weight)+input[Math.min(index+1,input.length-1)]*weight);
         }
-        resampleRemainder=(resampleRemainder+Math.ceil(input.length/ratio)*ratio)-input.length;
-        if(!Number.isFinite(resampleRemainder)||resampleRemainder>=ratio||resampleRemainder<0)resampleRemainder=0;
+        // The first sample of the following audio block continues from the
+        // source-frame position immediately after the last generated sample.
+        const nextSteps=Math.ceil(Math.max(0,input.length-resampleRemainder)/ratio);
+        resampleRemainder=resampleRemainder+nextSteps*ratio-input.length;
+        if(!Number.isFinite(resampleRemainder)||resampleRemainder<0||resampleRemainder>=ratio)
+          resampleRemainder=0;
         return output;
       };
       const flush=async()=>{
