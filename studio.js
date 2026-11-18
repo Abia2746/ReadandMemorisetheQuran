@@ -654,6 +654,15 @@ export default function(component) {
     const parseSpeech=(spoken,final)=>{
       const phrase=String(spoken||"").trim();
       if(!phrase)return;
+      // Arabic script check: Gemini may occasionally hallucinate a Hindi,
+      // Japanese or other-language transcript despite Arabic recitation.
+      const arabicLetters=(phrase.match(/[\u0621-\u064A]/g)||[]).length;
+      const scriptLetters=(phrase.match(/[^\s\d\p{P}\p{S}]/gu)||[]).length;
+      if(scriptLetters>0 && arabicLetters/Math.max(1,scriptLetters)<0.55){
+        transcript.textContent="Incorrect transcription language: "+phrase.slice(0,160);
+        setStatus("Cloud returned non-Arabic text. Waiting for Arabic Qur'an recognition; no words marked.","error");
+        return;
+      }
       gotTranscript=true;
       if(watchdogId!==null){clearTimeout(watchdogId);watchdogId=null}
       transcript.textContent=(final?"Recognised: ":"Listening: ")+phrase.slice(0,230);
@@ -687,7 +696,8 @@ export default function(component) {
           setup:{
             model:"models/gemini-3.5-transcribe-live",
             generationConfig:{responseModalities:["TEXT"]},
-            inputAudioTranscription:{languageCodes:[]}
+            // Force Arabic recognition instead of automatic multilingual detection.
+            inputAudioTranscription:{languageCodes:["ar"]}
           }
         }));
       };
