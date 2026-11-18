@@ -197,8 +197,18 @@ def fetch_passage(surah, start_ayah, end_ayah, reciter_id):
         try:
             tr = requests.get(f"{QURAN_API}/recitations/{reciter_id}/by_ayah/{surah}:{ayah}", timeout=10)
             segs = tr.json().get("audio_files", [{}])[0].get("segments", [])
-            for s in segs:
-                all_segments.append({"ayah": ayah, "word_idx": s[0] + global_word_idx, "start": s[1], "end": s[2]})
+            for segment in segs:
+                if not isinstance(segment, (list, tuple)) or len(segment) < 3:
+                    continue
+                # Quran.com segment word positions are 1-based within each ayah.
+                word_position = int(segment[0]) - 1
+                if 0 <= word_position < len(verse_words):
+                    all_segments.append({
+                        "ayah": ayah,
+                        "word_idx": global_word_idx + word_position,
+                        "start": int(segment[1]),
+                        "end": int(segment[2]),
+                    })
         except Exception:
             pass
             
