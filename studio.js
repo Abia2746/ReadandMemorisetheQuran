@@ -114,20 +114,29 @@ export default function(component) {
   micPanel.appendChild(micTop);
   const micBody=CE("div","am-scaffold");
   const micDescription=CE("p","am-note",
-     "Your voice should move the gold highlight across words. Browser speech recognition is approximate and cannot verify every Tajweed rule.");
+     "Cloud Live sends your recitation audio to Gemini after you press Start. It can return Arabic words while you speak, but it does not certify vowels or Tajweed. It may use your Gemini API quota.");
   const micControls=CE("div","am-control-row");
   const micButton=btn("🎙 Start listening","am-button am-primary");
   const micTest=btn("◌ Test mic");
   const engineSelect=CE("select","am-input");
   engineSelect.setAttribute("aria-label","Speech recognition method");
-  [["browser","Browser recognition"],["local","On-device AI · experimental"]].forEach(([value,label])=>{
+  [
+    ["cloud",D.cloudAvailable?"Cloud Live · recommended":"Cloud Live · requires API key"],
+    ["browser","Safari/browser recogniser · fallback"],
+    ["local","On-device AI · experimental"]
+  ].forEach(([value,label])=>{
     const op=CE("option","",label);op.value=value;engineSelect.appendChild(op);
   });
+  engineSelect.value=D.cloudAvailable?"cloud":"browser";
   append(micControls,micButton,micTest,engineSelect);
   const meter=CE("div","am-meter"),meterFill=CE("div","");
   meter.appendChild(meterFill);
   const micText=CE("div","am-note","No audio test has been performed.");
-  const micMessage=CE("div","am-note","");
+  const micMessage=CE("div","am-note",D.cloudError || (
+    D.cloudAvailable
+      ? "Cloud transcription will request microphone permission and a short-lived, single-use access token when you start."
+      : "To enable Cloud Live, configure GEMINI_API_KEY in Streamlit secrets. Browser speech recognition may not work in iPad Safari."
+  ));
   append(micBody,micDescription,micControls,meter,micText,micMessage);
   micPanel.appendChild(micBody);
   main.appendChild(micPanel);
@@ -198,9 +207,9 @@ export default function(component) {
   footer.appendChild(document.createTextNode(" · Original Qur'an study workspace · AI feedback is a learning aid, not an ijazah or a qualified teacher's assessment."));
   app.appendChild(footer);
 
-  let currentTab=D.mode==="blind"?"cover":"read";
+  let currentTab=["read","cover"].includes(D.resumeTab)?D.resumeTab:(D.mode==="blind"?"cover":"read");
   let showHints=false,showTajweed=false;
-  let currentWord=-1,confirmedWord=-1;
+  let currentWord=-1,confirmedWord=Number.isInteger(D.resumeWord)?Math.max(-1,Math.min(words.length-1,D.resumeWord)):-1;
   let wordNodes=[];
   let live=false,starting=false,cleanupLive=null,recognition=null;
   let meterAnimation=0,micStream=null,micContext=null;
@@ -546,6 +555,200 @@ export default function(component) {
       r.onstart=r.onresult=r.onerror=r.onend=null;
     };
   }
+
+  // Gemini Live transcription. Unlike WebKit SpeechRecognition this captures
+  // real microphone samples and streams 16 kHz PCM to a dedicated STT model.
+  // Permanent API keys never reach this component. A token lasts one session.
+  const cloudSession=D.cloudSession||null;
+  function tokenConsumed(){
+    if(!cloudSession?.id)return true;
+    try{return sessionStorage.getItem("amuallim:used-live:"+cloudSession.id)==="yes"}catch(_){return false}
+  }
+  async function requestCloudToken(){
+    if(!D.cloudAvailable)throw Error("GEMINI_API_KEY is not configured in Streamlit secrets.");
+    if(typeof component.setTriggerValue!=="function")throw Error("Streamlit live connection bridge is unavailable.");
+    // Ask the device for microphone access while handling the actual button click.
+    // This is necessary on iPads where permission may require a direct gesture.
+    if(!navigator.mediaDevices?.getUserMedia)throw Error("Microphone capture is unavailable. Open the app via HTTPS in Safari.");
+    setStatus("Requesting microphone permission...","active");
+    const testStream=await navigator.mediaDevices.getUserMedia({audio:true});
+    testStream.getTracks().forEach(t=>t.stop());
+    const id=String(Date.now())+"-"+Math.random().toString(36).slice(2,8);
+    micButton.textContent="Connecting securely...";
+    setStatus("Requesting a one-session cloud transcription token...","active");
+    component.setTriggerValue("request_cloud",{
+      id, tab:currentTab==="cover"?"cover":"read",
+      cursor:confirmedWord
+    });
+  }
+  function floatToPcm16Base64(input,originalRate){
+    // Resample mono floats to 16,000 Hz using linear interpolation.
+    // AudioContext sampleRate commonly differs from 16 kHz on iPad.
+    const ratio=originalRate/16000;
+    const outLen=Math.max(1,Math.floor(input.length/ratio));
+    const bytes=new Uint8Array(outLen*2);
+    for(let i=0;i<outLen;i++){
+      const position=i*ratio;
+      const a=Math.min(input.length-1,Math.floor(position));
+      const b=Math.min(input.length-1,a+1);
+      const f=position-a;
+      const sample=Math.max(-1,Math.min(1,input[a]*(1-f)+input[b]*f));
+      const value=sample<0?Math.round(sample*32768):Math.round(sample*32767);
+      bytes[i*2]=value&255;
+      bytes[i*2+1]=(value>>8)&255;
+    }
+    let binary="";
+    for(let i=0;i<bytes.length;i++)binary+=String.fromCharCode(bytes[i]);
+    return btoa(binary);
+  }
+  async function cloudLive(){
+    if(!cloudSession?.token || tokenConsumed()){
+      throw Error("The session token is missing or already used. Press Start to request a new one.");
+    }
+    if(!navigator.mediaDevices?.getUserMedia){
+      throw Error("Microphone capture is unavailable on this browser.");
+    }
+    const token=cloudSession.token;
+    try{sessionStorage.setItem("amuallim:used-live:"+cloudSession.id,"yes")}catch(_){}
+    let socket=null,stream=null,audioContext=null,source=null,processor=null,mute=null;
+    let closed=false,gotTranscript=false,maxRms=0;
+    let cursor=Math.max(0,confirmedWord+1);
+    let watchdogId=null;
+    const cleanup=async()=>{
+      closed=true;
+      if(watchdogId!==null)clearTimeout(watchdogId);
+      try{if(socket?.readyState===WebSocket.OPEN)socket.send(JSON.stringify({realtimeInput:{audioStreamEnd:true}}))}catch(_){}
+      try{processor && (processor.onaudioprocess=null)}catch(_){}
+      try{source?.disconnect()}catch(_){}
+      try{processor?.disconnect()}catch(_){}
+      try{mute?.disconnect()}catch(_){}
+      try{stream?.getTracks().forEach(t=>t.stop())}catch(_){}
+      try{await audioContext?.close()}catch(_){}
+      try{socket?.close(1000,"User stopped recording")}catch(_){}
+      meterFill.style.width="0%";
+    };
+    cleanupLive=cleanup;
+    const parseSpeech=(spoken,final)=>{
+      const phrase=String(spoken||"").trim();
+      if(!phrase)return;
+      gotTranscript=true;
+      if(watchdogId!==null){clearTimeout(watchdogId);watchdogId=null}
+      transcript.textContent=(final?"Recognised: ":"Listening: ")+phrase.slice(0,230);
+      const idx=match(phrase,cursor);
+      if(idx>=0){
+        mark(idx,final);
+        if(final)cursor=Math.max(cursor,idx+1);
+        setStatus("Cloud recognition active · "+Math.round((idx+1)*100/Math.max(1,words.length))+
+          "% of the selected passage","active");
+      } else {
+        setStatus("Cloud recognised Arabic audio, but couldn't match these words to the selected ayahs.","active");
+      }
+    };
+    setStatus("Connecting to Gemini's live transcription service...","active");
+    const url="wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContentConstrained?access_token="+encodeURIComponent(token);
+    socket=new WebSocket(url);
+    await new Promise((resolve,reject)=>{
+      let connected=false;
+      const handshakeTimeout=setTimeout(()=>reject(Error("Cloud connection timed out. Check network access.")),12000);
+      const fail=e=>{if(!connected){clearTimeout(handshakeTimeout);reject(e instanceof Error?e:Error(String(e)))}};
+      socket.onopen=()=>{
+        socket.send(JSON.stringify({
+          setup:{
+            model:"models/gemini-3.5-transcribe-live",
+            generationConfig:{responseModalities:["TEXT"]},
+            inputAudioTranscription:{languageCodes:[]}
+          }
+        }));
+      };
+      socket.onmessage=async event=>{
+        if(closed)return;
+        let payload;
+        try{payload=JSON.parse(typeof event.data==="string"?event.data:await event.data.text())}
+        catch(_){return}
+        if(payload.error){
+          fail(Error("Gemini Live response: "+String(payload.error.message||"Invalid session")));
+          setStatus("Live transcription error: "+String(payload.error.message||"Invalid session"),"error");
+          return;
+        }
+        if(payload.setupComplete || payload.setup_complete){
+          if(connected)return;
+          connected=true;clearTimeout(handshakeTimeout);
+          try{
+            stream=await navigator.mediaDevices.getUserMedia({
+              audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true},
+              video:false
+            });
+            audioContext=new (window.AudioContext||window.webkitAudioContext)();
+            await audioContext.resume();
+            source=audioContext.createMediaStreamSource(stream);
+            processor=audioContext.createScriptProcessor(4096,1,1);
+            mute=audioContext.createGain();
+            mute.gain.value=0;
+            source.connect(processor);processor.connect(mute);mute.connect(audioContext.destination);
+            processor.onaudioprocess=evt=>{
+              if(closed || socket.readyState!==WebSocket.OPEN)return;
+              const samples=evt.inputBuffer.getChannelData(0);
+              evt.outputBuffer.getChannelData(0).fill(0);
+              let energy=0;
+              for(let i=0;i<samples.length;i++)energy+=samples[i]*samples[i];
+              const rms=Math.sqrt(energy/samples.length);
+              maxRms=Math.max(maxRms,rms);
+              meterFill.style.width=Math.min(100,Math.floor(rms*850))+"%";
+              if(socket.bufferedAmount>512000) {
+                micText.textContent="Network is catching up with the audio stream.";
+                return;
+              }
+              socket.send(JSON.stringify({
+                realtimeInput:{audio:{
+                  mimeType:"audio/pcm;rate=16000",
+                  data:floatToPcm16Base64(samples,audioContext.sampleRate)
+                }}
+              }));
+            };
+            micText.textContent="Cloud microphone is streaming. Recite a short passage clearly.";
+            setStatus("Live microphone streaming · waiting for Arabic transcript...","active");
+            watchdogId=setTimeout(()=>{
+              if(closed||gotTranscript)return;
+              setStatus(maxRms>0.012
+                ? "Voice audio is being captured, but Gemini has not returned a transcript yet. Try a short pause or restart."
+                : "The microphone connection is open but little sound is reaching it. Try Check mic.","error");
+            },14000);
+            resolve();
+          }catch(e){fail(Error("Microphone access after cloud connection failed: "+String(e?.message||e)))}
+          return;
+        }
+        const content=payload.serverContent || payload.server_content;
+        if(content){
+          const interim=content.interimInputTranscription||content.interim_input_transcription;
+          const finalized=content.inputTranscription||content.input_transcription;
+          if(interim?.text)parseSpeech(interim.text,false);
+          if(finalized?.text)parseSpeech(finalized.text,true);
+        }
+      };
+      socket.onerror=()=>{
+        if(!closed){
+          fail(Error("Gemini Live WebSocket could not connect."));
+          setStatus("Cloud connection failed. Check your API access and internet connection.","error");
+        }
+      };
+      socket.onclose=event=>{
+        if(!closed){
+          fail(Error("Gemini Live closed: "+event.code+" "+(event.reason||"")));
+          setStatus("Cloud transcription session ended ("+event.code+"). Start a new session to continue.","error");
+          live=false;
+          micButton.disabled=false;
+          micButton.textContent="🎙 Start new session";
+          micButton.classList.add("am-primary");
+          micButton.classList.remove("am-danger");
+          void cleanup();
+        }
+      };
+    }).catch(async error=>{
+      await cleanup();cleanupLive=null;
+      throw error;
+    });
+  }
+
   async function localLive(){
     // Experimental, only selected explicitly. Browser speech remains the default.
     const [core,runtime]=await Promise.all([
@@ -596,8 +799,13 @@ export default function(component) {
     setStatus("Preparing microphone...","idle");
     try{
       if(!audio.paused)audio.pause();
+      if(engineSelect.value==="cloud" && (!cloudSession?.token || tokenConsumed())){
+        await requestCloudToken();
+        return;
+      }
       live=true;
-      if(engineSelect.value==="local")await localLive();
+      if(engineSelect.value==="cloud")await cloudLive();
+      else if(engineSelect.value==="local")await localLive();
       else await browserLive();
       micButton.textContent="■ Stop listening";
       micButton.classList.remove("am-primary");
@@ -612,6 +820,11 @@ export default function(component) {
     }finally{starting=false}
   };
   selectTab(currentTab);
+  if(cloudSession?.token && !tokenConsumed()){
+    // Streamlit supplied a token after the user's explicit Start request.
+    engineSelect.value="cloud";
+    Promise.resolve().then(()=>{if(!live&&!starting)void micButton.onclick()});
+  }
   return ()=>{
     live=false;clearTimers();
     try{if(cleanupLive)void cleanupLive()}catch(_){}
