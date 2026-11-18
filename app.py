@@ -689,6 +689,11 @@ h1,h2,h3 {color:#e9bd61!important;}
   .arabic-area.cover-mode .word {min-width:100px;max-width:165px;padding:11px 8px;}
   .arabic-area.cover-mode .cover-english {font-size:13px;}
 }
+
+.mic-meter{width:min(100%,350px);height:8px;margin:2px auto;border-radius:99px;background:#4b3726;overflow:hidden;}
+.mic-meter-fill{height:100%;width:0;background:linear-gradient(90deg,#d6a44c,#f5d891);transition:width .08s;}
+.word-detail .tracker-title{letter-spacing:.01em;}
+.cover-verse {display:none!important;}
 </style>
 </head>
 <body>
@@ -796,7 +801,7 @@ h1,h2,h3 {color:#e9bd61!important;}
     if (index === D.words.length - 1 || D.words[index + 1].ayah !== word.ayah) {
       const arabicNumber=String(word.ayah).replace(/[0-9]/g,d=>"٠١٢٣٤٥٦٧٨٩"[Number(d)]);
       wrapper.appendChild(el("span", "verse-marker", "۝" + arabicNumber));
-      wrapper.appendChild(el("span", "cover-verse", "Ayah " + word.ayah));
+      // In Cover mode, keep only English clues; verse numbers belong to Reading mode.
     }
     if (D.states && D.states[index]) wrapper.classList.add(D.states[index]);
     arabicArea.appendChild(wrapper);
@@ -819,7 +824,7 @@ h1,h2,h3 {color:#e9bd61!important;}
     const word = D.words[index];
     if(!word) return;
     detailPanel.replaceChildren();
-    detailPanel.appendChild(el("div", "tracker-title", "✦ Word " + (index+1) + " · Ayah " + word.ayah));
+    detailPanel.appendChild(el("div", "tracker-title", "✦ Pronunciation guide"));
     detailPanel.appendChild(el("div", "word-detail-arabic", word.ar || ""));
     if(word.tr) detailPanel.appendChild(el("div", "study-translit", word.tr));
     if(word.en) detailPanel.appendChild(el("div", "study-meaning", word.en));
@@ -960,12 +965,12 @@ h1,h2,h3 {color:#e9bd61!important;}
 
   // Stage 2: Client-side Live Tracking via @tilawa/core
   const liveControls = el("div", "live-controls");
-  const startLiveBtn = el("button", "btn-tilawa", "🎙️ Start Live Tilawa Tracking");
-  const liveStatus = el("div", "live-status", "Click to download/load on-device AI model & start live mic tracking...");
+  const startLiveBtn = el("button", "btn-tilawa", "🎙️ Start Live Tracking");
+  const liveStatus = el("div", "live-status", "Select Start Live Tracking to begin. The button will report when speech is actually recognised.");
   
   const trackerPanel = el("div", "tracker-panel");
   trackerPanel.appendChild(el("div", "tracker-title", "✦ Your live recitation"));
-  trackerPanel.appendChild(el("div", "tracker-hint", "Follow along as you recite. Gold indicates the detected word; green and coral indicate provisional checks. Tajweed detail requires separate review."));
+  trackerPanel.appendChild(el("div", "tracker-hint", "Gold follows recognised words. This is approximate word tracking, not a verified Tajweed grade. Use Check microphone if nothing happens."));
   const progressTrack = el("div", "track-progress");
   const progressFill = el("div", "track-progress-fill");
   progressTrack.appendChild(progressFill);
@@ -1071,22 +1076,124 @@ h1,h2,h3 {color:#e9bd61!important;}
     if(node)node.scrollIntoView({behavior:"smooth",block:"nearest",inline:"center"});
     progressFill.style.width=Math.round((index+1)*100/Math.max(wordNodes.length,1))+"%";
   }
+  // Diagnose microphone access separately from speech recognition.
+  // Safari can permit the mic but fail to produce SpeechRecognition results.
+  const micCheckBtn = el("button", "tool-btn", "🎤 Check microphone");
+  const micMeter = el("div", "mic-meter");
+  const meterFill = el("div", "mic-meter-fill");
+  micMeter.appendChild(meterFill);
+  const micDiagnostic = el("div", "tracker-hint", "Microphone has not been tested.");
+  micCheckBtn.type = "button";
+  liveControls.insertBefore(micCheckBtn, engineHelp);
+  liveControls.insertBefore(micMeter, engineHelp);
+  liveControls.insertBefore(micDiagnostic, engineHelp);
+  let micTesting = false;
+
+  async function checkMicrophone() {
+    if(micTesting || isLiveActive) {
+      micDiagnostic.textContent = "Stop live tracking before checking the microphone.";
+      return;
+    }
+    if(!navigator.mediaDevices?.getUserMedia) {
+      micDiagnostic.textContent = "This browser does not provide microphone access on this page.";
+      return;
+    }
+    micTesting = true;
+    micCheckBtn.disabled = true;
+    micDiagnostic.textContent = "Requesting microphone permission...";
+    let stream, context, source, analyser;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true},video:false});
+      context = new (window.AudioContext || window.webkitAudioContext)();
+      await context.resume();
+      source = context.createMediaStreamSource(stream);
+      analyser = context.createAnalyser();
+      analyser.fftSize=1024;
+      source.connect(analyser);
+      const buffer=new Uint8Array(analyser.fftSize);
+      let peak=0;
+      const started=performance.now();
+      micDiagnostic.textContent="Microphone permitted. Say a few words to test the audio level.";
+      await new Promise(resolve=>{
+        function sample() {
+          analyser.getByteTimeDomainData(buffer);
+          let sq=0;
+          for(let i=0;i<buffer.length;i++){
+            const n=(buffer[i]-128)/128;
+            sq+=n*n;
+          }
+          const rms=Math.sqrt(sq/buffer.length);
+          peak=Math.max(peak,rms);
+          meterFill.style.width=Math.min(100,Math.max(2,Math.round(rms*700)))+"%";
+          if(performance.now()-started<3500){requestAnimationFrame(sample);}
+          else resolve();
+        }
+        sample();
+      });
+      micDiagnostic.textContent=peak>0.014
+        ? "Microphone works — voice detected. Live speech recognition may still be limited by Safari."
+        : "Microphone permission works, but little audio was detected. Check your microphone or try speaking closer.";
+    } catch(error) {
+      micDiagnostic.textContent="Microphone check failed: "+String(error?.message || error);
+    } finally {
+      try{source?.disconnect()}catch(_){}
+      try{await context?.close()}catch(_){}
+      try{stream?.getTracks().forEach(t=>t.stop())}catch(_){}
+      meterFill.style.width="0%";
+      micCheckBtn.disabled=false;
+      micTesting=false;
+    }
+  }
+  micCheckBtn.onclick=checkMicrophone;
+
   async function startBrowserTracking(reason) {
     const SpeechRecognition=window.SpeechRecognition||window.webkitSpeechRecognition;
-    if(!SpeechRecognition)throw new Error("This browser does not offer live speech recognition. Try Safari or Chrome, or use the recording and review feature below.");
-    let recognition = new SpeechRecognition();
+    if(!SpeechRecognition)
+      throw new Error("Speech recognition is not supported in this browser. Try the microphone check and a different browser.");
+    const apple=/iPad|iPhone|iPod/.test(navigator.userAgent) ||
+      (navigator.platform==="MacIntel" && navigator.maxTouchPoints>1);
+    let recognition=new SpeechRecognition();
     recognition.lang="ar-SA";
-    recognition.continuous=true;
+    // iOS WebKit is less reliable with continuous mode. Restart on completed utterances.
+    recognition.continuous=!apple;
     recognition.interimResults=true;
     recognition.maxAlternatives=1;
-    let stopped=false, confirmedCursor=0, lastObserved=-1;
-    recognition.onresult=(event)=>{
-      let interim="";
-      let finalized="";
+    let stopped=false, recognitionStarted=false, resultsReceived=false;
+    let confirmedCursor=0, lastObserved=-1, attempts=0, timeoutHandle=null, restartHandle=null;
+    function clearHandles(){
+      if(timeoutHandle!==null)clearTimeout(timeoutHandle);
+      if(restartHandle!==null)clearTimeout(restartHandle);
+      timeoutHandle=null;restartHandle=null;
+    }
+    function listeningWatchdog(){
+      if(timeoutHandle!==null)clearTimeout(timeoutHandle);
+      timeoutHandle=setTimeout(()=>{
+        if(stopped||resultsReceived)return;
+        liveStatus.textContent="Microphone session opened but no Arabic speech was recognised. Safari may have stalled. Use Check microphone to distinguish audio capture from recognition failure.";
+        heardText.textContent="No speech recognition results received. This is not a reading or pronunciation error.";
+      },11000);
+    }
+    recognition.onstart=()=>{
+      recognitionStarted=true;
+      attempts++;
+      liveStatus.textContent="Microphone session started · waiting for spoken Arabic...";
+      listeningWatchdog();
+    };
+    recognition.onaudiostart=()=>{
+      if(!stopped)micDiagnostic.textContent="Browser speech session reports microphone audio started.";
+    };
+    recognition.onspeechstart=()=>{
+      if(!stopped)liveStatus.textContent="Speech detected · transcribing Arabic...";
+    };
+    recognition.onresult=event=>{
+      if(stopped)return;
+      resultsReceived=true;
+      if(timeoutHandle!==null){clearTimeout(timeoutHandle);timeoutHandle=null;}
+      let interim="",finalized="";
       for(let i=event.resultIndex;i<event.results.length;i++){
-        const item=event.results[i];
-        const phrase=item?.[0]?.transcript || "";
-        if(item.isFinal)finalized+=" "+phrase;
+        const segment=event.results[i];
+        const phrase=segment?.[0]?.transcript || "";
+        if(segment.isFinal) finalized+=" "+phrase;
         else interim+=" "+phrase;
       }
       if(finalized.trim()){
@@ -1099,47 +1206,76 @@ h1,h2,h3 {color:#e9bd61!important;}
       }
       if(interim.trim()){
         const match=matchSpeech(interim,confirmedCursor);
-        if(match>=0) {showCurrentWord(match,false);lastObserved=match;}
+        if(match>=0){showCurrentWord(match,false);lastObserved=match;}
       }
       const heard=(finalized+" "+interim).trim();
-      if(heard) {
-        heardText.textContent="Heard (approximate): "+heard.slice(0,150);
+      if(heard){
+        heardText.textContent="Recognised Arabic: "+heard.slice(0,200);
         liveStatus.textContent=lastObserved>=0
-          ? "Live word following · word "+(lastObserved+1)+" of "+wordNodes.length
-          : "Listening · speech received, waiting for a Quran word match";
+          ? "Following your recitation · "+Math.round((lastObserved+1)*100/Math.max(1,wordNodes.length))+"% of passage"
+          : "Arabic heard, but no reliable match yet. Check that you selected the verses being recited.";
       }
     };
-    recognition.onerror=(event)=>{
+    recognition.onerror=event=>{
       if(stopped)return;
-      liveStatus.textContent="Browser speech recognition: "+(event.error||"unknown error")+
-        ". This browser may restrict recognition in an embedded Streamlit player.";
+      const error=event.error||"unknown";
+      if(error==="no-speech") {
+        liveStatus.textContent="No clear speech recognised. Try reciting another phrase.";
+      } else {
+        liveStatus.textContent="Speech recognition error ("+error+"). The microphone test can confirm whether audio capture works.";
+        if(["not-allowed","service-not-allowed","audio-capture","language-not-supported"].includes(error)){
+          stopped=true;
+        }
+      }
     };
     recognition.onend=()=>{
-      if(stopped)return;
-      isLiveActive=false;
-      stopTilawaFn=null;
-      startLiveBtn.disabled=false;
-      startLiveBtn.className="btn-tilawa";
-      startLiveBtn.textContent="🎙️ Start Live Tracking";
-      liveStatus.textContent="Speech recognition ended. Tap Start to begin another listening session.";
+      clearHandles();
+      if(stopped){
+        isLiveActive=false;
+        stopTilawaFn=null;
+        startLiveBtn.disabled=false;
+        startLiveBtn.className="btn-tilawa";
+        startLiveBtn.textContent="🎙️ Start Live Tracking";
+        return;
+      }
+      if(!recognitionStarted){
+        liveStatus.textContent="Speech recognition could not start.";
+      } else if(attempts>=4 && !resultsReceived){
+        stopped=true;
+        isLiveActive=false;
+        stopTilawaFn=null;
+        startLiveBtn.textContent="🎙️ Retry Live Tracking";
+        startLiveBtn.className="btn-tilawa";
+        liveStatus.textContent="Safari stopped recognition repeatedly without transcribing audio. Use Check microphone; this browser's speech engine may be unavailable.";
+        return;
+      }
+      // Short recognition sessions can end naturally in Safari. Restart after a pause.
+      restartHandle=setTimeout(()=>{
+        if(stopped)return;
+        try{recognition.start();}catch(error){
+          liveStatus.textContent="Unable to resume speech recognition: "+String(error?.message||error);
+          stopped=true;
+          isLiveActive=false;
+          startLiveBtn.textContent="🎙️ Retry Live Tracking";
+          startLiveBtn.className="btn-tilawa";
+        }
+      },480);
     };
-    try {recognition.start();} catch(error) {
-      throw new Error("Browser microphone could not start: "+(error?.message||error));
-    }
+    try{recognition.start();}
+    catch(error){throw new Error("Could not begin browser speech recognition: "+(error?.message||error));}
     stopTilawaFn=async()=>{
-      stopped=true;
-      try {recognition.stop();}catch(_){}
-      recognition.onresult=null;
-      recognition.onerror=null;
-      recognition.onend=null;
+      stopped=true;clearHandles();
+      try{recognition.abort()}catch(_){}
+      recognition.onstart=null;recognition.onresult=null;
+      recognition.onerror=null;recognition.onend=null;
       recognition=null;
     };
     isLiveActive=true;
     startLiveBtn.className="btn-tilawa stop";
-    startLiveBtn.textContent="■ Stop live tracking";
+    startLiveBtn.textContent="■ Stop Live Tracking";
     startLiveBtn.disabled=false;
-    liveStatus.textContent=reason || "Listening for Arabic words. Position estimates are not pronunciation grades.";
-    heardText.textContent="Speak clearly in Arabic. The gold highlight follows detected words.";
+    liveStatus.textContent=reason || "Waiting for microphone to activate...";
+    heardText.textContent="Nothing has been recognised yet.";
   }
 
   startLiveBtn.onclick = async () => {
@@ -1151,6 +1287,8 @@ h1,h2,h3 {color:#e9bd61!important;}
       let tilawa = null;
       let mic = null;
       try {
+        // Audio playback can block Safari's recognition session.
+        if(!audio.paused) audio.pause();
         const isAppleMobile=/iPad|iPhone|iPod/.test(navigator.userAgent) ||
           (navigator.platform==="MacIntel" && navigator.maxTouchPoints>1);
         if(engineSelect.value==="browser" || (engineSelect.value==="auto" && isAppleMobile)){
@@ -1184,7 +1322,7 @@ h1,h2,h3 {color:#e9bd61!important;}
               }
             });
             if (wordIdx >= 0) progressFill.style.width = Math.round(100 * (wordIdx + 1) / Math.max(1, wordNodes.length)) + "%";
-            liveStatus.textContent = wordIdx >= 0 ? `Following your recitation · Word ${wordIdx + 1} of ${wordNodes.length}` : "Listening · waiting for a confirmed position";
+            liveStatus.textContent = wordIdx >= 0 ? `Following your recitation · ${Math.round(100 * (wordIdx + 1) / Math.max(1, wordNodes.length))}% of selected passage` : "Microphone started, waiting for a confirmed word";
           }
           if (event.type === "checker" && event.state === "confirmed") {
             const errWordIdx = globalIndex(event.location);
@@ -1241,7 +1379,7 @@ h1,h2,h3 {color:#e9bd61!important;}
     }
   };
 
-  window.addEventListener("pagehide", () => { if (stopTilawaFn) void stopTilawaFn(); });
+  // Component v2 calls the cleanup function when the player unmounts.
   shell.appendChild(recitationPanel);
   root.appendChild(shell);
 </script>
@@ -1255,7 +1393,29 @@ def render_player(words, mode, states=None, audio_tracks=None, feedback="", meta
         "trackWordCounts": track_word_counts or [], "reciteFromMemory": recite_from_memory,
         "segments": segments or []
     }
-    components.html(PLAYER_HTML.replace("__DATA__", json.dumps(payload, ensure_ascii=False).replace("</", "<\\/")), height=850, scrolling=True)
+    # Streamlit Components v2 are NOT sandboxed in an iframe, which is critical
+    # for requesting microphone access on iPad Safari.
+    css = PLAYER_HTML.split("<style>", 1)[1].split("</style>", 1)[0]
+    css = "@import url('https://fonts.googleapis.com/css2?family=Amiri+Quran&family=Inter:wght@400;600;700&display=swap');\n" + css
+    css += "\n.muallim-mount {display:block;background:#241812;color:#F5E6CE;font-family:Inter,sans-serif;border-radius:22px;}"
+    player_js = PLAYER_HTML.split('<script type="module">', 1)[1].split("</script>", 1)[0]
+    player_js = player_js.replace("const D = __DATA__;", "const D = component.data;")
+    player_js = player_js.replace('const root = document.getElementById("app");',
+                                  'const root = component.parentElement.querySelector(".muallim-mount");')
+    player_js = (
+        "export default function(component) {\n"
+        + player_js
+        + "\nreturn () => { try { if (stopTilawaFn) void stopTilawaFn(); } catch (_) {} "
+          "try { audio.pause(); } catch (_) {} };\n}"
+    )
+    player = st.components.v2.component(
+        "al_muallim_live_reader",
+        html='<div class="muallim-mount"></div>',
+        css=css,
+        js=player_js,
+        isolate_styles=True,
+    )
+    player(key="al_muallim_reader", data=payload)
 
 
 # ----------------------------- Session & UI -----------------------------
