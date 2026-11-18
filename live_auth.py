@@ -64,6 +64,6 @@ def issue_live_token():
         token = response.json()["name"]
     except (ValueError, KeyError) as exc:
         raise RuntimeError("The Live token service returned no valid access token.") from exc
-    if not isinstance(token, str) or not token.startswith("auth_tokens/"):
+    if not isinstance(token, str) or not token.startswith(("authTokens/", "auth_tokens/")):
         raise RuntimeError("The Live token service returned an unexpected token format.")
     return {"token": token, "model": MODEL, "expiresAt": expiry}
