@@ -127,15 +127,21 @@ export default function(component) {
   ].forEach(([value,label])=>{
     const op=CE("option","",label);op.value=value;engineSelect.appendChild(op);
   });
-  engineSelect.value=D.cloudAvailable?"cloud":"browser";
+  // iPad Safari often blocks the browser's speech recognition service even
+  // when microphone audio capture succeeds. Never silently select it.
+  const isAppleWebKit=/iPad|iPhone|iPod/.test(navigator.userAgent||"")||
+    (navigator.platform==="MacIntel"&&navigator.maxTouchPoints>1);
+  engineSelect.value=(D.cloudAvailable||isAppleWebKit)?"cloud":"browser";
   append(micControls,micButton,micTest,engineSelect);
   const meter=CE("div","am-meter"),meterFill=CE("div","");
   meter.appendChild(meterFill);
   const micText=CE("div","am-note","No audio test has been performed.");
   const micMessage=CE("div","am-note",D.cloudError || (
     D.cloudAvailable
-      ? "Cloud transcription will request microphone permission and a short-lived, single-use access token when you start."
-      : "To enable Cloud Live, configure GEMINI_API_KEY in Streamlit secrets. Browser speech recognition may not work in iPad Safari."
+      ? "Cloud Live is ready to request a short-lived session token. Audio is sent to Google only after you press Start."
+      : isAppleWebKit
+        ? "Safari blocks speech recognition on some iPads (service-not-allowed). Microphone access is working; live highlighting needs Cloud Live, which requires GEMINI_API_KEY in Streamlit secrets. You can still use Record and review below."
+        : "Cloud Live needs GEMINI_API_KEY in Streamlit secrets. Browser recognition may be unavailable even if the mic test succeeds."
   ));
   append(micBody,micDescription,micControls,meter,micText,micMessage);
   micPanel.appendChild(micBody);
@@ -531,13 +537,28 @@ export default function(component) {
       if(closed)return;
       setStatus(err==="no-speech"?"No clear speech heard. Try a short ayah.":
         "Speech recognition error: "+err+". Try the microphone test.", "error");
-      if(["not-allowed","audio-capture","service-not-allowed","language-not-supported"].includes(err)){
+      if(err==="service-not-allowed"){
+        closed=true;
+        setStatus("Safari blocked its speech-recognition service. Your microphone works; choose Cloud Live (requires a configured Gemini API key).","error");
+        micMessage.textContent="Safari service-not-allowed is not a Tajweed error. Select Cloud Live or use the recorded-audio review.";
+        engineSelect.value="cloud";
+      } else if(["not-allowed","audio-capture","language-not-supported"].includes(err)){
         closed=true;
       }
     };
     r.onend=()=>{
       clearTimers();
-      if(closed){void stopLive();return}
+      if(closed){
+        // Keep the actual Safari error visible instead of overwriting it
+        // with the generic "Listening stopped" message.
+        live=false;starting=false;clearTimers();
+        cleanupLive=null;
+        micButton.disabled=false;
+        micButton.textContent="🎙 Try Cloud Live";
+        micButton.classList.remove("am-danger");
+        micButton.classList.add("am-primary");
+        return;
+      }
       if(started>=4&&!received){
         closed=true;
         setStatus("Safari ended recognition repeatedly without returning words. Use recorded review.","error");
