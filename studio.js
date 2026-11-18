@@ -799,156 +799,103 @@ export default function(component) {
     });
   }
 
-  async function localLive(){
-    // Quran-specific on-device speech recognition from open-source @tilawa/core.
-    // Uses the SDK's documented SessionRunner / createTilawaSession / feed APIs.
-    // The previous code called nonexistent createTilawa() and model.listen().
-    if(!navigator.mediaDevices?.getUserMedia)throw Error("Microphone unavailable. Open on HTTPS.");
-    if(typeof BigInt64Array==="undefined")throw Error("This browser cannot run the Quran model.");
-    setStatus("Preparing the Quran-specific recognition model (first visit downloads about 90 MB)...","active");
-    const src="https://github.com/yazinsai/tilawa/releases/download/v0.2.0/";
-    const quranUrl="https://raw.githubusercontent.com/yazinsai/tilawa/main/web/frontend/public/quran.json";
-    const [core,ortModule]=await Promise.all([
-      import("https://esm.sh/@tilawa/core?bundle"),
-      import("https://esm.sh/onnxruntime-web@1.22.0/wasm?bundle")
-    ]);
-    if(typeof core.createTilawaSession!=="function")throw Error("The Quran SDK is not available from its module source.");
-    const ort=ortModule.default?.InferenceSession?ortModule.default:ortModule;
-    if(!ort.InferenceSession || !ort.Tensor)throw Error("The ONNX model runtime is unavailable on this iPad.");
-    if(ort.env?.wasm){
-      ort.env.wasm.numThreads=1;
-      ort.env.wasm.proxy=false;
-      ort.env.wasm.wasmPaths="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.22.0/dist/";
-    }
-    async function getAsset(url,label){
-      setStatus("Downloading Quran model assets · "+label+"...","active");
-      const response=await fetch(url,{mode:"cors"});
-      if(!response.ok)throw Error(label+" download returned HTTP "+response.status);
-      return response;
-    }
-    const [modelResponse,vocabResponse,tokensResponse,quranResponse]=await Promise.all([
-      getAsset(src+"fastconformer_full_mixed.onnx","acoustic model"),
-      getAsset(src+"vocab.json","vocabulary"),
-      getAsset(src+"quran_ctc_tokens.json","Quran token index"),
-      getAsset(quranUrl,"Quran database")
-    ]);
-    const [modelBytes,vocab,quranCtcTokens,quran]=await Promise.all([
-      modelResponse.arrayBuffer(),vocabResponse.json(),tokensResponse.json(),quranResponse.json()
-    ]);
-    setStatus("Loading Quran acoustic model. This can take a moment on iPad...","active");
-    let sessionOrt;
-    try {
-      sessionOrt=await ort.InferenceSession.create(modelBytes,{executionProviders:["wasm"]});
-    }catch(error){
-      throw Error("On-device Quran model could not run on this browser: "+String(error?.message||error));
-    }
-    let stream=null,ctx=null,sourceNode=null,processor=null,sink=null;
-    let closed=false,feeding=false,pending=[];
-    let currentVerse=Number(meta.a);
-    const getGlobalWord=(ayah,localIndex)=>{
-      if(Number(ayah)<Number(meta.a)||Number(ayah)>Number(meta.end))return -1;
-      const counts=Array.isArray(D.trackWordCounts)?D.trackWordCounts:[];
-      const verseIdx=Number(ayah)-Number(meta.a);
-      const index=Number(localIndex);
-      // SDK word_progress.word_index is zero based.
-      if(!Number.isInteger(index)||index<0||index>=Number(counts[verseIdx]))return -1;
-      return counts.slice(0,verseIdx).reduce((a,b)=>a+Number(b||0),0)+index;
-    };
-    const runner={
-      async run(inputAudio){
-        const signal=new ort.Tensor("float32",inputAudio,[1,inputAudio.length]);
-        const length=new ort.Tensor("int64",BigInt64Array.from([BigInt(inputAudio.length)]),[1]);
-        const result=await sessionOrt.run({audio_signal:signal,length});
-        const tensor=result[sessionOrt.outputNames[0]];
-        const dims=tensor.dims;
-        return {
-          logprobs:tensor.data,
-          timeSteps:Number(dims[dims.length-2]),
-          vocabSize:Number(dims[dims.length-1])
-        };
-      }
-    };
-    const session=core.createTilawaSession(runner,{vocab,quranCtcTokens,quran},{
-      config:"balanced",
-      onOutput:(message)=>{
-        if(!live||closed||!message)return;
-        if(message.type==="verse_match"&&Number(message.surah)===Number(meta.s)){
-          currentVerse=Number(message.ayah);
-          setStatus("Quran-specific model matched ayah "+currentVerse+". Listening for words...","active");
-        }else if(message.type==="word_progress"&&Number(message.surah)===Number(meta.s)){
-          const verse=Number(message.ayah);
-          const i=getGlobalWord(verse,message.word_index);
-          if(i>=0){
-            mark(i,true);
-            setStatus("Quran model following ayah "+verse+" · word "+(Number(message.word_index)+1),"active");
-          }
-        }
-      }
-    });
+  // The current @tilawa/core 1.0 preview uses createTilawa(), not
+  // the legacy createTilawaSession() SDK. Import once on page mount so
+  // prepareMicrophone() can be called synchronously in the iPad tap handler.
+  const tilawaSdkModule=import(
+    "https://esm.sh/@tilawa/core@next/web?bundle&deps=onnxruntime-web@1.30.0"
+  ).then(mod=>{
+    if(typeof mod.createTilawa!=="function"||typeof mod.prepareMicrophone!=="function")
+      throw Error("Tilawa Quran SDK exports are unavailable.");
+    return mod;
+  });
+  let tilawaSdkReady=null,tilawaSdkError=null;
+  tilawaSdkModule.then(m=>{tilawaSdkReady=m}).catch(e=>{tilawaSdkError=e});
+  async function localLive(prepared){
+    // prepareMicrophone() is invoked synchronously in the button event, before
+    // asynchronous model downloads, to preserve Safari's user gesture.
+    if(!prepared)throw Error("The Quran microphone was not prepared. Tap Start again.");
+    setStatus("Loading Quran-specific model · first download may be 25 MB on iPad...","active");
+    let engine=null,session=null,mic=null,disposed=false;
+    const abortController=new AbortController();
     const cleanup=async()=>{
-      closed=true;pending=[];
-      if(processor)processor.onaudioprocess=null;
-      try{processor?.disconnect()}catch(_){}
-      try{sourceNode?.disconnect()}catch(_){}
-      try{sink?.disconnect()}catch(_){}
-      try{stream?.getTracks().forEach(track=>track.stop())}catch(_){}
-      try{await ctx?.close()}catch(_){}
-      try{await sessionOrt?.release()}catch(_){}
+      if(disposed)return;
+      disposed=true;abortController.abort();
+      try{prepared.release()}catch(_){}
+      try{if(mic)await mic.stop()}catch(_){}
+      try{session?.dispose()}catch(_){}
+      try{if(engine)await engine.dispose()}catch(_){}
+      meterFill.style.width="0%";
     };
     cleanupLive=cleanup;
-    try {
-      stream=await navigator.mediaDevices.getUserMedia({audio:{
-        echoCancellation:true,noiseSuppression:true,autoGainControl:true
-      }});
-      ctx=new (window.AudioContext||window.webkitAudioContext)();
-      await ctx.resume();
-      sourceNode=ctx.createMediaStreamSource(stream);
-      processor=ctx.createScriptProcessor(4096,1,1);
-      sink=ctx.createGain();sink.gain.value=0;
-      sourceNode.connect(processor);processor.connect(sink);sink.connect(ctx.destination);
-      let resampleRemainder=0;
-      const resample=input=>{
-        const ratio=ctx.sampleRate/16000,output=[];
-        for(let p=resampleRemainder;p<input.length;p+=ratio){
-          const index=Math.floor(p),weight=p-index;
-          output.push(input[index]*(1-weight)+input[Math.min(index+1,input.length-1)]*weight);
+    try{
+      const sdk=tilawaSdkReady||await tilawaSdkModule;
+      engine=await sdk.createTilawa({
+        tier:"auto",providers:["wasm"],threads:1,
+        signal:abortController.signal,
+        onProgress:p=>{
+          if(disposed)return;
+          const label=p.stage==="model"?"Quran voice model":
+            p.stage==="reference"?"Quran reference":"Model warm-up";
+          const percent=Number.isFinite(p.fraction)?Math.round(p.fraction*100):0;
+          setStatus("Loading "+label+" · "+percent+"%","active");
         }
-        // The first sample of the following audio block continues from the
-        // source-frame position immediately after the last generated sample.
-        const nextSteps=Math.ceil(Math.max(0,input.length-resampleRemainder)/ratio);
-        resampleRemainder=resampleRemainder+nextSteps*ratio-input.length;
-        if(!Number.isFinite(resampleRemainder)||resampleRemainder<0||resampleRemainder>=ratio)
-          resampleRemainder=0;
-        return output;
+      });
+      if(disposed)return;
+      session=engine.startMemorization(
+        {surah:Number(meta.s),fromAyah:Number(meta.a),toAyah:Number(meta.end)},
+        {confirm:{after:"next-word"}}
+      );
+      const counts=Array.isArray(D.trackWordCounts)?D.trackWordCounts:[];
+      const globalIndex=location=>{
+        const surah=Number(location?.surah),ayah=Number(location?.ayah);
+        const word=Number(location?.word);
+        const verseIndex=ayah-Number(meta.a);
+        if(surah!==Number(meta.s)||verseIndex<0||verseIndex>=counts.length)return -1;
+        if(!Number.isInteger(word)||word<1||word>Number(counts[verseIndex]))return -1;
+        return counts.slice(0,verseIndex).reduce((n,c)=>n+Number(c||0),0)+word-1;
       };
-      const flush=async()=>{
-        if(feeding||closed||!live||pending.length<4800)return;
-        feeding=true;
-        try{
-          while(pending.length>=4800&&!closed&&live){
-            const part=Float32Array.from(pending.splice(0,4800));
-            await session.feed(part);
+      session.subscribe(event=>{
+        if(!live||disposed||!event)return;
+        if(event.type==="position"){
+          if(event.state!=="locked")return;
+          const observed=event.observed?.[0]?.word;
+          const location=observed||event.expected;
+          const idx=globalIndex(location);
+          if(idx>=0){
+            mark(idx,true);
+            setStatus("Quran-specific recognition · ayah "+location.ayah+
+              ", word "+location.word+" of your passage","active");
+          }else{
+            setStatus("Quran-specific model is listening for your selected passage...","active");
           }
-        }catch(error){
-          setStatus("Quran recognition error: "+String(error?.message||error),"error");
-          closed=true;
+        }else if(event.type==="checker"&&event.state==="confirmed"){
+          const idx=globalIndex(event.location);
+          if(idx>=0){
+            wordNodes[idx]?.classList.add("am-review");
+            micMessage.textContent="Possible memorisation issue: "+String(event.errorClass||"word mismatch")+
+              ". Review the highlighted word; this is not a Tajweed verdict.";
+          }
+        }else if(event.type==="capabilities"){
+          micMessage.textContent="Quran model ready · checks words and skipped passages, not individual vowels or Tajweed.";
+        }
+      });
+      mic=await engine.listen(session,{
+        prepared,
+        onLevel:db=>{
+          if(disposed)return;
+          const level=Number.isFinite(db)?Math.min(100,Math.max(0,(db+65)*1.8)):0;
+          meterFill.style.width=level+"%";
+        },
+        onError:error=>{
+          if(disposed)return;
+          setStatus("Quran model inference failed: "+String(error?.message||error),"error");
           void stopLive();
-        }finally{feeding=false}
-      };
-      processor.onaudioprocess=event=>{
-        if(closed||!live)return;
-        const input=event.inputBuffer.getChannelData(0);
-        event.outputBuffer.getChannelData(0).fill(0);
-        const resampled=resample(input);
-        // Keep at most two seconds of queued audio to avoid CPU overload.
-        if(pending.length<32000)pending.push(...resampled);
-        let rms=0;
-        for(let i=0;i<input.length;i++)rms+=input[i]*input[i];
-        meterFill.style.width=Math.min(100,Math.sqrt(rms/input.length)*850)+"%";
-        void flush();
-      };
-      setStatus("Quran-specific model listening · recite your selected ayah...","active");
-      micText.textContent="Quran model loaded. Microphone audio stays on this device during recognition.";
+        }
+      });
+      if(disposed)return;
+      micText.textContent="On-device Quran recognition active · no recitation audio sent to Gemini.";
+      setStatus("Quran model listening. Begin reciting the displayed ayahs...","active");
     }catch(error){
       await cleanup();
       cleanupLive=null;
@@ -960,21 +907,29 @@ export default function(component) {
     if(starting)return;
     starting=true;micButton.disabled=true;
     setStatus("Preparing microphone...","idle");
+    let preparedLocalMic=null;
     try{
       if(!audio.paused)audio.pause();
+      if(engineSelect.value==="local"){
+        if(tilawaSdkError)throw Error("Quran SDK could not load: "+String(tilawaSdkError?.message||tilawaSdkError));
+        if(!tilawaSdkReady)throw Error("Quran SDK is still initializing. Tap Start again once it finishes.");
+        // MUST precede every await in this click handler for iPad Safari.
+        preparedLocalMic=tilawaSdkReady.prepareMicrophone();
+      }
       if(engineSelect.value==="cloud" && (!cloudSession?.token || tokenConsumed())){
         await requestCloudToken();
         return;
       }
       live=true;
       if(engineSelect.value==="cloud")await cloudLive();
-      else if(engineSelect.value==="local")await localLive();
+      else if(engineSelect.value==="local")await localLive(preparedLocalMic);
       else await browserLive();
       micButton.textContent="■ Stop listening";
       micButton.classList.remove("am-primary");
       micButton.classList.add("am-danger");
       micButton.disabled=false;
     }catch(e){
+      try{preparedLocalMic?.release()}catch(_){}
       live=false;
       setStatus("Live tracking unavailable: "+String(e?.message||e),"error");
       micButton.textContent="🎙 Retry listening";
