@@ -47,10 +47,14 @@ def render_studio(
         1 for x in (review or {}).get("states", [])
         if x in {"good", "review"}
     )
+    key = f"studio_{meta['s']}_{meta['a']}_{meta['end']}"
     cloud_session = st.session_state.get("_am_live_cloud_session")
     cloud_view = st.session_state.get("_am_live_cloud_view", {})
-    # The token is short-lived and can be used to initiate one session only.
-    if cloud_session and time.time() >= cloud_session.get("startUntil", 0):
+    # Tokens are tied to exactly one selected passage and expire quickly.
+    if cloud_session and (
+        time.time() >= cloud_session.get("startUntil", 0)
+        or cloud_session.get("passage") != key
+    ):
         cloud_session = None
         st.session_state.pop("_am_live_cloud_session", None)
     data = {
@@ -75,7 +79,6 @@ def render_studio(
         "letterResults": (review or {}).get("letter_results", {}),
         "wordFeedback": (review or {}).get("word_feedback", {}),
     }
-    key = f"studio_{meta['s']}_{meta['a']}_{meta['end']}"
     result = _studio(
         data=data,
         key=key,
@@ -114,6 +117,7 @@ def render_studio(
                 try:
                     token = issue_live_token()
                     token["id"] = request_id
+                    token["passage"] = key
                     token["startUntil"] = now + 85
                     st.session_state["_am_live_cloud_session"] = token
                     st.session_state["_am_live_cloud_error"] = ""
