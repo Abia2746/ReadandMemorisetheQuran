@@ -548,6 +548,16 @@ body {background:#241812;}
 h1,h2,h3 {color:#e9bd61!important;}
 .teacher-container {background:#302119!important;border-color:#98723f!important;}
 @media(max-width:700px){.arabic-area{padding:15px 9px 30px;line-height:2.85;text-align:right}.arabic-word{font-size:35px}.word{margin:0 2px}.panel{padding:12px}.shell{padding:6px}}
+
+.study-annotations[hidden] {display:none!important;}
+.study-annotations {margin-top:20px;padding:18px;background:#211710;border:1px solid #a47b414f;border-radius:20px;}
+.study-grid {display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-top:15px;}
+.study-entry {border:1px solid #8b6a3d66;background:#35271e;border-radius:12px;padding:12px;text-align:center;min-width:0;}
+.study-arabic {font:30px/2 'Amiri Quran',serif;color:#f9ebd5;direction:rtl;}
+.study-translit {font:600 13px/1.5 Inter,sans-serif;color:#f0ca80;overflow-wrap:anywhere;}
+.study-meaning {font:12px/1.5 Inter,sans-serif;color:#cdbca7;margin-top:5px;}
+.study-marks {font:11px/1.7 Inter,sans-serif;color:#e3b65d;margin-top:8px;}
+@media(max-width:640px){.study-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:7px}.study-entry{padding:8px}}
 </style>
 </head>
 <body>
@@ -564,6 +574,13 @@ h1,h2,h3 {color:#e9bd61!important;}
     if (typeof core.createTilawa !== "function") throw new Error("Tracking engine did not expose createTilawa.");
     createTilawa = core.createTilawa;
     ort = runtime;
+    // Safari has no WebGPU on many iPads. Prefer the WASM backend and explicitly
+    // resolve its binaries instead of relying on bundler-relative paths.
+    if (ort.env?.wasm) {
+      ort.env.wasm.wasmPaths = "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.30.0/dist/";
+      ort.env.wasm.numThreads = 1;
+      ort.env.wasm.proxy = false;
+    }
   }
 
   const D = __DATA__;
@@ -597,7 +614,7 @@ h1,h2,h3 {color:#e9bd61!important;}
   const memoryBtn = el("button", "tool-btn", D.reciteFromMemory ? "◉ Memory mode" : "◉ Reading mode");
   memoryBtn.type = "button";
   memoryBtn.setAttribute("aria-pressed", String(!!D.reciteFromMemory));
-  const marksBtn = el("button", "tool-btn", "Show vowel labels");
+  const marksBtn = el("button", "tool-btn", "Show vowels + transliteration");
   marksBtn.type = "button";
   marksBtn.setAttribute("aria-pressed", "false");
   toolbar.append(memoryBtn, marksBtn);
@@ -621,7 +638,7 @@ h1,h2,h3 {color:#e9bd61!important;}
       arabic.appendChild(unit);
     });
     wrapper.appendChild(arabic);
-    // Keep translations out of the continuous Arabic Mushaf; show them in a separate study panel.
+    // Keep Arabic flowing continuously; render study annotations separately.
     if (D.reciteFromMemory) { arabic.style.filter = "blur(9px)"; arabic.style.transition = "filter 180ms ease"; wrapper.dataset.memoryHidden = "true"; }
     if (index === D.words.length - 1 || D.words[index + 1].ayah !== word.ayah) {
       wrapper.appendChild(el("span", "verse-marker", "۞ " + word.ayah));
@@ -631,11 +648,27 @@ h1,h2,h3 {color:#e9bd61!important;}
     wordNodes.push(wrapper);
   });
   recitationPanel.appendChild(arabicArea);
+  const studyPanel = el("div", "study-annotations");
+  studyPanel.hidden = true;
+  studyPanel.appendChild(el("div", "tracker-title", "Word-by-word pronunciation guide"));
+  const studyGrid = el("div", "study-grid");
+  D.words.forEach((word, index) => {
+    const entry = el("div", "study-entry");
+    entry.appendChild(el("div", "study-arabic", (word.letters || []).map(l => l.text).join("")));
+    if (word.tr) entry.appendChild(el("div", "study-translit", word.tr));
+    if (word.en) entry.appendChild(el("div", "study-meaning", word.en));
+    const marks = (word.letters || []).flatMap(l => (l.marks || []).map(m => m + " (" + l.text + ")"));
+    if (marks.length) entry.appendChild(el("div", "study-marks", marks.join(" · ")));
+    studyGrid.appendChild(entry);
+  });
+  studyPanel.appendChild(studyGrid);
+  recitationPanel.appendChild(studyPanel);
   let memoryHidden = !!D.reciteFromMemory;
   memoryBtn.onclick = () => {
     memoryHidden = !memoryHidden;
     memoryBtn.textContent = memoryHidden ? "◉ Memory mode" : "◉ Reading mode";
     memoryBtn.setAttribute("aria-pressed", String(memoryHidden));
+    if (memoryHidden) { studyPanel.hidden = true; marksBtn.setAttribute("aria-pressed", "false"); marksBtn.textContent = "Show vowels + transliteration"; }
     wordNodes.forEach(node => {
       const ar = node.querySelector(".arabic-word");
       if (ar) ar.style.filter = memoryHidden && !node.classList.contains("live-good") ? "blur(9px)" : "none";
@@ -643,10 +676,12 @@ h1,h2,h3 {color:#e9bd61!important;}
     });
   };
   marksBtn.onclick = () => {
+    if (memoryHidden) { liveStatus.textContent = "Switch to reading mode to view the pronunciation guide."; return; }
     const showing = marksBtn.getAttribute("aria-pressed") !== "true";
     marksBtn.setAttribute("aria-pressed", String(showing));
-    marksBtn.textContent = showing ? "Hide vowel labels" : "Show vowel labels";
-    arabicArea.querySelectorAll(".mark-label").forEach(label => { label.style.display = showing ? "block" : "none"; });
+    marksBtn.textContent = showing ? "Hide pronunciation guide" : "Show vowels + transliteration";
+    studyPanel.hidden = !showing;
+    if (showing) studyPanel.scrollIntoView({behavior:"smooth",block:"nearest"});
   };
 
   // Stage 1: Sheikh Listening Audio Player with Exact Quran.com Segments
@@ -740,7 +775,7 @@ h1,h2,h3 {color:#e9bd61!important;}
   }
   function showTrackingError(error) {
     const message = String(error?.message || error || "Unknown tracking error");
-    const hint = /permission|notallowed|denied/i.test(message) ? " Allow microphone access in your browser settings." : /secure|https/i.test(message) ? " Open this app over HTTPS." : "";
+    const hint = /permission|notallowed|denied/i.test(message) ? " Allow microphone access in Safari settings." : /wasm|webgpu|onnx|module script|backend/i.test(message) ? " The browser could not initialise the speech model. Try desktop Chrome; iPad Safari support is not yet confirmed. This is not a pronunciation mistake." : /secure|https/i.test(message) ? " Open this app over HTTPS." : "";
     liveStatus.textContent = "Tracking unavailable: " + message + hint;
   }
 
@@ -755,6 +790,7 @@ h1,h2,h3 {color:#e9bd61!important;}
       try {
         if (!navigator.mediaDevices?.getUserMedia) throw new Error("Microphone API unavailable. Use HTTPS and a supported browser.");
         await loadTrackingEngine();
+        liveStatus.textContent = "Preparing the speech model. On iPad this may take time; the browser must support WebAssembly.";
         tilawa = await createTilawa({
           ort,
           onProgress: (p) => {
