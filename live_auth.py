@@ -9,7 +9,7 @@ import os
 import requests
 
 MODEL = "gemini-3.5-transcribe-live"
-TOKEN_ENDPOINT = "https://generativelanguage.googleapis.com/v1alpha/auth_tokens"
+TOKEN_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/auth_tokens"
 
 
 def configured_api_key():
@@ -38,13 +38,6 @@ def issue_live_token():
         "uses": 1,
         "expireTime": expiry,
         "newSessionExpireTime": session_deadline,
-        "liveConnectConstraints": {
-            "model": "models/" + MODEL,
-            "config": {
-                "responseModalities": ["TEXT"],
-                "inputAudioTranscription": {"languageCodes": []},
-            },
-        },
     }
     try:
         response = requests.post(
