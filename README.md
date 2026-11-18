@@ -7,7 +7,8 @@ A responsive original Qur'an learning application built with Streamlit and Strea
 - **Read** — connected Uthmani Arabic text, verse markers, and word-by-word study. Tap any word to see available transliteration, English meaning, and individual harakah names.
 - **Memorise** — English-only clues. Reveal transliteration and vowel names only when requested, either for the passage or an individual word.
 - **Listen** — reciter playback for the selected ayahs, with word highlighting only where timestamp data exists.
-- **Live word following (beta)** — browser speech recognition follows *approximate* Arabic word positions. A microphone test reports whether audio capture works, separately from recognition. iPad Safari's speech recognition may be unavailable even when microphone access succeeds.
+- **Cloud Live transcription (beta, recommended on iPad)** — after pressing Start, the app requests microphone permission and obtains a short-lived, single-use Gemini token from Streamlit. Your browser streams 16 kHz PCM audio directly to the `gemini-3.5-transcribe-live` model, and returned interim/final Arabic text drives approximate word highlighting. The permanent `GEMINI_API_KEY` stays on the server. This needs an API key with access to the model and may use the account's API quota.
+- **Browser word-following fallback** — local browser speech-recognition APIs are offered as an alternative, but Safari may fail even when the microphone itself is working. A separate audio-level test helps distinguish those failures.
 - **Experimental on-device tracking** — opt-in \`@tilawa/core\` / ONNX Runtime WASM engine; the model may not run on all devices. It is not required for Read, Memorise, or Listen.
 - **Record and review** — optional Gemini-assisted feedback from recorded audio, using the account owner's configured API key. This is AI practice feedback, not qualified Tajweed certification.
 - **Ask the teacher** — questions about vocabulary, verses, and terminology. Responses may be inaccurate and should be verified for religious rulings.
@@ -37,10 +38,13 @@ Do not commit your API key to GitHub. The app requires HTTPS for browser microph
 
 ## Live tracking troubleshooting
 
-1. Select a short passage and press **Test mic**.
-2. If the meter moves but live tracking receives no transcript, the browser's speech-recognition service may be unsupported or disabled.
-3. Try a supported desktop browser or use the recorded-audio review; **do not interpret silence as a Tajweed mistake**.
-4. The experimental on-device option may download a large AI model and is particularly sensitive to iPad Safari / WebAssembly limitations.
+1. Set `GEMINI_API_KEY` in Streamlit Secrets to enable **Cloud Live · recommended**; do not paste the key into the frontend or GitHub.
+2. Select a short passage and press **Test mic**.
+3. Start **Cloud Live** and allow microphone access. The button requests a single-use token first; watch for the 'microphone streaming' state and the recognised Arabic text.
+4. If the meter moves but no transcript appears, the transcription service or network may be unavailable. Do not treat silence as a recitation mistake.
+5. The experimental on-device option may download a large AI model and is particularly sensitive to iPad Safari / WebAssembly limitations.
+
+Cloud Live is an optional third-party transcription service. Microphone audio is transmitted to Google only after the user explicitly presses Start. The application does not intentionally persist cloud-streamed audio or its transcript in its own database; Google API data handling and costs depend on the linked plan. Use a separate qualified Tajweed teacher for precise vowel and articulation assessment.
 
 ## Limitations before production launch
 
