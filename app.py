@@ -657,7 +657,10 @@ h1,h2,h3 {color:#e9bd61!important;}
   const recitationPanel = el("div", "panel");
   const intro = el("div", "mushaf-intro");
   intro.appendChild(el("div", "ornament", "✦ ───── ✦"));
-  intro.appendChild(el("div", "bismillah", "بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ"));
+  // A passage beginning mid-surah should not imply the basmalah is part of that ayah.
+  if(Number(D.meta.a)===1 && Number(D.meta.s)!==9){
+    intro.appendChild(el("div", "bismillah", "بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ"));
+  }
   recitationPanel.appendChild(intro);
   const toolbar = el("div", "study-toolbar");
   const memoryBtn = el("button", "tool-btn", D.reciteFromMemory ? "◉ Memory mode" : "◉ Reading mode");
@@ -693,7 +696,8 @@ h1,h2,h3 {color:#e9bd61!important;}
     // Keep Arabic flowing continuously; render study annotations separately.
     if (D.reciteFromMemory) { arabic.style.filter = "blur(9px)"; arabic.style.transition = "filter 180ms ease"; wrapper.dataset.memoryHidden = "true"; }
     if (index === D.words.length - 1 || D.words[index + 1].ayah !== word.ayah) {
-      wrapper.appendChild(el("span", "verse-marker", "۞ " + word.ayah));
+      const arabicNumber=String(word.ayah).replace(/[0-9]/g,d=>"٠١٢٣٤٥٦٧٨٩"[Number(d)]);
+      wrapper.appendChild(el("span", "verse-marker", "۝" + arabicNumber));
     }
     if (D.states && D.states[index]) wrapper.classList.add(D.states[index]);
     arabicArea.appendChild(wrapper);
@@ -881,6 +885,7 @@ h1,h2,h3 {color:#e9bd61!important;}
   engineSelect.setAttribute("aria-label", "Live tracking engine");
   const engineHelp = el("div", "tracker-hint",
     "iPad mode: browser speech follows approximate Arabic words and may use your browser's speech service. Experimental local AI loads a large model. Detailed Tajweed still requires recording review and teacher verification.");
+  engineSelect.value="auto";
   liveControls.insertBefore(engineSelect, startLiveBtn);
   liveControls.insertBefore(engineHelp, startLiveBtn);
   const heardText = el("div", "heard-text");
