@@ -14,7 +14,6 @@ import numpy as np
 
 import requests
 import streamlit as st
-from studio_ui import render_studio
 
 
 # ============================================================
@@ -27,6 +26,8 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="collapsed",
 )
+
+from studio_ui import render_studio
 
 QURAN_API = "https://api.quran.com/api/v4"
 EVERY_AYAH = "https://everyayah.com/data"
