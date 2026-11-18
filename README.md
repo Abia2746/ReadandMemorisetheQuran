@@ -36,6 +36,14 @@ The component is **not sandboxed inside an iframe**. User text arrives via \`com
 
 Do not commit your API key to GitHub. The app requires HTTPS for browser microphone APIs when deployed remotely.
 
+## Build verification and iPad reliability
+
+The interface shows **Qur'an listener · R3** in the header when the current frontend is loaded. The default recognition method is **Quran-specific model · on-device beta**; the JavaScript bundle is pinned to `@tilawa/core@1.0.0-rc.0/web` and uses the documented `prepareMicrophone`, `createTilawa`, `startMemorization`, `listen`, and locked `position` event interfaces.
+
+The browser module is downloaded from a third-party ESM CDN at startup. The **recognition SDK ready** message means the module loaded, *not* that the model has downloaded or that iPad compatibility is established. Press Start listening to load the model. Successful word-following also requires a supported WebAssembly runtime and microphone capture. SDK/module/runtime failures are reported in the live panel rather than silently substituting Safari's blocked generic speech recognition.
+
+The frontend regression suite (`node tests/studio-ui.test.mjs`) exercises mocked SDK events, iPad-gesture preparation, English-only initial memorisation, correct-word reveal, rejected uncertain positions, and Read-mode highlighting. It **does not** test actual ONNX inference or real iPad hardware. As the upstream SDK notes, iOS Safari has not yet undergone its device-validation programme, so live recitation should remain clearly labelled beta.
+
 ## Live tracking troubleshooting
 
 1. Set `GEMINI_API_KEY` in Streamlit Secrets to enable **Cloud Live · recommended**; do not paste the key into the frontend or GitHub.
