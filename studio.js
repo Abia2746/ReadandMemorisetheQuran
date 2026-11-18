@@ -648,9 +648,17 @@ export default function(component) {
     const url="wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContentConstrained?access_token="+encodeURIComponent(token);
     socket=new WebSocket(url);
     await new Promise((resolve,reject)=>{
-      let connected=false;
-      const handshakeTimeout=setTimeout(()=>reject(Error("Cloud connection timed out. Check network access.")),12000);
-      const fail=e=>{if(!connected){clearTimeout(handshakeTimeout);reject(e instanceof Error?e:Error(String(e)))}};
+      let setupStarted=false,settled=false;
+      const handshakeTimeout=setTimeout(()=>{
+        if(!settled){settled=true;reject(Error("Cloud connection timed out. Check network access."))}
+      },18000);
+      const fail=e=>{
+        if(!settled){
+          settled=true;
+          clearTimeout(handshakeTimeout);
+          reject(e instanceof Error?e:Error(String(e)));
+        }
+      };
       socket.onopen=()=>{
         socket.send(JSON.stringify({
           setup:{
@@ -671,8 +679,8 @@ export default function(component) {
           return;
         }
         if(payload.setupComplete || payload.setup_complete){
-          if(connected)return;
-          connected=true;clearTimeout(handshakeTimeout);
+          if(setupStarted)return;
+          setupStarted=true;clearTimeout(handshakeTimeout);
           try{
             stream=await navigator.mediaDevices.getUserMedia({
               audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true},
@@ -713,6 +721,7 @@ export default function(component) {
                 ? "Voice audio is being captured, but Gemini has not returned a transcript yet. Try a short pause or restart."
                 : "The microphone connection is open but little sound is reaching it. Try Check mic.","error");
             },14000);
+            settled=true;
             resolve();
           }catch(e){fail(Error("Microphone access after cloud connection failed: "+String(e?.message||e)))}
           return;
