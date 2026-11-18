@@ -23,5 +23,7 @@ jobs:
         run: python -m unittest discover -s tests -v
       - name: Check browser frontend syntax
         run: node --check studio.js
+      - name: Verify Quran listener and memorisation highlighting
+        run: node tests/studio-ui.test.mjs
       - name: Verify design assets exist
         run: test -s studio.css && test -s studio.js
