@@ -640,7 +640,7 @@ export default function(component) {
       }
     };
     setStatus("Connecting to Gemini's live transcription service...","active");
-    const url="wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContentConstrained?access_token="+encodeURIComponent(token);
+    const url="wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContentConstrained?access_token="+encodeURIComponent(token);
     socket=new WebSocket(url);
     await new Promise((resolve,reject)=>{
       let setupStarted=false,settled=false;
