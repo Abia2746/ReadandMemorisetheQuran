@@ -493,8 +493,17 @@ audio { width: 100% !important; }
 <div id="app"></div>
 
 <script type="module">
-  import { createTilawa } from "https://esm.sh/@tilawa/core@next/web";
-  import * as ort from "https://esm.sh/onnxruntime-web@1.30.0";
+  // Load the tracking engine on demand so a CDN failure does not blank the Mushaf.
+  let createTilawa, ort;
+  async function loadTrackingEngine() {
+    const [core, runtime] = await Promise.all([
+      import("https://esm.sh/@tilawa/core@next/web"),
+      import("https://esm.sh/onnxruntime-web@1.30.0")
+    ]);
+    if (typeof core.createTilawa !== "function") throw new Error("Tracking engine did not expose createTilawa.");
+    createTilawa = core.createTilawa;
+    ort = runtime;
+  }
 
   const D = __DATA__;
   function el(tag, cls, text) {
@@ -536,7 +545,8 @@ audio { width: 100% !important; }
       arabic.appendChild(unit);
     });
     wrapper.appendChild(arabic);
-    if (word.en) wrapper.appendChild(el("div", "translation", word.en));
+    if (word.en && !D.reciteFromMemory) wrapper.appendChild(el("div", "translation", word.en));
+    if (D.reciteFromMemory) { arabic.style.filter = "blur(9px)"; arabic.style.transition = "filter 180ms ease"; wrapper.dataset.memoryHidden = "true"; }
     wrapper.appendChild(el("div", "meta", "Ayah " + word.ayah));
     if (D.states && D.states[index]) wrapper.classList.add(D.states[index]);
     arabicArea.appendChild(wrapper);
@@ -612,13 +622,36 @@ audio { width: 100% !important; }
 
   let stopTilawaFn = null;
   let isLiveActive = false;
+  let starting = false;
+  const verseOffsets = [];
+  let totalWords = 0;
+  (D.trackWordCounts || []).forEach(count => { verseOffsets.push(totalWords); totalWords += count; });
+  function globalIndex(location) {
+    if (!location || !Number.isInteger(location.word) || location.word < 1) return -1;
+    const ayah = Number(location.ayah ?? location.verse ?? D.meta.a);
+    const verseIndex = ayah - D.meta.a;
+    if (verseIndex < 0 || verseIndex >= verseOffsets.length) return -1;
+    if (location.word > D.trackWordCounts[verseIndex]) return -1;
+    return verseOffsets[verseIndex] + location.word - 1;
+  }
+  function showTrackingError(error) {
+    const message = String(error?.message || error || "Unknown tracking error");
+    const hint = /permission|notallowed|denied/i.test(message) ? " Allow microphone access in your browser settings." : /secure|https/i.test(message) ? " Open this app over HTTPS." : "";
+    liveStatus.textContent = "Tracking unavailable: " + message + hint;
+  }
 
   startLiveBtn.onclick = async () => {
     if (!isLiveActive) {
+      if (starting) return;
+      starting = true;
       startLiveBtn.textContent = "Loading AI Model...";
       startLiveBtn.disabled = true;
+      let tilawa = null;
+      let mic = null;
       try {
-        const tilawa = await createTilawa({
+        if (!navigator.mediaDevices?.getUserMedia) throw new Error("Microphone API unavailable. Use HTTPS and a supported browser.");
+        await loadTrackingEngine();
+        tilawa = await createTilawa({
           ort,
           onProgress: (p) => {
             liveStatus.textContent = `Loading browser model (${p.stage}): ${Math.round(p.fraction * 100)}%`;
@@ -631,19 +664,20 @@ audio { width: 100% !important; }
         );
 
         session.subscribe((event) => {
-          if (event.type === "position" && event.state === "locked" && event.observed[0]) {
-            const wordIdx = event.observed[0].word - 1;
+          if (event.type === "position" && event.state === "locked" && event.observed?.[0]) {
+            const wordIdx = globalIndex(event.observed[0]);
             wordNodes.forEach((node, idx) => {
               node.classList.remove("live-active");
               if (idx === wordIdx) {
                 node.classList.add("live-active");
+                if (D.reciteFromMemory) { const arabic = node.querySelector(".arabic-word"); if (arabic) arabic.style.filter = "none"; }
                 node.scrollIntoView({ behavior: 'smooth', block: 'center' });
               }
             });
             liveStatus.textContent = `Live tracking active · Word ${event.observed[0].word}`;
           }
           if (event.type === "checker" && event.state === "confirmed") {
-            const errWordIdx = event.location.word - 1;
+            const errWordIdx = globalIndex(event.location);
             if (wordNodes[errWordIdx]) {
               if (event.errorClass === "correct") {
                 wordNodes[errWordIdx].classList.add("live-good");
@@ -654,10 +688,9 @@ audio { width: 100% !important; }
           }
         });
 
-        const mic = await tilawa.listen(session);
+        mic = await tilawa.listen(session);
         stopTilawaFn = async () => {
-          await mic.stop();
-          await tilawa.dispose();
+          try { await mic?.stop?.(); } finally { await tilawa?.dispose?.(); }
         };
 
         isLiveActive = true;
@@ -666,19 +699,29 @@ audio { width: 100% !important; }
         startLiveBtn.disabled = false;
         liveStatus.textContent = "🔴 Listening live... Speak clearly into your mic!";
       } catch (err) {
-        liveStatus.textContent = "Mic/Model error: " + err.message;
+        showTrackingError(err);
+        try { await mic?.stop?.(); } catch (_) {}
+        try { await tilawa?.dispose?.(); } catch (_) {}
+        stopTilawaFn = null;
         startLiveBtn.textContent = "🎙️ Start Live Tilawa Tracking";
         startLiveBtn.disabled = false;
+      } finally {
+        starting = false;
       }
     } else {
-      if (stopTilawaFn) await stopTilawaFn();
+      startLiveBtn.disabled = true;
+      try { if (stopTilawaFn) await stopTilawaFn(); } catch (err) { showTrackingError(err); }
+      stopTilawaFn = null;
       isLiveActive = false;
       startLiveBtn.textContent = "🎙️ Start Live Tilawa Tracking";
       startLiveBtn.className = "btn-tilawa";
       liveStatus.textContent = "Live tracking ended.";
+      startLiveBtn.disabled = false;
+      wordNodes.forEach(node => node.classList.remove("live-active"));
     }
   };
 
+  window.addEventListener("pagehide", () => { if (stopTilawaFn) void stopTilawaFn(); });
   shell.appendChild(recitationPanel);
   root.appendChild(shell);
 </script>
