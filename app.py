@@ -558,6 +558,15 @@ h1,h2,h3 {color:#e9bd61!important;}
 .study-meaning {font:12px/1.5 Inter,sans-serif;color:#cdbca7;margin-top:5px;}
 .study-marks {font:11px/1.7 Inter,sans-serif;color:#e3b65d;margin-top:8px;}
 @media(max-width:640px){.study-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:7px}.study-entry{padding:8px}}
+
+/* Distinct, readable Qur'an typography: never split shaping letters. */
+.arabic-area {font-family:'Amiri Quran',serif;line-height:2.7;text-align:right;}
+.word {display:inline-block;white-space:nowrap;vertical-align:baseline;margin:0 2px;padding:0 3px;}
+.arabic-word {display:inline;white-space:nowrap;direction:rtl;unicode-bidi:isolate;}
+.word.live-heard:not(.live-active){background:rgba(203,173,100,.09);}
+.engine-select {font:600 13px Inter,sans-serif;border-radius:12px;background:#34251c;color:#f6dfb0;padding:10px 13px;border:1px solid #99733d;width:min(100%,350px);}
+.heard-text {font:12px/1.6 Inter,sans-serif;color:#e9d0a4;max-width:92%;overflow-wrap:anywhere;text-align:center;margin-top:6px;}
+.verse-marker {font-family:'Amiri Quran',serif;}
 </style>
 </head>
 <body>
@@ -594,7 +603,7 @@ h1,h2,h3 {color:#e9bd61!important;}
   const shell = el("div", "shell");
   const header = el("div", "panel topline");
   const headLeft = el("div");
-  headLeft.appendChild(el("div", "brand", "Al-Mu'allim Academy · @tilawa/core Engine"));
+  headLeft.appendChild(el("div", "brand", "✦ AL-MU\u0027ALLIM · RECITE WITH CLARITY"));
   const endAyah = D.meta.end && D.meta.end !== D.meta.a ? "–" + D.meta.end : "";
   headLeft.appendChild(el("div", "meta", "Surah " + D.meta.s + " · Ayahs " + D.meta.a + (endAyah)));
   header.appendChild(headLeft);
@@ -627,16 +636,11 @@ h1,h2,h3 {color:#e9bd61!important;}
   D.words.forEach((word, index) => {
     const wrapper = el("div", "word");
     const arabic = el("div", "arabic-word");
-    (word.letters || []).forEach((letter, letterIndex) => {
-      const result = D.letterResults ? D.letterResults[index + ":" + letterIndex] : null;
-      const status = result ? result.status : "ungraded";
-      const unit = el("span", "letter " + status);
-      unit.appendChild(el("span", "letter-char", letter.text));
-      if (letter.marks && letter.marks.length) {
-        unit.appendChild(el("span", "mark-label", letter.marks.join(" · ")));
-      }
-      arabic.appendChild(unit);
-    });
+    // Render each word as one text node so Arabic shaping remains intact.
+    // Splitting connected Arabic letters across spans destroys the Mushaf typography.
+    arabic.textContent = word.ar || (word.letters || []).map(l => l.text).join("");
+    arabic.setAttribute("lang", "ar");
+    wrapper.title = [word.tr, word.en].filter(Boolean).join(" — ");
     wrapper.appendChild(arabic);
     // Keep Arabic flowing continuously; render study annotations separately.
     if (D.reciteFromMemory) { arabic.style.filter = "blur(9px)"; arabic.style.transition = "filter 180ms ease"; wrapper.dataset.memoryHidden = "true"; }
@@ -779,6 +783,149 @@ h1,h2,h3 {color:#e9bd61!important;}
     liveStatus.textContent = "Tracking unavailable: " + message + hint;
   }
 
+
+  // Browser speech following is a lightweight fallback for iPad Safari.
+  // It tracks approximate word positions. It NEVER claims to score tajweed.
+  const engineSelect = el("select", "engine-select");
+  [["auto","Automatic · recommended"],["browser","Browser speech · iPad friendly"],["onnx","On-device AI · experimental"]]
+    .forEach(([value,label]) => {
+      const option = el("option", "", label);
+      option.value = value; engineSelect.appendChild(option);
+    });
+  engineSelect.setAttribute("aria-label", "Live tracking engine");
+  const engineHelp = el("div", "tracker-hint",
+    "Browser speech may send audio to your browser provider. On-device AI keeps inference local but needs a compatible model. Neither mode alone verifies Tajweed.");
+  liveControls.insertBefore(engineSelect, startLiveBtn);
+  liveControls.insertBefore(engineHelp, startLiveBtn);
+  const heardText = el("div", "heard-text");
+  heardText.setAttribute("role", "status");
+  liveControls.appendChild(heardText);
+
+  function normalizeArabic(input) {
+    return String(input || "")
+      .normalize("NFKD")
+      .replace(/[\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06ED\u0640]/g, "")
+      .replace(/[ٱأإآا]/g,"ا")
+      .replace(/[ى]/g,"ي")
+      .replace(/[ؤ]/g,"و")
+      .replace(/[ئ]/g,"ي")
+      .replace(/[ة]/g,"ه")
+      .replace(/[^\u0621-\u064A\s]/g,"")
+      .replace(/\s+/g," ").trim();
+  }
+  const expectedWords = D.words.map(w => normalizeArabic(w.ar || (w.letters || []).map(l => l.text).join("")));
+  function smallEditDistance(a,b) {
+    if (a === b) return 0;
+    if (Math.abs(a.length-b.length)>1) return 2;
+    let d = Array.from({length:b.length+1},(_,i)=>i);
+    for(let i=1;i<=a.length;i++){
+      let previous=d[0]; d[0]=i;
+      for(let j=1;j<=b.length;j++){
+        const stored=d[j];
+        d[j]=Math.min(d[j]+1,d[j-1]+1,previous+(a[i-1]===b[j-1]?0:1));
+        previous=stored;
+      }
+    }
+    return d[b.length];
+  }
+  function matchSpeech(phrase, start) {
+    const heard = normalizeArabic(phrase).split(/\s+/).filter(Boolean);
+    let cursor=start, last=-1;
+    for (const token of heard) {
+      let found=-1;
+      // Do not jump far ahead based on a single ambiguous word.
+      for(let i=Math.max(0,cursor);i<Math.min(expectedWords.length,cursor+7);i++){
+        const target=expectedWords[i];
+        if(!target)continue;
+        if(target===token || (token.length>=5 && target.length>=5 && smallEditDistance(target,token)<=1)){
+          found=i;break;
+        }
+      }
+      if(found>=0){last=found;cursor=found+1;}
+    }
+    return last;
+  }
+  function showCurrentWord(index, confirmed) {
+    if(index<0||index>=wordNodes.length)return;
+    wordNodes.forEach((node,i)=>{
+      node.classList.toggle("live-active",i===index);
+      if(confirmed && i<=index)node.classList.add("live-heard");
+    });
+    const node=wordNodes[index];
+    if(node)node.scrollIntoView({behavior:"smooth",block:"nearest",inline:"center"});
+    progressFill.style.width=Math.round((index+1)*100/Math.max(wordNodes.length,1))+"%";
+  }
+  async function startBrowserTracking(reason) {
+    const SpeechRecognition=window.SpeechRecognition||window.webkitSpeechRecognition;
+    if(!SpeechRecognition)throw new Error("This browser does not offer live speech recognition. Try Safari or Chrome, or use the recording and review feature below.");
+    let recognition = new SpeechRecognition();
+    recognition.lang="ar-SA";
+    recognition.continuous=true;
+    recognition.interimResults=true;
+    recognition.maxAlternatives=1;
+    let stopped=false, confirmedCursor=0, lastObserved=-1;
+    recognition.onresult=(event)=>{
+      let interim="";
+      let finalized="";
+      for(let i=event.resultIndex;i<event.results.length;i++){
+        const item=event.results[i];
+        const phrase=item?.[0]?.transcript || "";
+        if(item.isFinal)finalized+=" "+phrase;
+        else interim+=" "+phrase;
+      }
+      if(finalized.trim()){
+        const match=matchSpeech(finalized,confirmedCursor);
+        if(match>=0){
+          confirmedCursor=Math.max(confirmedCursor,match+1);
+          showCurrentWord(match,true);
+          lastObserved=match;
+        }
+      }
+      if(interim.trim()){
+        const match=matchSpeech(interim,confirmedCursor);
+        if(match>=0) {showCurrentWord(match,false);lastObserved=match;}
+      }
+      const heard=(finalized+" "+interim).trim();
+      if(heard) {
+        heardText.textContent="Heard (approximate): "+heard.slice(0,150);
+        liveStatus.textContent=lastObserved>=0
+          ? "Live word following · word "+(lastObserved+1)+" of "+wordNodes.length
+          : "Listening · speech received, waiting for a Quran word match";
+      }
+    };
+    recognition.onerror=(event)=>{
+      if(stopped)return;
+      liveStatus.textContent="Browser speech recognition: "+(event.error||"unknown error")+
+        ". This browser may restrict recognition in an embedded Streamlit player.";
+    };
+    recognition.onend=()=>{
+      if(stopped)return;
+      isLiveActive=false;
+      stopTilawaFn=null;
+      startLiveBtn.disabled=false;
+      startLiveBtn.className="btn-tilawa";
+      startLiveBtn.textContent="🎙️ Start Live Tracking";
+      liveStatus.textContent="Speech recognition ended. Tap Start to begin another listening session.";
+    };
+    try {recognition.start();} catch(error) {
+      throw new Error("Browser microphone could not start: "+(error?.message||error));
+    }
+    stopTilawaFn=async()=>{
+      stopped=true;
+      try {recognition.stop();}catch(_){}
+      recognition.onresult=null;
+      recognition.onerror=null;
+      recognition.onend=null;
+      recognition=null;
+    };
+    isLiveActive=true;
+    startLiveBtn.className="btn-tilawa stop";
+    startLiveBtn.textContent="■ Stop live tracking";
+    startLiveBtn.disabled=false;
+    liveStatus.textContent=reason || "Listening for Arabic words. Position estimates are not pronunciation grades.";
+    heardText.textContent="Speak clearly in Arabic. The gold highlight follows detected words.";
+  }
+
   startLiveBtn.onclick = async () => {
     if (!isLiveActive) {
       if (starting) return;
@@ -788,6 +935,12 @@ h1,h2,h3 {color:#e9bd61!important;}
       let tilawa = null;
       let mic = null;
       try {
+        const isAppleMobile=/iPad|iPhone|iPod/.test(navigator.userAgent) ||
+          (navigator.platform==="MacIntel" && navigator.maxTouchPoints>1);
+        if(engineSelect.value==="browser" || (engineSelect.value==="auto" && isAppleMobile)){
+          await startBrowserTracking("Using browser speech following (iPad mode). This is an approximate word position, not a Tajweed score.");
+          return;
+        }
         if (!navigator.mediaDevices?.getUserMedia) throw new Error("Microphone API unavailable. Use HTTPS and a supported browser.");
         await loadTrackingEngine();
         liveStatus.textContent = "Preparing the speech model. On iPad this may take time; the browser must support WebAssembly.";
@@ -840,7 +993,16 @@ h1,h2,h3 {color:#e9bd61!important;}
         startLiveBtn.disabled = false;
         liveStatus.textContent = "🔴 Listening live... Speak clearly into your mic!";
       } catch (err) {
-        showTrackingError(err);
+        if(engineSelect.value==="auto" && (window.SpeechRecognition||window.webkitSpeechRecognition)){
+          try {
+            await startBrowserTracking("The local model could not load, so browser speech following is active. This is approximate and may use your browser provider.");
+            return;
+          } catch(fallbackError) {
+            showTrackingError(new Error(String(err?.message||err)+"; browser speech: "+String(fallbackError?.message||fallbackError)));
+          }
+        } else {
+          showTrackingError(err);
+        }
         try { await mic?.stop?.(); } catch (_) {}
         try { await tilawa?.dispose?.(); } catch (_) {}
         stopTilawaFn = null;
@@ -859,6 +1021,7 @@ h1,h2,h3 {color:#e9bd61!important;}
       liveStatus.textContent = "Live tracking ended.";
       startLiveBtn.disabled = false;
       wordNodes.forEach(node => node.classList.remove("live-active"));
+      heardText.textContent="";
     }
   };
 
