@@ -1,0 +1,23 @@
+name: Validate Al-Muallim studio
+on:
+  push:
+    branches: ["main", "design/**"]
+  pull_request:
+
+jobs:
+  syntax-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Compile Python source
+        run: python -m py_compile app.py studio_ui.py
+      - name: Check browser frontend syntax
+        run: node --check studio.js
+      - name: Verify design assets exist
+        run: test -s studio.css && test -s studio.js
