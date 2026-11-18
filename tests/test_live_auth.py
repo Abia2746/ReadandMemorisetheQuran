@@ -30,6 +30,7 @@ class LiveAuthTests(unittest.TestCase):
             ["TEXT"],
         )
         self.assertEqual(arguments.kwargs["headers"]["x-goog-api-key"], "private-test-key")
+        self.assertIn("/v1alpha/auth_tokens", arguments.args[0])
         self.assertNotIn("private-test-key", repr(token))
 
     def test_missing_key_does_not_request_token(self):
@@ -57,6 +58,7 @@ class LiveAuthTests(unittest.TestCase):
             'inputTranscription',
             'component.setTriggerValue("request_cloud"',
             'Gemini Live WebSocket',
+            'v1alpha.GenerativeService.BidiGenerateContentConstrained',
         ):
             self.assertIn(expected, text)
         self.assertNotIn("GEMINI_API_KEY", text)
