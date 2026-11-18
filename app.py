@@ -599,6 +599,14 @@ h1,h2,h3 {color:#e9bd61!important;}
 .engine-select {font:600 13px Inter,sans-serif;border-radius:12px;background:#34251c;color:#f6dfb0;padding:10px 13px;border:1px solid #99733d;width:min(100%,350px);}
 .heard-text {font:12px/1.6 Inter,sans-serif;color:#e9d0a4;max-width:92%;overflow-wrap:anywhere;text-align:center;margin-top:6px;}
 .verse-marker {font-family:'Amiri Quran',serif;}
+
+.word {cursor:pointer;}
+.word:focus-visible {outline:2px solid #f5d891;outline-offset:2px;}
+.word-detail[hidden]{display:none!important;}
+.word-detail {margin:14px 0 20px;padding:20px;background:#221710;border:1px solid #e3b65d66;border-radius:18px;text-align:center;}
+.word-detail-arabic{font:43px/1.9 'Amiri Quran',serif;direction:rtl;color:#f7e5c3;}
+.word-detail-marks{font:12px/1.9 Inter,sans-serif;color:#e0ae65;margin:10px 0 13px;overflow-wrap:anywhere;}
+.word-tap-hint{font:12px Inter,sans-serif;color:#cdb890;flex-basis:100%;text-align:center;}
 </style>
 </head>
 <body>
@@ -659,6 +667,7 @@ h1,h2,h3 {color:#e9bd61!important;}
   marksBtn.type = "button";
   marksBtn.setAttribute("aria-pressed", "false");
   toolbar.append(memoryBtn, marksBtn);
+  toolbar.append(el("span", "word-tap-hint", "Tap any Arabic word for its vowels, transliteration and meaning"));
   recitationPanel.appendChild(toolbar);
   const arabicArea = el("div", "arabic-area");
   arabicArea.setAttribute("lang", "ar");
@@ -672,7 +681,14 @@ h1,h2,h3 {color:#e9bd61!important;}
     // Splitting connected Arabic letters across spans destroys the Mushaf typography.
     arabic.textContent = word.ar || (word.letters || []).map(l => l.text).join("");
     arabic.setAttribute("lang", "ar");
-    wrapper.title = [word.tr, word.en].filter(Boolean).join(" — ");
+    wrapper.title = "Study this word: " + [word.tr, word.en].filter(Boolean).join(" — ");
+    wrapper.tabIndex = 0;
+    wrapper.setAttribute("role", "button");
+    wrapper.setAttribute("aria-label", "Study Arabic word " + (word.tr || word.ar));
+    wrapper.onclick = () => showWordDetails(index);
+    wrapper.onkeydown = (event) => {
+      if(event.key==="Enter" || event.key===" "){event.preventDefault();showWordDetails(index);}
+    };
     wrapper.appendChild(arabic);
     // Keep Arabic flowing continuously; render study annotations separately.
     if (D.reciteFromMemory) { arabic.style.filter = "blur(9px)"; arabic.style.transition = "filter 180ms ease"; wrapper.dataset.memoryHidden = "true"; }
@@ -684,6 +700,39 @@ h1,h2,h3 {color:#e9bd61!important;}
     wordNodes.push(wrapper);
   });
   recitationPanel.appendChild(arabicArea);
+  const detailPanel = el("div", "word-detail");
+  detailPanel.hidden = true;
+  detailPanel.setAttribute("aria-live", "polite");
+  recitationPanel.appendChild(detailPanel);
+  function showWordDetails(index) {
+    if(memoryHidden) {
+      liveStatus.textContent="Memory test is active. Switch to Reading mode to inspect individual words.";
+      return;
+    }
+    const word = D.words[index];
+    if(!word) return;
+    detailPanel.replaceChildren();
+    detailPanel.appendChild(el("div", "tracker-title", "✦ Word " + (index+1) + " · Ayah " + word.ayah));
+    detailPanel.appendChild(el("div", "word-detail-arabic", word.ar || ""));
+    if(word.tr) detailPanel.appendChild(el("div", "study-translit", word.tr));
+    if(word.en) detailPanel.appendChild(el("div", "study-meaning", word.en));
+    const marks=(word.letters||[]).flatMap(letter => (letter.marks||[]).map(mark => mark+" · "+letter.text));
+    if(marks.length)detailPanel.appendChild(el("div", "word-detail-marks", marks.join("  |  ")));
+    const audioButton=el("button", "tool-btn", "▶ Listen to this ayah");
+    audioButton.type="button";
+    audioButton.onclick=()=>{
+      const ayahIndex=word.ayah-D.meta.a;
+      const available=D.audio||[];
+      if(ayahIndex<0 || ayahIndex>=available.length)return;
+      audio.pause();
+      audio.src=available[ayahIndex];
+      trackIndex=ayahIndex;
+      audio.currentTime=0;
+      audio.play().catch(()=>{liveStatus.textContent="Audio playback could not start. Try the audio controls.";});
+    };
+    detailPanel.appendChild(audioButton);
+    detailPanel.hidden=false;
+  }
   const studyPanel = el("div", "study-annotations");
   studyPanel.hidden = true;
   studyPanel.appendChild(el("div", "tracker-title", "Word-by-word pronunciation guide"));
@@ -704,7 +753,12 @@ h1,h2,h3 {color:#e9bd61!important;}
     memoryHidden = !memoryHidden;
     memoryBtn.textContent = memoryHidden ? "◉ Memory mode" : "◉ Reading mode";
     memoryBtn.setAttribute("aria-pressed", String(memoryHidden));
-    if (memoryHidden) { studyPanel.hidden = true; marksBtn.setAttribute("aria-pressed", "false"); marksBtn.textContent = "Show vowels + transliteration"; }
+    if (memoryHidden) {
+      studyPanel.hidden = true;
+      detailPanel.hidden = true;
+      marksBtn.setAttribute("aria-pressed", "false");
+      marksBtn.textContent = "Show vowels + transliteration";
+    }
     wordNodes.forEach(node => {
       const ar = node.querySelector(".arabic-word");
       if (ar) ar.style.filter = memoryHidden && !node.classList.contains("live-good") ? "blur(9px)" : "none";
