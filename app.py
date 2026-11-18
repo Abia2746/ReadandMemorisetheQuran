@@ -487,6 +487,43 @@ audio { width: 100% !important; }
 .btn-tilawa:hover { background: #e6c55c; }
 .btn-tilawa.stop { background: #ef4444; color: white; }
 .live-status { font-size: 13px; color: #D4AF37; font-style: italic; text-align: center; margin-top: 4px; }
+
+/* Al-Mu'allim immersive Mushaf theme */
+:root {color-scheme:dark;--gold:#e5ba57;--gold-soft:#f5d891;--ink:#211710;--cream:#f7ead1;}
+body {background:radial-gradient(ellipse at 50% 0%,#493122 0%,#271a14 48%,#170f0c 100%);min-height:100vh;color:var(--cream);}
+.shell {max-width:1160px;padding:22px 16px 32px;gap:22px;}
+.panel {background:linear-gradient(145deg,rgba(69,49,33,.78),rgba(25,17,13,.9));border:1px solid rgba(232,188,100,.24);border-radius:26px;padding:24px;box-shadow:0 16px 55px #0b08073d;}
+.topline {background:transparent;border:none;box-shadow:none;padding:12px 8px;}
+.brand {font-size:17px;letter-spacing:.15em;color:var(--gold-soft);}
+.meta {font-size:13px;color:#c4ad8e;}
+.pill {background:linear-gradient(120deg,#614522,#38291d);border:1px solid #a77c3d;color:#f5d891;padding:10px 15px;font-weight:600;}
+.arabic-area {min-height:350px;max-height:650px;gap:22px 7px;padding:34px 16px;scroll-behavior:smooth;scrollbar-color:#927144 transparent;}
+.word {padding:8px 10px;min-width:54px;border-radius:15px;}
+.arabic-word {font-size:clamp(32px,4.5vw,53px);line-height:2.05;}
+.letter {margin:0;padding:0 1px;}
+.mark-label {display:none;}
+.word.active-sheikh,.word.live-active {transform:none;background:rgba(219,167,66,.19);border:1px solid #e5ba57;box-shadow:0 0 18px #e5ba5740;}
+.word.live-good {background:rgba(65,173,123,.14);border-color:#5ecb94;}
+.word.live-error {background:rgba(228,109,99,.13);border-color:#e77c70;}
+.live-controls {gap:13px;padding:14px 0;}
+.btn-tilawa {border-radius:99px;background:linear-gradient(120deg,#f5dfaa,#d6a33c);box-shadow:0 7px 24px #d6a33c44;padding:16px 30px;font-size:15px;min-height:54px;}
+.btn-tilawa:focus-visible,.tool-btn:focus-visible {outline:3px solid white;outline-offset:3px;}
+.live-status {font-style:normal;line-height:1.6;color:#f0d7a5;}
+.audio-box {background:#20171088;border:1px solid #8e6a3c44;padding:14px;border-radius:16px;}
+audio {filter:sepia(.25);}
+.mushaf-intro {text-align:center;padding:15px 4px 0;color:var(--gold-soft);}
+.mushaf-intro .bismillah {font-family:'Amiri Quran',serif;font-size:35px;line-height:2.2;color:#e5ba57;}
+.mushaf-intro .ornament {letter-spacing:10px;opacity:.65;}
+.study-toolbar {display:flex;gap:9px;flex-wrap:wrap;justify-content:center;margin:10px 0 4px;}
+.tool-btn {background:#3e3026;color:#f1d6a3;border:1px solid #b58b4c77;border-radius:100px;padding:10px 14px;cursor:pointer;font:600 12px Inter,sans-serif;}
+.tool-btn[aria-pressed="true"] {background:#e5ba57;color:#24180f;}
+.tracker-panel {margin-top:14px;background:#19120fc4;border:1px solid #c79a4a55;border-radius:18px;padding:17px;text-align:center;}
+.tracker-title {font-weight:700;color:#f5d891;margin-bottom:8px;}
+.tracker-hint {font-size:12px;color:#c5b094;line-height:1.6;}
+.track-progress {height:7px;border-radius:99px;background:#4d3b2a;overflow:hidden;margin:13px auto 0;max-width:500px;}
+.track-progress-fill {height:100%;width:0;background:linear-gradient(90deg,#c18d35,#f4dc9b);transition:width .25s;}
+.teacher-note {font-size:12px;color:#d9c09b;line-height:1.5;margin:9px 0;}
+@media(max-width:640px){.shell{padding:8px;gap:10px}.panel{padding:12px;border-radius:18px}.arabic-area{max-height:520px;padding:18px 4px;gap:12px 2px}.arabic-word{font-size:32px}.word{padding:5px;min-width:30px}.pill{padding:7px 10px}.brand{font-size:13px}.mushaf-intro .bismillah{font-size:27px}}
 </style>
 </head>
 <body>
@@ -528,6 +565,19 @@ audio { width: 100% !important; }
   shell.appendChild(header);
 
   const recitationPanel = el("div", "panel");
+  const intro = el("div", "mushaf-intro");
+  intro.appendChild(el("div", "ornament", "✦ ───── ✦"));
+  intro.appendChild(el("div", "bismillah", "بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ"));
+  recitationPanel.appendChild(intro);
+  const toolbar = el("div", "study-toolbar");
+  const memoryBtn = el("button", "tool-btn", D.reciteFromMemory ? "◉ Memory mode" : "◉ Reading mode");
+  memoryBtn.type = "button";
+  memoryBtn.setAttribute("aria-pressed", String(!!D.reciteFromMemory));
+  const marksBtn = el("button", "tool-btn", "Show vowel labels");
+  marksBtn.type = "button";
+  marksBtn.setAttribute("aria-pressed", "false");
+  toolbar.append(memoryBtn, marksBtn);
+  recitationPanel.appendChild(toolbar);
   const arabicArea = el("div", "arabic-area");
   const wordNodes = [];
 
@@ -545,7 +595,7 @@ audio { width: 100% !important; }
       arabic.appendChild(unit);
     });
     wrapper.appendChild(arabic);
-    if (word.en && !D.reciteFromMemory) wrapper.appendChild(el("div", "translation", word.en));
+    if (word.en) { const translation = el("div", "translation", word.en); if (D.reciteFromMemory) translation.style.display = "none"; wrapper.appendChild(translation); }
     if (D.reciteFromMemory) { arabic.style.filter = "blur(9px)"; arabic.style.transition = "filter 180ms ease"; wrapper.dataset.memoryHidden = "true"; }
     wrapper.appendChild(el("div", "meta", "Ayah " + word.ayah));
     if (D.states && D.states[index]) wrapper.classList.add(D.states[index]);
@@ -553,6 +603,24 @@ audio { width: 100% !important; }
     wordNodes.push(wrapper);
   });
   recitationPanel.appendChild(arabicArea);
+  let memoryHidden = !!D.reciteFromMemory;
+  memoryBtn.onclick = () => {
+    memoryHidden = !memoryHidden;
+    memoryBtn.textContent = memoryHidden ? "◉ Memory mode" : "◉ Reading mode";
+    memoryBtn.setAttribute("aria-pressed", String(memoryHidden));
+    wordNodes.forEach(node => {
+      const ar = node.querySelector(".arabic-word");
+      if (ar) ar.style.filter = memoryHidden && !node.classList.contains("live-good") ? "blur(9px)" : "none";
+      const translation = node.querySelector(".translation");
+      if (translation) translation.style.display = memoryHidden ? "none" : "";
+    });
+  };
+  marksBtn.onclick = () => {
+    const showing = marksBtn.getAttribute("aria-pressed") !== "true";
+    marksBtn.setAttribute("aria-pressed", String(showing));
+    marksBtn.textContent = showing ? "Hide vowel labels" : "Show vowel labels";
+    arabicArea.querySelectorAll(".mark-label").forEach(label => { label.style.display = showing ? "block" : "none"; });
+  };
 
   // Stage 1: Sheikh Listening Audio Player with Exact Quran.com Segments
   const audioBox = el("div", "audio-box");
@@ -616,6 +684,14 @@ audio { width: 100% !important; }
   const startLiveBtn = el("button", "btn-tilawa", "🎙️ Start Live Tilawa Tracking");
   const liveStatus = el("div", "live-status", "Click to download/load on-device AI model & start live mic tracking...");
   
+  const trackerPanel = el("div", "tracker-panel");
+  trackerPanel.appendChild(el("div", "tracker-title", "✦ Your live recitation"));
+  trackerPanel.appendChild(el("div", "tracker-hint", "Follow along as you recite. Gold indicates the detected word; green and coral indicate provisional checks. Tajweed detail requires separate review."));
+  const progressTrack = el("div", "track-progress");
+  const progressFill = el("div", "track-progress-fill");
+  progressTrack.appendChild(progressFill);
+  trackerPanel.appendChild(progressTrack);
+  liveControls.appendChild(trackerPanel);
   liveControls.appendChild(startLiveBtn);
   recitationPanel.appendChild(liveControls);
   recitationPanel.appendChild(liveStatus);
@@ -670,11 +746,12 @@ audio { width: 100% !important; }
               node.classList.remove("live-active");
               if (idx === wordIdx) {
                 node.classList.add("live-active");
-                if (D.reciteFromMemory) { const arabic = node.querySelector(".arabic-word"); if (arabic) arabic.style.filter = "none"; }
+                if (memoryHidden) { const arabic = node.querySelector(".arabic-word"); if (arabic) arabic.style.filter = "none"; }
                 node.scrollIntoView({ behavior: 'smooth', block: 'center' });
               }
             });
-            liveStatus.textContent = `Live tracking active · Word ${event.observed[0].word}`;
+            if (wordIdx >= 0) progressFill.style.width = Math.round(100 * (wordIdx + 1) / Math.max(1, wordNodes.length)) + "%";
+            liveStatus.textContent = wordIdx >= 0 ? `Following your recitation · Word ${wordIdx + 1} of ${wordNodes.length}` : "Listening · waiting for a confirmed position";
           }
           if (event.type === "checker" && event.state === "confirmed") {
             const errWordIdx = globalIndex(event.location);
