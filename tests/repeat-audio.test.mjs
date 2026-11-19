@@ -9,6 +9,7 @@ import {dirname,resolve} from "node:path";
 import {fileURLToPath} from "node:url";
 
 let js=readFileSync(resolve(dirname(fileURLToPath(import.meta.url)),"../studio.js"),"utf8");
+const roomUiSource=readFileSync(resolve(dirname(fileURLToPath(import.meta.url)),"../prayer_room_ui.js"),"utf8");
 const sdkImport=/const tilawaSdkModule=import\(\s*"https:\/\/esm\.sh\/@tilawa\/core@1\.0\.0-rc\.0\/web\?bundle&deps=onnxruntime-web@1\.30\.0"\s*\)\.then/;
 assert.match(js,sdkImport);
 js=js.replace(sdkImport,"const tilawaSdkModule=Promise.resolve(mockSdk).then");
@@ -87,12 +88,16 @@ const mockSdk={
     };
   }
 };
+const combined=roomUiSource+"\n"+
+  js.replace(/^export default function\(component\)/,"function Studio(component)")+
+  "\nreturn Studio;";
 const factory=new Function("mockSdk","document","window","navigator","sessionStorage",
-  "localStorage","AbortController","return ("+js.replace(/^export default\s*/,"")+")");
+  "localStorage","AbortController","createPrayerRoomScene",combined);
 const create=factory(mockSdk,document,{AudioContext:FakeAudioContext},
   {userAgent:"iPad",platform:"iPad",maxTouchPoints:5},
   {getItem:()=>null,setItem(){},removeItem(){}},
-  {getItem:()=>null,setItem(){}},AbortController);
+  {getItem:()=>null,setItem(){}},AbortController,
+  async()=>({start(){},stop(){},dispose(){}}));
 
 const root=new Node("div");root.className="am-mount";
 const data={
