@@ -385,6 +385,146 @@ async function createPrayerRoomScene(canvas,config={}){
   windowPlane.material=windowMat;
   windowPlane.rotation.y=Math.PI; // canvas outward through the room
   windowPlane.material.backFaceCulling=false;
+
+  // R8: physically separate, *animated* glass-rain layer. Each streak is
+  // positioned using its own velocity, depth and length. A moving water film
+  // and foreground glass drops create parallax over the static panoramic view.
+  // Update a transparent dynamic texture at 12–16fps; never regenerate the
+  // expensive sky / landscape for each frame.
+  const rainWidth=mobile?320:512,rainHeight=mobile?512:768;
+  const rainGlassTex=new B.DynamicTexture("Animated rain on glazing",{
+    width:rainWidth,height:rainHeight
+  },scene,true);
+  rainGlassTex.hasAlpha=true;
+  const rainGlassMat=new B.StandardMaterial("Rain glass optical refraction",scene);
+  rainGlassMat.diffuseTexture=rainGlassTex;
+  rainGlassMat.emissiveTexture=rainGlassTex;
+  rainGlassMat.disableLighting=true;
+  rainGlassMat.useAlphaFromDiffuseTexture=true;
+  rainGlassMat.backFaceCulling=false;
+  const rainGlass=B.MeshBuilder.CreatePlane("Moving rain on panoramic arched window",{
+    width:windowWidth,height:windowHeight
+  },scene);
+  rainGlass.position.set(windowX,windowY,windowZ-.13);
+  rainGlass.rotation.y=Math.PI;
+  rainGlass.material=rainGlassMat;
+  rainGlass.isVisible=false;
+  const dropCount=mobile?150:240;
+  const drops=Array.from({length:dropCount},(_,i)=>({
+    x:noise(i*31+901),y:noise(i*97+23),
+    speed:.19+noise(i*7+633)*.82,
+    len:.008+noise(i*47+17)*.040,
+    width:.6+noise(i*5+271)*1.22,
+    near:noise(i*23+451)>.54,
+    phase:noise(i*11+713)
+  }));
+  let rainIntensity="off",lastRainFrame=0,rainStart=Date.now();
+  const rainModes={off:0,drizzle:.24,steady:.64,storm:1};
+  let weatherParticles=null;
+  if(typeof B.ParticleSystem==="function"){
+    // An additional particle field moves OUTSIDE the glass only. WebGL
+    // particle count is bounded for iPad memory and battery.
+    try{
+      weatherParticles=new B.ParticleSystem(
+        "Layered falling rain beyond the window",mobile?340:800,scene);
+      const sprite=new B.DynamicTexture("Small soft droplet sprite",{
+        width:32,height:64
+      },scene,false);
+      const gg=sprite.getContext();
+      gg.clearRect(0,0,32,64);
+      const grad=gg.createLinearGradient(16,0,16,64);
+      grad.addColorStop(0,"rgba(225,241,255,0)");
+      grad.addColorStop(.32,"rgba(225,241,255,.56)");
+      grad.addColorStop(.7,"rgba(225,241,255,.38)");
+      grad.addColorStop(1,"rgba(225,241,255,0)");
+      gg.fillStyle=grad;gg.fillRect(14,2,4,60);
+      sprite.update();
+      weatherParticles.particleTexture=sprite;
+      weatherParticles.emitter=new B.Vector3(windowX,5.2,5.65);
+      weatherParticles.minEmitBox=new B.Vector3(-3.8,-.2,-.32);
+      weatherParticles.maxEmitBox=new B.Vector3(3.8,.4,.50);
+      weatherParticles.direction1=new B.Vector3(-.33,-2.8,-.1);
+      weatherParticles.direction2=new B.Vector3(-.06,-4.2,.1);
+      weatherParticles.minEmitPower=1.4;
+      weatherParticles.maxEmitPower=2.5;
+      weatherParticles.updateSpeed=.014;
+      weatherParticles.minLifeTime=.7;
+      weatherParticles.maxLifeTime=1.6;
+      weatherParticles.minSize=.012;
+      weatherParticles.maxSize=.027;
+      weatherParticles.emitRate=0;
+      weatherParticles.color1=new B.Color4(.78,.88,1,.32);
+      weatherParticles.color2=new B.Color4(.65,.77,.91,.2);
+      weatherParticles.colorDead=new B.Color4(.67,.75,.88,0);
+    }catch(_){weatherParticles=null}
+  }
+  function setRain(level){
+    const safe=Object.hasOwn(rainModes,level)?level:"off";
+    if(safe===rainIntensity)return;
+    rainIntensity=safe;
+    rainStart=Date.now();
+    rainGlass.isVisible=safe!=="off";
+    if(weatherParticles){
+      if(safe==="off"){
+        weatherParticles.stop();
+      }else{
+        weatherParticles.emitRate=Math.round((mobile?150:340)*rainModes[safe]);
+        if(running)weatherParticles.start();
+      }
+    }
+    if(safe==="off"){
+      const g=rainGlassTex.getContext();
+      g.clearRect(0,0,rainWidth,rainHeight);
+      rainGlassTex.update();
+    }
+  }
+  function updateFallingRain(now){
+    const power=rainModes[rainIntensity];
+    if(!power||now-lastRainFrame<(mobile?78:58))return;
+    lastRainFrame=now;
+    const t=(now-rainStart)/1000;
+    const g=rainGlassTex.getContext();
+    const W=rainWidth,H=rainHeight;
+    g.clearRect(0,0,W,H);
+    g.save();
+    g.beginPath();g.moveTo(11,H);g.lineTo(11,H*.30);
+    g.bezierCurveTo(12,H*.12,W*.34,H*.08,W*.5,3);
+    g.bezierCurveTo(W*.66,H*.08,W-12,H*.12,W-11,H*.30);
+    g.lineTo(W-11,H);g.closePath();g.clip();
+    const count=Math.floor(drops.length*power);
+    for(let i=0;i<count;i++){
+      const d=drops[i];
+      const x=(d.x-.015*t*(1+d.near))%1;
+      const y=(d.y+t*d.speed*(.45+power))%1;
+      const px=((x+1)%1)*W,py=y*H;
+      const length=d.len*H*(d.near?2.4:1.15);
+      const opacity=(d.near?.28:.14)*(.55+power*.55);
+      g.strokeStyle="rgba(230,241,250,"+opacity.toFixed(3)+")";
+      g.lineWidth=d.width*(d.near?1.1:.58);
+      g.beginPath();
+      g.moveTo(px,py);
+      g.quadraticCurveTo(px-1.5,py+length*.5,px-2.8,py+length);
+      g.stroke();
+      if(d.near&&i%4===0){
+        // Small high-frequency meniscus on the glass.
+        g.fillStyle="rgba(248,252,255,"+(opacity*.72).toFixed(3)+")";
+        g.beginPath();g.ellipse(px,py,1.5,2.6,.3,0,Math.PI*2);g.fill();
+      }
+    }
+    // A soft vertical motion blur and occasional water rivulets along the edge.
+    if(power>.6){
+      for(let j=0;j<10;j++){
+        const x=(noise(j*41+21)*W+Math.sin(t*.32+j)*8)%W;
+        const y=(t*(30+j*9)+j*H*.21)%H;
+        g.strokeStyle="rgba(239,247,253,.10)";
+        g.lineWidth=1.3+noise(j)*1.8;
+        g.beginPath();g.moveTo(x,y);g.bezierCurveTo(x-2,y+22,x+1,y+40,x-3,y+76);g.stroke();
+      }
+    }
+    g.restore();
+    rainGlassTex.update();
+  }
+
   const windowBeam=goldenArch(windowX,3.55,5.04,1.78,7.50,marble,.19,1.09);
   goldenArch(windowX,3.57,4.88,1.73,7.45,brass,.035,1.09);
   goldenArch(windowX,3.63,4.83,1.80,7.75,plaster,.13,.99);
@@ -720,6 +860,7 @@ async function createPrayerRoomScene(canvas,config={}){
     config.onMoodChange?.(mood);
   }
   applyMood(config.mood||"night");
+  setRain(config.rainLevel||((config.mood==="rain")?"steady":"off"));
 
   // Rendering stops off-tab so the 3D sanctuary does not drain iPad battery.
   let previousFrame=0;
@@ -728,6 +869,7 @@ async function createPrayerRoomScene(canvas,config={}){
     const now=Date.now();
     if(mobile&&now-previousFrame<29)return; // iPad: efficient ~30 fps
     previousFrame=now;
+    updateFallingRain(now);
     scene.render();
   };
   const resize=()=>{if(!disposed)engine.resize()};
@@ -741,6 +883,7 @@ async function createPrayerRoomScene(canvas,config={}){
   }
   const control={
     setMood:applyMood,
+    setRain,
     resetCamera(){
       camera.alpha=-1.25;camera.beta=1.23;
       camera.radius=mobile?15.45:14;
@@ -748,11 +891,14 @@ async function createPrayerRoomScene(canvas,config={}){
     },
     start(){
       if(disposed||running)return;
-      running=true;engine.resize();engine.runRenderLoop(render);
+      running=true;engine.resize();
+      if(weatherParticles&&rainIntensity!=="off")weatherParticles.start();
+      engine.runRenderLoop(render);
     },
     stop(){
       if(!running)return;
       running=false;engine.stopRenderLoop(render);
+      weatherParticles?.stop();
     },
     dispose(){
       if(disposed)return;
@@ -761,6 +907,7 @@ async function createPrayerRoomScene(canvas,config={}){
       window.removeEventListener("resize",resize);
       canvas.removeEventListener("webglcontextlost",contextLost);
       resizeObserver?.disconnect();
+      weatherParticles?.stop();
       scene.dispose();engine.dispose();
     }
   };
