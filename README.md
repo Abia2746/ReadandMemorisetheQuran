@@ -16,6 +16,14 @@ A responsive original Qur'an learning application built with Streamlit and Strea
 
 This application is **not affiliated with Tilawa.ai**. Its visual design, text, and product implementation are original. Live word recognition does **not** reliably assess all 16 Tajweed rules or individual harakah articulation.
 
+## R4: reciter synchronisation and recording review (19 November 2026)
+
+- **Yasser Al-Dosari and Mishary Alafasy timing integration:** the app now plays the matching EveryAyah recording for which QuranLife published word timestamps. Automated word timings cover 4,502 Yasser verse records and 6,236 Mishary verse records. Each ayah's word count and timing order are validated before use. Missing or mismatched alignment highlights the **verse only**, not guessed individual words. These word timings are machine-generated and may still drift; no audio timing was human-certified.
+- **Source and licence:** derived QuranLife/TimingFilesCode timings are attributed under **CC BY 4.0**, with transformations and full credit in [timings/ATTRIBUTION.md](timings/ATTRIBUTION.md). Using the timings does not transfer ownership of the audio recordings.
+- **Recorded review:** a 16-topic Tajweed *study rubric* now explicitly covers articulation, consonant distinctions, short vowels, shaddah, ghunnah, nūn/mīm sākinah rules, qalqalah, madd and waqf. The user chooses which ayah was actually recorded. Each potential AI issue must include a valid word index, audio time, concrete observation and suggested correction; otherwise the finding is labelled *uncertain*. These are **NOT guaranteed acoustic or phoneme-level corrections**, nor a count of 16 universally fixed Tajweed rules.
+- **Live memorisation:** the Tilawa SDK follows a locked word position in the selected passage. The word is highlighted as the reciter reaches it, but it is not marked *completed* or revealed in Cover mode until the listener reaches the next consecutive word. Completion indicates approximate passage progress **not Tajweed correctness**. The current SDK does not verify each vowel, ṣād/ḍād distinction, or fine ghunnah/madd articulation.
+- **Verified scope:** static JavaScript parsing and mocked frontend scenarios for word timing, fallback verse highlighting, and delayed word reveal. No actual iPad Safari / microphone / model inference test was executed by the assistant. Actual recognition accuracy and generated timestamp alignment need real audio validation before commercial claims.
+
 ## Architecture
 
 - \`app.py\` — Quran API retrieval, optional AI review, reciters, session configuration, and progress storage.
