@@ -1,0 +1,61 @@
+/* My Journey · Noor Hifdh Planner R8 — ivory, walnut, brushed brass */
+.am-hifdh{max-width:1300px;margin:0 auto 26px;--hb:#ead0a3;--hn:#c7ac89}
+.am-hifdh-heading{text-align:center;padding:14px 14px 25px}
+.am-hifdh-overline{font:700 10px 'DM Sans',sans-serif;letter-spacing:.22em;text-transform:uppercase;color:#d8b16e}
+.am-hifdh-heading h2{font:600 clamp(29px,3.4vw,42px)/1.2 'Playfair Display',serif;color:#f8dfaf;letter-spacing:-.025em;margin:7px 0}
+.am-hifdh-heading p{font:12px/1.8 'DM Sans',sans-serif;color:#d4bfa5;max-width:680px;margin:0 auto}
+.am-hifdh-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px}
+.am-hifdh-column{display:flex;flex-direction:column;gap:15px;min-width:0}
+.am-hifdh-card{padding:19px 21px;background:linear-gradient(155deg,#3c2c23,#291e1b);border:1px solid #c7a07055;border-radius:21px;box-shadow:0 12px 40px #0d09071c}
+.am-hifdh-card h3{font:600 20px/1.35 'Playfair Display',serif;color:#f5daaa;margin:0 0 11px}
+.am-hifdh-note{font:11px/1.8 'DM Sans',sans-serif;color:#bba58d;margin:6px 0}
+.am-hifdh-noor{background:radial-gradient(ellipse at 12% 0,#795c413b,transparent 70%),linear-gradient(130deg,#432e26,#30221e)}
+.am-hifdh-noor-heading{display:flex;align-items:center;gap:15px;margin-bottom:14px}
+.am-hifdh-noor-photo{width:78px;height:78px;object-fit:cover;border-radius:50%;border:3px solid #e2bd7a;box-shadow:0 0 0 5px #ac85562d}
+.am-hifdh-noor-heading h3{font-size:21px;margin:6px 0 5px}
+.am-hifdh-noor-message{font:400 14px/1.95 'DM Sans',sans-serif;color:#f3dec3;padding:18px 16px;border:1px solid #c8a16f33;border-radius:15px;background:#241b17b3;margin:5px 0 13px}
+.am-hifdh-pill{font:700 10px 'DM Sans',sans-serif;display:inline-flex;align-items:center;padding:5px 10px;border-radius:99px;background:#b4915640;color:#f1d3a1;border:1px solid #e5bc7940}
+.am-hifdh-form{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px 10px;margin-top:15px}
+.am-hifdh-field{display:flex;flex-direction:column;gap:6px;min-width:0}
+.am-hifdh-field span,.am-hifdh-form-label{color:#e9d0aa;font:700 10px/1.5 'DM Sans',sans-serif;letter-spacing:.05em}
+.am-hifdh-field select,.am-hifdh-field input{
+ width:100%;min-height:42px;padding:9px 11px;outline:none;
+ background:#241b18;color:#f7dfb4;font:12px 'DM Sans',sans-serif;
+ border:1px solid #ad885e67;border-radius:11px
+}
+.am-hifdh-field select:focus-visible,.am-hifdh-field input:focus-visible{
+ outline:2px solid #efc985;outline-offset:2px
+}
+.am-hifdh-days{grid-column:1/-1;display:flex;flex-direction:column;gap:8px;margin-top:3px}
+.am-hifdh-weekdays{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:5px}
+.am-hifdh-day{min-width:0;min-height:34px;border:1px solid #ba956a66;background:#312219;color:#dfc7a4;font:700 10px 'DM Sans',sans-serif;border-radius:8px;padding:5px 0;cursor:pointer}
+.am-hifdh-day[aria-pressed=true]{border-color:#efc880;background:linear-gradient(135deg,#e6c88b,#b99055);color:#271912}
+.am-hifdh-focus-toggle{grid-column:1/-1;display:flex;align-items:center;gap:11px;padding:10px 12px;background:#251d19;border:1px solid #bb8d6240;border-radius:12px;color:#f0d2ab;font:12px/1.6 'DM Sans',sans-serif;cursor:pointer}
+.am-hifdh-focus-toggle input{width:17px;height:17px;accent-color:#d7af66;flex:0 0 auto}
+.am-hifdh-form>.am-hifdh-note{grid-column:1/-1;margin:0}
+.am-hifdh-save{grid-column:1/-1;justify-content:center;min-height:43px}
+.am-hifdh-today{background:linear-gradient(145deg,#4b3327,#30211c)}
+.am-hifdh-metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:16px 0}
+.am-hifdh-metric{background:#261c17;border:1px solid #c5a06d40;border-radius:12px;padding:12px 6px;text-align:center;display:flex;flex-direction:column;gap:3px}
+.am-hifdh-metric strong{font:700 16px 'DM Sans',sans-serif;color:#f6daa0}
+.am-hifdh-metric span{font:10px/1.4 'DM Sans',sans-serif;color:#c7ad91}
+.am-hifdh-progress{height:8px;overflow:hidden;border-radius:999px;background:#1a1513;margin:11px 0 9px;border:1px solid #ac865554}
+.am-hifdh-progress-fill{height:100%;border-radius:999px;background:linear-gradient(90deg,#ab905b,#f0d39a);transition:width .4s ease}
+.am-hifdh-steps{display:flex;flex-direction:column;gap:9px;margin:15px 0}
+.am-hifdh-step{display:flex;gap:12px;align-items:start;padding:11px 13px;border:1px solid #c19a6f45;background:#231914c7;border-radius:13px;color:#efdabf;font:12px/1.72 'DM Sans',sans-serif}
+.am-hifdh-step-num{display:flex;align-items:center;justify-content:center;color:#f5d79b;font:700 11px 'DM Sans',sans-serif;width:25px;height:25px;flex:0 0 25px;border-radius:8px;background:#a6844e37}
+.am-hifdh-done{justify-content:center;width:100%;margin:9px 0}
+.am-hifdh-warning{color:#f7dda6;background:#956b3f2c;border:1px solid #c6a37757;padding:12px;border-radius:11px;font:12px/1.7 'DM Sans',sans-serif}
+.am-hifdh-actions{display:flex;gap:8px;flex-wrap:wrap;margin:13px 0}
+.am-hifdh-actions button{flex:1 1 140px;justify-content:center}
+.am-hifdh-device-explain{margin-top:17px;padding:14px;border:1px solid #c7a36c42;border-radius:12px;background:#221a17}
+.am-hifdh-device-explain strong{color:#f3d5a7;font:700 12px 'DM Sans',sans-serif}
+.am-hifdh-device-explain p{color:#c5b096;font:11px/1.8 'DM Sans',sans-serif;margin:6px 0 0}
+.am-hifdh-toast{margin:0 0 14px;padding:11px 15px;border-radius:13px;background:#9d76403b;border:1px solid #d2a76a63;font:12px/1.6 'DM Sans',sans-serif;color:#ffdfa7}
+.am-hifdh-gate{position:fixed;inset:0;background:#0e0a09d8;backdrop-filter:blur(9px);z-index:200;display:flex;align-items:center;justify-content:center;padding:20px}
+.am-hifdh-gate-panel{max-width:470px;width:100%;border:1px solid #d0ac774f;border-radius:21px;background:linear-gradient(140deg,#4f3829,#241c18);padding:30px;box-shadow:0 22px 70px #0b0708ad}
+.am-hifdh-gate-panel h3{font:600 26px 'Playfair Display',serif;color:#f3dba8;margin:12px 0}
+.am-hifdh-gate-panel p{font:13px/1.8 'DM Sans',sans-serif;color:#dfc8aa}
+@media(max-width:910px){.am-hifdh-grid{grid-template-columns:1fr}}
+@media(max-width:580px){.am-hifdh-card{padding:15px}.am-hifdh-form{gap:10px 7px}.am-hifdh-field select,.am-hifdh-field input{font-size:11px;padding:8px}.am-hifdh-noor-photo{width:65px;height:65px}.am-hifdh-metric strong{font-size:13px}.am-hifdh-weekdays{gap:3px}.am-hifdh-day{font-size:9px}}
+@media(prefers-reduced-motion:reduce){.am-hifdh-progress-fill{transition:none}}
