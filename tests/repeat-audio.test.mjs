@@ -10,6 +10,7 @@ import {fileURLToPath} from "node:url";
 
 let js=readFileSync(resolve(dirname(fileURLToPath(import.meta.url)),"../studio.js"),"utf8");
 const roomUiSource=readFileSync(resolve(dirname(fileURLToPath(import.meta.url)),"../prayer_room_ui.js"),"utf8");
+const hifdhUiSource=readFileSync(resolve(dirname(fileURLToPath(import.meta.url)),"../hifdh_planner_ui.js"),"utf8");
 const sdkImport=/const tilawaSdkModule=import\(\s*"https:\/\/esm\.sh\/@tilawa\/core@1\.0\.0-rc\.0\/web\?bundle&deps=onnxruntime-web@1\.30\.0"\s*\)\.then/;
 assert.match(js,sdkImport);
 js=js.replace(sdkImport,"const tilawaSdkModule=Promise.resolve(mockSdk).then");
@@ -88,7 +89,7 @@ const mockSdk={
     };
   }
 };
-const combined=roomUiSource+"\n"+
+const combined=roomUiSource+"\n"+hifdhUiSource+"\n"+
   js.replace(/^export default function\(component\)/,"function Studio(component)")+
   "\nreturn Studio;";
 const factory=new Function("mockSdk","document","window","navigator","sessionStorage",
@@ -128,6 +129,7 @@ assert.ok(repeats.length>0,"model noticed a backwards phrase movement");
 const audio=nodes(root).find(n=>n.tag==="audio");
 audio.duration=3;
 audio.currentTime=1.19; // word 1 was repeated at 1.1 seconds
+audio.paused=false;
 audio.ontimeupdate();
 const arabic=nodes(root).filter(n=>n.className.split(" ").includes("am-word"));
 assert.match(arabic[0].className,/am-active/,"repeat returns to the first word");
