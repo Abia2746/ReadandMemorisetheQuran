@@ -40,6 +40,9 @@
 .am-word.am-active{background:#e2b65a4d;box-shadow:0 0 0 3px #e2b65a2b;color:#fff9e6}
 .am-word.am-confirmed:not(.am-active){background:#6dbd7f29}
 .am-word.am-uncertain{background:#bb99d129}
+.am-word.am-ayah-playing{background:rgba(215,173,96,.11);border-bottom:1px solid rgba(215,173,96,.45)}
+.am-word.am-confirmed:not(.am-active){background:rgba(215,173,96,.17)}
+
 .am-word.am-review{background:#e789722b}
 .am-word.am-madd{color:#f2cb75}
 .am-word.am-shaddah{color:#d6b4ee}
@@ -76,7 +79,7 @@
 .am-cover .am-word .am-covered{font:600 13px/1.4 'DM Sans',sans-serif}
 .am-cover .am-word .am-sub-hint{font:600 12px/1.5 'DM Sans',sans-serif;color:#ffdc8d;margin-top:9px;overflow-wrap:anywhere}
 .am-cover .am-word .am-revealed-ar{display:block;width:100%;margin:8px auto 2px;padding-top:7px;border-top:1px solid #b98c4c6b;color:#fff1ca;font:normal 26px/1.65 'Amiri Quran','Amiri',serif;direction:rtl;text-align:center;white-space:normal}
-.am-cover .am-word.am-confirmed{border-color:#94d1a96b;background:#32734a1c}
+.am-cover .am-word.am-confirmed{border-color:#e1bd786b;background:#b28c4d22}
 .am-cover .am-word .am-marks{font:10px/1.7 'DM Sans',sans-serif;color:#eac989;margin-top:5px}
 .am-cover .am-ayah-end{display:none}
 .am-side{display:flex;flex-direction:column;gap:14px}
