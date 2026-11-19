@@ -161,6 +161,10 @@ function attachPrayerRoom(component, D, ui){
     if(controller && typeof controller.setMood==="function")controller.setMood(chosen);
     const effective=chosen==="rain"&&rainLevel==="off"?"steady":rainLevel;
     controller?.setRain?.(effective);
+    if(rainAudio?.gain){
+      const volumes={off:0,drizzle:.035,steady:.075,storm:.12};
+      rainAudio.gain.gain.setTargetAtTime(volumes[effective]??0,rainAudio.context.currentTime,.35);
+    }
   }
   rainSelect.onchange=()=>{
     rainLevel=["off","drizzle","steady","storm"].includes(rainSelect.value)
@@ -206,16 +210,17 @@ function attachPrayerRoom(component, D, ui){
       const filter=ctx.createBiquadFilter();
       filter.type="lowpass";filter.frequency.value=2900;
       const gain=ctx.createGain();
-      gain.gain.value=.048; // quiet enough not to compete with Qur'an audio
+      gain.gain.value=0; // fade in with the selected weather intensity
       source.connect(filter);filter.connect(gain);gain.connect(ctx.destination);
       source.start();
       void ctx.resume();
-      rainAudio={context:ctx,source};
+      rainAudio={context:ctx,source,gain};
       soundBtn.textContent="♫ Rain sound on";
       soundBtn.setAttribute("aria-pressed","true");
       if(rainLevel==="off"&&currentRoomMood()!=="rain"){
-        rainLevel="steady";rainSelect.value="steady";updateMood();
+        rainLevel="steady";rainSelect.value="steady";
       }
+      updateMood();
     }catch(e){
       stopRainSound();
       soundBtn.textContent="Audio unavailable on Safari";
