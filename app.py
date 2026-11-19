@@ -1,4 +1,5 @@
 import base64
+import hashlib
 import datetime
 import json
 import os
@@ -17,6 +18,7 @@ import streamlit as st
 from timing_data import matched_word_segments
 from audio_embed import inline_passage_clips
 from tajweed_review import rubric_for_prompt, normalize_review
+from prayer_room import earn_recording_review
 
 
 # ============================================================
@@ -691,6 +693,7 @@ audio_inline = inline_passage_clips(
 render_studio(
     words=words,
     meta=meta,
+    profile=st.session_state.name,
     tracks=tracks,
     inline_audio=audio_inline,
     reciter=reciter,
@@ -756,9 +759,12 @@ with left:
                     "tafsir_summary": tafsir,
                     "review": review, "recording_scope": recording_scope,
                 }
-                if result_key not in st.session_state.paid:
-                    award_xp(st.session_state.name, 10)
-                    st.session_state.paid.append(result_key)
+                # Reward a *completed* AI review once per unique audio file,
+                # not each time its form is submitted or the page reloads.
+                review_id = hashlib.sha256(recording.getvalue()).hexdigest()
+                earn_recording_review(
+                    st.session_state.name, surah, ayah, end_ayah, review_id
+                )
                 st.rerun()
             except Exception as exc:
                 st.error("The audio review was unsuccessful. Your recitation has not been graded.")
