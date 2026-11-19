@@ -14,22 +14,25 @@ import streamlit as st
 from live_auth import configured_api_key, issue_live_token
 from prayer_room import get_room_state, earn, buy, equip, unequip
 from prayer_clock import room_prayer_times, CITIES
+from hifdh_planner import get_state as hifdh_state, save_plan as hifdh_save, finish_today as hifdh_finish, build_calendar as hifdh_calendar
 
 _ROOT = Path(__file__).resolve().parent
 _STUDIO_CSS = (
     (_ROOT / "studio.css").read_text(encoding="utf-8")
     + "\n" + (_ROOT / "prayer_room.css").read_text(encoding="utf-8")
+    + "\n" + (_ROOT / "hifdh_planner.css").read_text(encoding="utf-8")
 )
 # The helper/source files are composed into a single JavaScript module.
 # Prayer-room scene assets load only when the user selects that tab.
 _STUDIO_JS = (
     (_ROOT / "prayer_room_lounge_scene.js").read_text(encoding="utf-8")
     + "\n" + (_ROOT / "prayer_room_ui.js").read_text(encoding="utf-8")
+    + "\n" + (_ROOT / "hifdh_planner_ui.js").read_text(encoding="utf-8")
     + "\n" + (_ROOT / "studio.js").read_text(encoding="utf-8")
 )
 
 _studio = st.components.v2.component(
-    "al_muallim_studio_20261119_r7_window_lounge",
+    "al_muallim_studio_20261119_r8_noor_hifdh",
     html='<div class="am-mount"></div>',
     css=_STUDIO_CSS,
     js=_STUDIO_JS,
@@ -75,7 +78,7 @@ def render_studio(
         1 for x in (review or {}).get("states", [])
         if x in {"good", "review"}
     )
-    key = f"studio_r6_{meta['s']}_{meta['a']}_{meta['end']}"
+    key = f"studio_r8_{meta['s']}_{meta['a']}_{meta['end']}"
     try:
         room_data = get_room_state(profile)
     except (TypeError, ValueError, sqlite3.Error, OSError) as exc:
@@ -95,6 +98,13 @@ def render_studio(
     if preferred_city not in CITIES:
         preferred_city = "London"
     prayer_clock = room_prayer_times(preferred_city)
+    try:
+        plan_data = hifdh_state(profile)
+        calendar_data = hifdh_calendar(profile) if plan_data["configured"] else ""
+    except (ValueError, TypeError, sqlite3.Error, OSError) as exc:
+        _LOG.exception("Noor's Hifdh plan could not be loaded")
+        st.warning("Noor's saved Hifdh plan is temporarily unavailable. Qur'an reading remains accessible.")
+        plan_data, calendar_data = {}, ""
     cloud_session = st.session_state.get("_am_live_cloud_session")
     cloud_view = st.session_state.get("_am_live_cloud_view", {})
     # Tokens are tied to exactly one selected passage and expire quickly.
@@ -105,7 +115,10 @@ def render_studio(
         cloud_session = None
         st.session_state.pop("_am_live_cloud_session", None)
     data = {
-        "buildVersion": "2026-11-19-r7",
+        "buildVersion": "2026-11-19-r8",
+        "hifdhPlan": plan_data,
+        "hifdhCalendar": calendar_data,
+        "planMessage": st.session_state.get("_am_plan_feedback", ""),
         "room": room_data,
         "prayerClock": prayer_clock,
         "roomMessage": st.session_state.get("_am_room_feedback", ""),
@@ -153,6 +166,7 @@ def render_studio(
             key=key,
             on_request_cloud_change=lambda: None,
             on_room_action_change=lambda: None,
+            on_plan_action_change=lambda: None,
         )
     except (TypeError, ValueError, RuntimeError) as exc:
         fallback = True
@@ -178,6 +192,27 @@ def render_studio(
                 + "_" + str(meta["end"]),
             on_request_cloud_change=lambda: None,
         )
+    plan_action = None if fallback else result.get("plan_action")
+    if isinstance(plan_action, dict):
+        action_id = str(plan_action.get("id", ""))[:90]
+        if action_id and action_id != st.session_state.get("_am_last_plan_action"):
+            st.session_state["_am_last_plan_action"] = action_id
+            st.session_state["_am_studio_active_tab"] = "journey"
+            try:
+                action = plan_action.get("action")
+                if action == "save":
+                    settings = plan_action.get("settings")
+                    if not isinstance(settings, dict):
+                        raise ValueError("Invalid study plan.")
+                    response = hifdh_save(profile, settings)
+                elif action == "done":
+                    response = hifdh_finish(profile)
+                else:
+                    response = {"ok": False, "message": "Unknown plan action."}
+                st.session_state["_am_plan_feedback"] = response["message"]
+            except (ValueError, TypeError, sqlite3.Error, OSError) as exc:
+                st.session_state["_am_plan_feedback"] = "Plan could not be saved: " + str(exc)[:160]
+            st.rerun()
     room_action = None if fallback else result.get("room_action")
     if isinstance(room_action, dict):
         action_id = str(room_action.get("id", ""))[:90]
