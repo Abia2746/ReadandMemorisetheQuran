@@ -114,9 +114,11 @@ export default function(component) {
   const repeatControls=CE("div","am-control-row");
   const repeatBtn=btn("⟲ Follow repeated phrases","am-button am-on");
   repeatBtn.setAttribute("aria-pressed","true");
+  const analyseRepeatBtn=btn("✧ Analyse repeats");
   const repeatHelp=CE("div","am-note","Repeat-aware following uses local Qur'an speech recognition when supported. Source-matched word timings remain the fallback.");
   repeatHelp.style.margin="0 12px 10px";
   repeatControls.appendChild(repeatBtn);
+  repeatControls.appendChild(analyseRepeatBtn);
   audioPanel.appendChild(repeatControls);
   audioPanel.appendChild(repeatHelp);
   readerPanel.appendChild(audioPanel);
@@ -133,6 +135,17 @@ export default function(component) {
 
   const engineSelect=CE("select","am-input");
   engineSelect.setAttribute("aria-label","Speech recognition method");
+  const sensitivitySelect=CE("select","am-input");
+  sensitivitySelect.setAttribute("aria-label","Word-matching sensitivity");
+  [
+    ["responsive","Responsive · softer short words"],
+    ["careful","Careful · fewer uncertain jumps"]
+  ].forEach(([value,label])=>{
+    const option=CE("option","",label);
+    option.value=value;
+    sensitivitySelect.appendChild(option);
+  });
+  sensitivitySelect.value="responsive";
   [
     ["cloud",D.cloudAvailable?"Cloud Live · recommended":"Cloud Live · requires API key"],
     ["browser","Safari/browser recogniser · fallback"],
@@ -145,7 +158,7 @@ export default function(component) {
   const isAppleWebKit=/iPad|iPhone|iPod/.test(navigator.userAgent||"")||
     (navigator.platform==="MacIntel"&&navigator.maxTouchPoints>1);
   engineSelect.value="local";
-  append(micControls,micButton,engineSelect);
+  append(micControls,micButton,engineSelect,sensitivitySelect);
   const meter=CE("div","am-meter"),meterFill=CE("div","");
   meter.appendChild(meterFill);
   const micText=CE("div","am-note","Preparing Qur’an recognition SDK…");
@@ -547,11 +560,24 @@ export default function(component) {
     job.finally(()=>{audioAnalysisPending.delete(verseIndex)}).catch(()=>{});
     return job;
   }
+  analyseRepeatBtn.onclick=async()=>{
+    if(audioAnalysisPending.has(playingIndex))return;
+    const idx=playingIndex;
+    analyseRepeatBtn.disabled=true;
+    analyseRepeatBtn.textContent="Analysing "+meta.s+":"+(Number(meta.a)+idx)+"...";
+    try{await requestAudioAwareFollowing(idx)}
+    finally{
+      analyseRepeatBtn.disabled=false;
+      analyseRepeatBtn.textContent=smartAudioTracks.has(idx)
+        ?"✓ Audio analysis ready":"✧ Analyse repeats";
+    }
+  };
   repeatBtn.onclick=()=>{
     repeatAwareEnabled=!repeatAwareEnabled;
     repeatBtn.classList.toggle("am-on",repeatAwareEnabled);
     repeatBtn.setAttribute("aria-pressed",String(repeatAwareEnabled));
     repeatBtn.textContent=repeatAwareEnabled?"⟲ Follow repeated phrases":"⟲ Repeat-following off";
+    analyseRepeatBtn.hidden=!repeatAwareEnabled;
     showPlaybackPosition();
     if(repeatAwareEnabled && !audio.paused)void requestAudioAwareFollowing(playingIndex);
   };
@@ -657,6 +683,8 @@ export default function(component) {
     currentAudioIdx=-1;
     if(playingIndex<playlist.length){
       audio.src=playlist[playingIndex];
+      analyseRepeatBtn.textContent=smartAudioTracks.has(playingIndex)
+        ?"✓ Audio analysis ready":"✧ Analyse repeats";
       if(repeatAwareEnabled)void requestAudioAwareFollowing(playingIndex);
       audio.play().catch(()=>{playCaption.textContent="Tap Play to continue to the next ayah."});
     }else{
@@ -1117,7 +1145,10 @@ export default function(component) {
           const confidence=Number(candidate?.confidence);
           const cleanLength=normalized(words[idx].ar||"").length;
           const shortWord=cleanLength<=3;
-          const threshold=shortWord?0.62:0.48;
+          // The responsive setting accepts quieter short phrases, while
+          // Careful requires stronger evidence. Neither checks precise vowels.
+          const responsive=sensitivitySelect.value==="responsive";
+          const threshold=shortWord?(responsive?0.52:0.68):(responsive?0.40:0.55);
           if(Number.isFinite(confidence)&&confidence<threshold){
             micMessage.textContent="Short or similar-sounding phrase is uncertain (model confidence "+
               Math.round(confidence*100)+"%). Repeat slowly; this is not a Tajweed verdict.";
