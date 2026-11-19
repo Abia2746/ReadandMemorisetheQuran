@@ -12,7 +12,50 @@ function attachPrayerRoom(component, D, ui){
   const owned=new Set(Array.isArray(wallet.owned)?wallet.owned:[]);
   const equipped={...(wallet.equipped||{})};
   let active=false,sceneStarted=false,controller=null,requestId=0;
-  let previewItem=null,filter="all";
+  let previewItem=null,filter="all",clockTimer=null;
+  const prayerClock=D.prayerClock||{};
+  const validModes=new Set(["auto","fajr","day","asr","maghrib","night","rain"]);
+  let moodSelection="auto";
+  try{
+    const stored=sessionStorage.getItem("amuallim:roomMood");
+    if(validModes.has(stored))moodSelection=stored;
+  }catch(_){/* private browsing can disable storage */}
+  function mins(clock){const m=String(clock||"").match(/^(\d{1,2}):(\d{2})/);
+    return m?Number(m[1])*60+Number(m[2]):null}
+  function londonNowMinutes(){
+    try{
+      const hm=new Intl.DateTimeFormat("en-GB",{
+        timeZone:prayerClock.timezone||"Europe/London",hour:"2-digit",minute:"2-digit",hour12:false
+      }).format(new Date());
+      return mins(hm);
+    }catch(_){const n=new Date();return n.getHours()*60+n.getMinutes()}
+  }
+  function currentRoomMood(){
+    if(moodSelection!=="auto")return moodSelection;
+    const now=londonNowMinutes();
+    const t=prayerClock.times||{};
+    const [fajr,sunrise,dhuhr,asr,maghrib,isha]=[
+      "Fajr","Sunrise","Dhuhr","Asr","Maghrib","Isha"
+    ].map(k=>mins(t[k]));
+    if([fajr,sunrise,dhuhr,asr,maghrib,isha].every(Number.isFinite)){
+      if(now>=isha||now<fajr)return "night";
+      if(now<sunrise)return "fajr";
+      if(now<asr)return "day";
+      if(now<maghrib)return "asr";
+      return "maghrib";
+    }
+    // Visual fallback only: never fabricate exact prayer times.
+    if(now<300||now>=1200)return "night";
+    if(now<450)return "fajr";
+    if(now<900)return "day";
+    if(now<1050)return "asr";
+    return "maghrib";
+  }
+  const moodNames={
+    fajr:"Fajr · soft dawn",day:"Daylight · ivory",
+    asr:"Asr · golden hour",maghrib:"Maghrib · sunset",
+    night:"Isha · moonlit",rain:"Rain · blue night"
+  };
   const tab=btn("✧ Prayer Room","am-tab");
   tab.setAttribute("role","tab");
   tab.setAttribute("aria-selected","false");
@@ -42,8 +85,8 @@ function attachPrayerRoom(component, D, ui){
   const intro=CE("div","am-room-intro");
   append(intro,
     CE("div","am-room-overline","A sanctuary shaped by your Qur'an journey"),
-    CE("h2","", "Your Prayer Room"),
-    CE("p","", "A quiet interior to decorate as you read, memorise and return to the Qur'an. Orbit the room and place furnishings at your own pace.")
+    CE("h2","", "The Window Lounge"),
+    CE("p","", "A quiet, cinematic sanctuary: a sweeping arched window, soft linen seating, a warm walnut library, the Qur'an close at hand, and light that follows the day.")
   );
   const stats=CE("div","am-room-stats");
   [
@@ -51,7 +94,70 @@ function attachPrayerRoom(component, D, ui){
     ["◈",(Number(wallet.coins)||0)+" coins"],
     ["◉",owned.size+" collected"],
   ].forEach(([symbol,value])=>stats.appendChild(CE("span","am-room-stat",symbol+" "+value)));
-  intro.appendChild(stats);page.appendChild(intro);
+  intro.appendChild(stats);
+  const moodPanel=CE("div","am-room-ambience");
+  const moodChooser=CE("div","am-room-ambience-field");
+  const moodLabel=CE("label","","Light & atmosphere");
+  const moodSelect=CE("select","");
+  moodSelect.setAttribute("aria-label","Room lighting and time of day");
+  for(const [value,name] of [
+    ["auto","Auto · follow prayer periods"],
+    ["fajr","Fajr · quiet dawn"],
+    ["day","Dhuhr · daylight"],
+    ["asr","Asr · golden hour"],
+    ["maghrib","Maghrib · sunset"],
+    ["night","Isha · moonlit"],
+    ["rain","Rain · midnight blue"]
+  ]){
+    const option=CE("option","",name);option.value=value;
+    moodSelect.appendChild(option);
+  }
+  moodSelect.value=moodSelection;
+  append(moodChooser,moodLabel,moodSelect);
+  const cityChooser=CE("div","am-room-ambience-field");
+  const cityLabel=CE("label","","Approximate prayer times · city");
+  const citySelect=CE("select","");
+  citySelect.setAttribute("aria-label","City for prayer-time ambience");
+  for(const city of prayerClock.cities||["London"]){
+    const option=CE("option","",city);option.value=city;
+    citySelect.appendChild(option);
+  }
+  citySelect.value=prayerClock.city||"London";
+  append(cityChooser,cityLabel,citySelect);
+  const moodIndicator=CE("div","am-room-atmosphere-status");
+  append(moodPanel,moodChooser,cityChooser,moodIndicator);
+  intro.appendChild(moodPanel);
+  const prayerNote=CE("div","am-room-prayer-note",
+    prayerClock.available
+      ?(prayerClock.city||"London")+" · city-level MWL estimates for ambience; check your local mosque timetable."
+      :"Prayer-time service unavailable · Auto follows approximate daylight only. No GPS is used.");
+  intro.appendChild(prayerNote);
+  page.appendChild(intro);
+  function updateMood(){
+    const chosen=currentRoomMood();
+    moodIndicator.textContent="✦ "+moodNames[chosen]+
+      (moodSelection==="auto"?" · automatic":" · selected");
+    if(controller && typeof controller.setMood==="function")controller.setMood(chosen);
+  }
+  moodSelect.onchange=()=>{
+    moodSelection=moodSelect.value;
+    if(!validModes.has(moodSelection))moodSelection="auto";
+    try{sessionStorage.setItem("amuallim:roomMood",moodSelection)}catch(_){}
+    updateMood();
+  };
+  citySelect.onchange=()=>{
+    if(citySelect.value!==(prayerClock.city||"London")){
+      send("set_prayer_city",{city:citySelect.value},"room");
+    }
+  };
+  function beginMoodRefresh(){
+    if(clockTimer!==null)return;
+    updateMood();
+    clockTimer=setInterval(()=>{if(active)updateMood()},60000);
+  }
+  function stopMoodRefresh(){
+    if(clockTimer!==null){clearInterval(clockTimer);clockTimer=null}
+  }
 
   const layout=CE("div","am-room-layout");
   page.appendChild(layout);
@@ -62,7 +168,7 @@ function attachPrayerRoom(component, D, ui){
   viewport.appendChild(canvas);
   const top=CE("div","am-room-scene-shade");
   const topLine=CE("div","am-room-stage-label");
-  append(topLine,CE("b","", "The Quiet Sanctuary"),CE("span","", "Your personal space"));
+  append(topLine,CE("b","", "The Quiet Sanctuary"),CE("span","", "Window Lounge · Collection II"));
   top.appendChild(topLine);
   viewport.appendChild(top);
   const loading=CE("div","am-room-loading");
@@ -70,9 +176,9 @@ function attachPrayerRoom(component, D, ui){
   append(loading,CE("div","am-room-mark","۞"),CE("strong","", "Preparing your sanctuary"),loadingNote);
   viewport.appendChild(loading);
   viewport.appendChild(CE("div","am-room-stage-bottom",
-    "Gently drag to look around · pinch to zoom · purchase décor through study"));
+    "A curved window above the river · drag to explore · pinch to zoom"));
   const cameraButtons=CE("div","am-room-scene-actions");
-  const resetCamera=btn("↺ Reset / restore room");
+  const resetCamera=btn("↺ Restore view");
   cameraButtons.appendChild(resetCamera);
   viewport.appendChild(cameraButtons);
   layout.appendChild(viewport);
@@ -221,6 +327,7 @@ function attachPrayerRoom(component, D, ui){
     try{
       const scene=await createPrayerRoomScene(canvas,{
         equipped:withPreview,
+        mood:currentRoomMood(),
         onStatus:message=>{
           if(call===requestId){
             feedback.hidden=false;feedback.textContent=String(message||"");
@@ -231,6 +338,7 @@ function attachPrayerRoom(component, D, ui){
         scene.dispose();return;
       }
       controller=scene;
+      updateMood();
       loading.hidden=true;
       const fallback=viewport.querySelector(".am-room-fallback");
       if(fallback && typeof fallback.remove==="function")fallback.remove();
@@ -251,8 +359,12 @@ function attachPrayerRoom(component, D, ui){
     }
   }
   resetCamera.onclick=()=>{
-    previewItem=null;previewNote.hidden=true;
-    if(active)void buildScene();
+    if(previewItem){
+      previewItem=null;previewNote.hidden=true;
+      if(active)void buildScene();
+    }else{
+      controller?.resetCamera?.();
+    }
   };
   return {
     claim,
@@ -261,8 +373,10 @@ function attachPrayerRoom(component, D, ui){
       page.hidden=!visible;
       if(!visible){
         controller?.stop();
+        stopMoodRefresh();
         return;
       }
+      beginMoodRefresh();
       if(!sceneStarted){
         sceneStarted=true;
         renderShop();
@@ -275,6 +389,7 @@ function attachPrayerRoom(component, D, ui){
       claimMem.hidden=tab!=="cover";
     },
     dispose(){
+      stopMoodRefresh();
       requestId++;
       try{controller?.dispose()}catch(_){}
       controller=null;
