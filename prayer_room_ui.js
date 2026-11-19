@@ -169,6 +169,7 @@ function attachPrayerRoom(component, D, ui){
     if(rainLevel==="off"&&currentRoomMood()==="rain"){
       moodSelection="night";
       moodSelect.value="night";
+      try{sessionStorage.setItem("amuallim:roomMood",moodSelection)}catch(_){}
     }
     updateMood();
     if(rainLevel==="off"&&rainAudio)stopRainSound();
@@ -223,6 +224,12 @@ function attachPrayerRoom(component, D, ui){
   moodSelect.onchange=()=>{
     moodSelection=moodSelect.value;
     if(!validModes.has(moodSelection))moodSelection="auto";
+    // Make the weather selector agree with the visible storm scene.
+    if(moodSelection==="rain" && rainLevel==="off"){
+      rainLevel="steady";
+      rainSelect.value="steady";
+      try{sessionStorage.setItem("amuallim:rainIntensity",rainLevel)}catch(_){}
+    }
     try{sessionStorage.setItem("amuallim:roomMood",moodSelection)}catch(_){}
     updateMood();
   };
