@@ -14,6 +14,7 @@ import numpy as np
 
 import requests
 import streamlit as st
+from timing_data import matched_word_segments
 
 
 # ============================================================
@@ -57,7 +58,7 @@ SUPPORTED_AUDIO_MIME_TYPES = {
 }
 
 RECITERS = {
-    "Mishary Alafasy": {"folder": "Alafasy_128kbps", "id": 7},
+    "Mishary Alafasy": {"folder": "Alafasy_64kbps", "id": 7},
     "Yasser Al-Dosari": {"folder": "Yasser_Ad-Dussary_128kbps", "id": 8},
 }
 
@@ -184,72 +185,36 @@ def harakah_labels(grapheme):
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def fetch_passage(surah, start_ayah, end_ayah, reciter_id):
+def fetch_passage(surah, start_ayah, end_ayah, reciter_folder):
+    """Load the selected words with word timings from the SAME EveryAyah audio.
+
+    Quran.com's by_ayah audio IDs are not interchangeable with a different
+    EveryAyah reciter. Do not use inferred timings from another audio source.
+    """
     passage_words = []
     track_word_counts = []
     all_segments = []
-    track_sources = []
-    global_word_idx = 0
-    
-    for ayah in range(start_ayah, end_ayah + 1):
-        verse_words = fetch_words(surah, ayah)
+    for current_ayah in range(start_ayah, end_ayah + 1):
+        verse_words = fetch_words(surah, current_ayah)
+        start_index = len(passage_words)
         track_word_counts.append(len(verse_words))
-        
-        # Word timing is only trustworthy when it belongs to the exact
-        # recording being played. Never combine one reciter's timestamps
-        # with another reciter's MP3.
-        source = None
-        try:
-            tr = requests.get(
-                f"{QURAN_API}/recitations/{reciter_id}/by_ayah/{surah}:{ayah}",
-                timeout=10,
+        all_segments.extend(
+            matched_word_segments(
+                surah, current_ayah, reciter_folder,
+                expected_word_count=len(verse_words),
+                start_index=start_index,
             )
-            tr.raise_for_status()
-            files = tr.json().get("audio_files") or []
-            record = next((x for x in files if x.get("verse_key") == f"{surah}:{ayah}"), None)
-            if record is None and len(files) == 1:
-                record = files[0]
-            if record:
-                url = record.get("url") or record.get("audio_url")
-                if isinstance(url, str) and url.startswith("https://"):
-                    source = url
-                elif isinstance(url, str) and url.startswith("/"):
-                    source = "https://audio.qurancdn.com" + url
-                segments = record.get("segments") or []
-                if source and segments:
-                    for segment in segments:
-                        if not isinstance(segment, (list, tuple)):
-                            continue
-                        # Three-value format is [1-based index, start, end].
-                        # Four-value formats vary between APIs: do not guess.
-                        if len(segment) != 3:
-                            continue
-                        word_position = int(segment[0]) - 1
-                        start_ms, end_ms = int(segment[1]), int(segment[2])
-                        if 0 <= word_position < len(verse_words) and 0 <= start_ms < end_ms:
-                            all_segments.append({
-                                "ayah": ayah,
-                                "word_idx": global_word_idx + word_position,
-                                "start": start_ms,
-                                "end": end_ms,
-                            })
-        except (requests.RequestException, ValueError, TypeError, KeyError):
-            pass
-        track_sources.append(source)
-            
-        global_word_idx += len(verse_words)
-        
+        )
         for word in verse_words:
             item = dict(word)
             item["letters"] = [
-                {"text": g, "marks": harakah_labels(g)}
-                for g in split_arabic_graphemes(word["ar"])
+                {"text": grapheme, "marks": harakah_labels(grapheme)}
+                for grapheme in split_arabic_graphemes(word["ar"])
             ]
             passage_words.append(item)
-            
     if not passage_words:
         raise RuntimeError("No words returned for this passage.")
-    return passage_words, track_word_counts, all_segments, track_sources
+    return passage_words, track_word_counts, all_segments
 
 
 def audio_url(surah, ayah, reciter_folder):
@@ -659,11 +624,13 @@ passage_key = f"{surah}:{ayah}-{end_ayah}"
 result_key = f"{passage_key}|recitation"
 
 try:
-    words, track_word_counts, segments, track_sources = fetch_passage(
-        surah, ayah, end_ayah, RECITERS[reciter]["id"]
+    words, track_word_counts, segments = fetch_passage(
+        surah, ayah, end_ayah, RECITERS[reciter]["folder"]
     )
-    tracks = [track_sources[i] or audio_url(surah, a, RECITERS[reciter]["folder"])
-              for i, a in enumerate(range(ayah, end_ayah + 1))]
+    tracks = [
+        audio_url(surah, a, RECITERS[reciter]["folder"])
+        for a in range(ayah, end_ayah + 1)
+    ]
 except Exception as exc:
     st.error("Unable to load the selected Quran passage. Try reloading or selecting fewer verses.")
     with st.expander("Technical details"):
