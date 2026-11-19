@@ -13,6 +13,7 @@ import time
 import streamlit as st
 from live_auth import configured_api_key, issue_live_token
 from prayer_room import get_room_state, earn, buy, equip, unequip
+from prayer_clock import room_prayer_times, CITIES
 
 _ROOT = Path(__file__).resolve().parent
 _STUDIO_CSS = (
@@ -22,13 +23,13 @@ _STUDIO_CSS = (
 # The helper/source files are composed into a single JavaScript module.
 # Prayer-room scene assets load only when the user selects that tab.
 _STUDIO_JS = (
-    (_ROOT / "prayer_room_scene.js").read_text(encoding="utf-8")
+    (_ROOT / "prayer_room_lounge_scene.js").read_text(encoding="utf-8")
     + "\n" + (_ROOT / "prayer_room_ui.js").read_text(encoding="utf-8")
     + "\n" + (_ROOT / "studio.js").read_text(encoding="utf-8")
 )
 
 _studio = st.components.v2.component(
-    "al_muallim_studio_20261119_r6_hotfix1",
+    "al_muallim_studio_20261119_r7_window_lounge",
     html='<div class="am-mount"></div>',
     css=_STUDIO_CSS,
     js=_STUDIO_JS,
@@ -90,6 +91,10 @@ def render_studio(
             "owned": [], "equipped": {}, "items": [],
         }
     last_study_tab = st.session_state.get("_am_studio_active_tab")
+    preferred_city = st.session_state.get("_am_room_prayer_city", "London")
+    if preferred_city not in CITIES:
+        preferred_city = "London"
+    prayer_clock = room_prayer_times(preferred_city)
     cloud_session = st.session_state.get("_am_live_cloud_session")
     cloud_view = st.session_state.get("_am_live_cloud_view", {})
     # Tokens are tied to exactly one selected passage and expire quickly.
@@ -100,8 +105,9 @@ def render_studio(
         cloud_session = None
         st.session_state.pop("_am_live_cloud_session", None)
     data = {
-        "buildVersion": "2026-11-19-r6.1",
+        "buildVersion": "2026-11-19-r7",
         "room": room_data,
+        "prayerClock": prayer_clock,
         "roomMessage": st.session_state.get("_am_room_feedback", ""),
         "cloudAvailable": bool(configured_api_key()),
         "cloudSession": cloud_session,
@@ -194,6 +200,16 @@ def render_studio(
                     feedback = earn(
                         profile, action, int(meta["s"]), room_action["ayah"]
                     )
+                elif action == "set_prayer_city":
+                    city = room_action.get("city")
+                    if not isinstance(city, str) or city not in CITIES:
+                        raise ValueError("Choose a supported UK city.")
+                    st.session_state["_am_room_prayer_city"] = city
+                    feedback = {
+                        "ok": True,
+                        "message": "Using indicative prayer-period lighting for "
+                        + city + ". Verify actual prayer times with your mosque.",
+                    }
                 elif action in ("buy", "equip"):
                     item_id = room_action.get("item_id")
                     if not isinstance(item_id, str) or len(item_id) > 60:
