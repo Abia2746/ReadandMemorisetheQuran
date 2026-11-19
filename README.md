@@ -33,6 +33,9 @@ This application is **not affiliated with Tilawa.ai**. Its visual design, text, 
 
 **Code:** `prayer_room.py`, `prayer_room_scene.js`, `prayer_room_ui.js`, `prayer_room.css`, and tests `tests/test_prayer_room.py` / `tests/prayer-room-ui.test.mjs`.
 
+The 3D room is rendered using [Babylon.js](https://www.babylonjs.com/), an open-source engine licensed under Apache 2.0. The architectural meshes and ornament patterns are procedurally generated within this project's source; they are not copied from Tilawa or Tarteel. Babylon.js is loaded from the official CDN when the user opens the room tab.
+
+
 ## R5: following repeated sheikh phrases and short-word sensitivity (19 November 2026)
 
 - **Audio-aware reciter following (beta):** The listening panel now offers *Follow repeated phrases* and *Analyse repeats*. Instead of assuming that a verse's words are spoken only once, the app can analyse the **actual EveryAyah MP3** with the open-source `@tilawa/core` word recogniser. It records `timeMs → {surah, ayah, word}` events, retaining backward movement when the reciter repeats a phrase. The player can then jump backward to the earlier word at the correct audio time.
