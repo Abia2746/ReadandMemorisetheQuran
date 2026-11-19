@@ -15,6 +15,7 @@ import numpy as np
 import requests
 import streamlit as st
 from timing_data import matched_word_segments
+from audio_embed import inline_passage_clips
 from tajweed_review import rubric_for_prompt, normalize_review
 
 
@@ -680,11 +681,18 @@ teacher_name = "Ustadha Noor" if st.session_state.teacher_gender == "Female" els
 avatar = NOOR_B64 if st.session_state.teacher_gender == "Female" else OMAR_B64
 saved = st.session_state.results.get(result_key)
 
+# Small MP3 clips can be inspected by the on-device Quran model; if a clip is
+# too long or the source is unreachable, ordinary source-matched timings remain.
+audio_inline = inline_passage_clips(
+    surah, ayah, end_ayah, RECITERS[reciter]["folder"]
+)
+
 # The full study environment is provided through a modern non-iframe Streamlit component.
 render_studio(
     words=words,
     meta=meta,
     tracks=tracks,
+    inline_audio=audio_inline,
     reciter=reciter,
     segments=segments,
     word_counts=track_word_counts,
