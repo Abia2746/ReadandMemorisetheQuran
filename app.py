@@ -704,6 +704,23 @@ st.markdown(
 
 left, right = st.columns([3, 2], gap="large")
 with left:
+    # A recording can contain one ayah even when the on-screen passage has five.
+    # Don't assess verses the learner never intended to recite.
+    choices = ["Entire selected passage"] + [
+        f"Ayah {n}" for n in range(ayah, end_ayah + 1)
+    ]
+    recording_scope = st.selectbox(
+        "Which ayah or passage did you recite?",
+        choices, index=1 if len(choices) > 2 else 0,
+        help="Choose the ayah you actually recorded, not everything visible in the reader.",
+    )
+    if recording_scope == "Entire selected passage":
+        expected_recording_words = words
+    else:
+        chosen_ayah = int(recording_scope.split()[-1])
+        expected_recording_words = [
+            word for word in words if int(word["ayah"]) == chosen_ayah
+        ]
     recording = st.audio_input(
         "Record your recitation",
         key=f"academy_rec_{passage_key}_{st.session_state.tries}",
@@ -712,10 +729,10 @@ with left:
         if st.button("Analyse this recording", type="primary", use_container_width=True):
             try:
                 with st.spinner("Reviewing your audio against the selected Quran text..."):
-                    states, letter_results, word_feedback, tajweed, feedback, tafsir, teacher_label = analyse_recitation(
+                    states, letter_results, word_feedback, tajweed, feedback, tafsir, teacher_label, review = analyse_recitation(
                         recording.getvalue(),
                         recording.type or "audio/wav",
-                        words,
+                        expected_recording_words,
                         st.session_state.strictness,
                         st.session_state.teacher_gender,
                     )
@@ -725,6 +742,7 @@ with left:
                     "word_feedback": word_feedback,
                     "tajweed_assessments": tajweed, "feedback": feedback,
                     "tafsir_summary": tafsir,
+                    "review": review, "recording_scope": recording_scope,
                 }
                 if result_key not in st.session_state.paid:
                     award_xp(st.session_state.name, 10)
@@ -743,16 +761,73 @@ with right:
 
 if saved:
     st.markdown("### Your last practice review")
-    st.info(saved.get("feedback") or "No general feedback was returned.")
-    for point in saved.get("tajweed_assessments", []):
-        with st.expander(
-            f"{point.get('rule_name','Practice point')} · {point.get('location','Selected passage')}"
-        ):
-            st.write(point.get("mistake_description") or "Insufficient evidence for a definite assessment.")
-            st.write(point.get("correction_guide") or "Repeat this part with a trusted reciter.")
-            st.caption(point.get("repetition_exercise") or "")
-    with st.expander("Reflection and context"):
-        st.write(saved.get("tafsir_summary") or "No explanation was returned.")
+    st.caption("Recording: " + saved.get("recording_scope", "Selected passage"))
+    st.info(saved.get("feedback") or "The AI returned no general feedback.")
+    review = saved.get("review")
+    if isinstance(review, dict) and review.get("rules"):
+        st.caption(review.get("disclaimer") or
+                   "AI practice suggestions are not verified Tajweed grades.")
+        observations = review.get("observations", [])
+        if observations:
+            st.markdown("#### Possible points to review")
+            for item in observations:
+                with st.expander(
+                    f"Ayah {item['ayah']} · {item['arabic']} · "
+                    f"{item['rule_name']} · approximately {item['time_s']}s"
+                ):
+                    st.write("**AI's possible observation:** " + item["evidence"])
+                    st.write("**Practice suggestion:** " + item["correction"])
+                    st.caption(
+                        "This is an unverified AI observation. Replay that part "
+                        "and confirm subtle pronunciation with a qualified teacher."
+                    )
+        else:
+            st.info(
+                "The AI returned no adequately specific, timestamped findings. "
+                "That does not mean every vowel or Tajweed rule was correct."
+            )
+        st.markdown("#### 16-topic Tajweed practice checklist")
+        st.caption(
+            "Sixteen learning categories, not a claim that sixteen rules were "
+            "acoustically graded. Uncertain is not a pass or a fail."
+        )
+        for item in review["rules"]:
+            status = item["status"]
+            label = (
+                "Possible issue — check audio" if status == "possible_issue"
+                else "Not applicable (AI suggestion)" if status == "not_applicable"
+                else "Uncertain — not verified"
+            )
+            with st.expander(
+                f"{item['rule_id']:02d} · {item['rule_name']} · {label}"
+            ):
+                st.caption(item["explanation"])
+                if status == "possible_issue":
+                    st.write(
+                        f"**Location:** Ayah/word {item['location']} "
+                        f"at approximately {item['time_s']} seconds"
+                    )
+                    st.write("**Possible finding:** " + item["evidence"])
+                    st.write("**How to practise:** " + item["correction"])
+                elif status == "not_applicable":
+                    st.write(
+                        "The AI did not identify a relevant example in the "
+                        "audio it assessed. This has not been independently verified."
+                    )
+                else:
+                    st.write(
+                        "The available audio/model evidence is insufficient "
+                        "to assess this category reliably. Compare with your "
+                        "reciter and ask a qualified Tajweed teacher."
+                    )
+    else:
+        st.warning(
+            "This is an older, non-standardised review. Make a new recording "
+            "to use the evidence-based 16-topic checklist."
+        )
+    if saved.get("tafsir_summary"):
+        with st.expander("Reflection and context"):
+            st.write(saved["tafsir_summary"])
     if st.button("Start a fresh recording", use_container_width=True):
         st.session_state.tries += 1
         st.rerun()
