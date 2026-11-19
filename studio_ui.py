@@ -28,7 +28,7 @@ _STUDIO_JS = (
 )
 
 _studio = st.components.v2.component(
-    "al_muallim_studio_20261119_r6",
+    "al_muallim_studio_20261119_r6_hotfix1",
     html='<div class="am-mount"></div>',
     css=_STUDIO_CSS,
     js=_STUDIO_JS,
@@ -100,7 +100,7 @@ def render_studio(
         cloud_session = None
         st.session_state.pop("_am_live_cloud_session", None)
     data = {
-        "buildVersion": "2026-11-19-r6",
+        "buildVersion": "2026-11-19-r6.1",
         "room": room_data,
         "roomMessage": st.session_state.get("_am_room_feedback", ""),
         "cloudAvailable": bool(configured_api_key()),
