@@ -21,15 +21,15 @@ export default function(component) {
   append(brandText,CE("strong","", "Al-Mu'allim"),CE("small","", "Your Qur'an companion"));
   append(brand,seal,brandText);
   const headRight=CE("div","am-head-right");
-  const versionChip=CE("span","am-chip","Qur'an listener · R6");
-  versionChip.setAttribute("title","Build 2026-11-19 R6 · immersive 3D Prayer Room and earned furnishings");
+  const versionChip=CE("span","am-chip","Qur'an listener · R6.1");
+  versionChip.setAttribute("title","Build 2026-11-19 R6.1 · Prayer Room startup recovery");
   append(headRight,
     versionChip,
     CE("span","am-chip","✧ "+String(meta.xp||0)+" XP"),
     CE("span","am-chip","✺ "+String(meta.streak||0)+" day streak"));
   append(header,brand,headRight);
   const app=CE("section","am-app");
-  app.dataset.build="quran-listener-r6-20261119";
+  app.dataset.build="quran-listener-r6-1-20261119";
   app.appendChild(header);
   root.appendChild(app);
   const tabs=CE("div","am-tabs");
