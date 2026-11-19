@@ -320,6 +320,7 @@ export default function(component) {
       const idx=Number(w.ayah)-Number(meta.a);
       if(idx<0||idx>=playlist.length)return;
       playingIndex=idx;currentAudioIdx=-1;audio.src=playlist[idx];
+      showPlaybackPosition();
       audio.play().catch(()=>setStatus("Audio playback did not start. Use the player controls.","error"));
     };
     const close=btn("Close");close.onclick=()=>{detail.hidden=true};
@@ -422,57 +423,104 @@ export default function(component) {
     repeatMessage.textContent="Alhamdulillah · "+String(repetitions)+" repetitions in this passage.";
     try{localStorage.setItem(sessionKey,String(repetitions))}catch(_){}
   };
-  audio.onended=()=>{
-    playingIndex++;
-    if(playingIndex<playlist.length){
-      currentAudioIdx=-1;audio.src=playlist[playingIndex];audio.play().catch(()=>{});
-    } else {
-      playingIndex=0;currentAudioIdx=-1;playCaption.textContent="Playback finished.";
-      if(!live)wordNodes.forEach(el=>el.classList.remove("am-active"));
-    }
-  };
-  // The playback file is a single ayah. Never reuse another verse's timings.
-  // When exact per-word timestamps are absent, distribute playback across words
-  // by Arabic letter weight. This is an approximation, not phonetic alignment.
-  function playbackWordAt(ayah,elapsed,duration){
-    const exact=audioSegments.filter(s=>Number(s.ayah)===ayah&&
-      Number.isFinite(Number(s.start))&&Number.isFinite(Number(s.end))&&
-      Number(s.end)>Number(s.start));
-    if(exact.length){
-      const segment=exact.find(s=>elapsed>=Number(s.start)&&elapsed<Number(s.end));
-      if(segment&&Number.isInteger(Number(segment.word_idx)))
-        return {index:Number(segment.word_idx),estimated:false};
-      // Do not jump to a different ayah when no timestamp covers a pause.
-      const prior=exact.filter(s=>elapsed>=Number(s.start)).pop();
-      if(prior)return {index:Number(prior.word_idx),estimated:false};
-    }
-    const indices=[];
-    words.forEach((w,i)=>{if(Number(w.ayah)===ayah)indices.push(i)});
-    if(!indices.length||!Number.isFinite(duration)||duration<=0)return null;
-    const weights=indices.map(i=>Math.max(2,(words[i].ar||"").replace(/[\u064B-\u065F\u0670]/g,"").length));
-    const total=weights.reduce((a,b)=>a+b,0);
-    const fraction=Math.min(.999999,Math.max(0,elapsed/duration));
-    let accumulated=0;
-    for(let i=0;i<indices.length;i++){
-      accumulated+=weights[i]/total;
-      if(fraction<accumulated)return {index:indices[i],estimated:true};
-    }
-    return {index:indices[indices.length-1],estimated:true};
+  // The audio files are the source-matched EveryAyah recordings. Word times
+  // originate from QuranLife's automatically generated alignments for each
+  // *same* reciter and audio file. Never invent word positions by text length.
+  let playbackFrame=null;
+  let playbackTimingWarning="";
+  const audioTimings=new Map();
+  for(const seg of audioSegments){
+    const ayah=Number(seg.ayah),word=Number(seg.word_idx);
+    const start=Number(seg.start),end=Number(seg.end);
+    if(!Number.isInteger(ayah)||!Number.isInteger(word)||!Number.isFinite(start)||
+       !Number.isFinite(end)||start<0||end<=start||word<0||word>=words.length)continue;
+    const list=audioTimings.get(ayah)||[];
+    list.push({word,start,end});
+    audioTimings.set(ayah,list);
   }
-  audio.ontimeupdate=()=>{
+  for(const list of audioTimings.values())list.sort((a,b)=>a.start-b.start);
+  const selectCurrentAyah=()=>Number(meta.a)+playingIndex;
+  function timingForCurrentRecording(){
+    const ayah=selectCurrentAyah();
+    const segments=audioTimings.get(ayah)||[];
+    const expected=words.filter(w=>Number(w.ayah)===ayah).length;
+    if(!segments.length || segments.length!==expected){
+      return {segments:null,reason:"No source-matched word timing for this ayah"};
+    }
+    if(!Number.isFinite(audio.duration)||audio.duration<=0){
+      return {segments:null,reason:"Waiting for audio metadata"};
+    }
+    const lastEnd=segments[segments.length-1].end;
+    const difference=Math.abs(lastEnd/1000-audio.duration)/audio.duration;
+    if(difference>0.30){
+      return {segments:null,reason:"Recording length does not match its word-timing data"};
+    }
+    return {segments,reason:"Source-matched, automatically generated word timing"};
+  }
+  function showPlaybackPosition(){
     if(live)return;
-    const ayah=Number(meta.a)+playingIndex;
-    const found=playbackWordAt(ayah,audio.currentTime*1000,audio.duration*1000);
-    if(found && found.index>=0&&found.index<wordNodes.length){
-      const i=found.index;
-      if(i!==currentAudioIdx){
-        currentAudioIdx=i;
-        wordNodes.forEach((el,j)=>el.classList.toggle("am-active",j===i));
-        wordNodes[i]?.scrollIntoView({behavior:"smooth",block:"nearest",inline:"nearest"});
+    const ayah=selectCurrentAyah();
+    const {segments,reason}=timingForCurrentRecording();
+    let index=-1;
+    if(segments){
+      const now=Math.max(0,Number(audio.currentTime)||0)*1000;
+      // Keep a word highlighted during pauses *only inside the same ayah*.
+      for(let i=0;i<segments.length;i++){
+        if(now>=segments[i].start)index=segments[i].word;
+        if(now<segments[i].end)break;
       }
     }
-    playCaption.textContent="Playing ayah "+ayah+" of "+meta.end+
-      (found?(found.estimated?" · approximate word following":" · timed word following"):" · loading audio");
+    // A recording without matching timing may highlight its entire ayah, but
+    // never a guessed word. This avoids a seemingly precise false match.
+    wordNodes.forEach((el,i)=>{
+      el.classList.toggle("am-active",segments!==null&&i===index);
+      el.classList.toggle("am-ayah-playing",!segments&&Number(words[i].ayah)===ayah);
+    });
+    if(index!==currentAudioIdx){
+      currentAudioIdx=index;
+      if(index>=0)wordNodes[index]?.scrollIntoView({
+        behavior:"auto",block:"nearest",inline:"nearest"
+      });
+    }
+    playCaption.textContent="Playing "+String(D.reciter||"reciter")+" · "+
+      meta.s+":"+ayah+" · "+reason;
+    playbackTimingWarning=reason;
+  }
+  function stopPlaybackFollow(){
+    if(playbackFrame!==null){cancelAnimationFrame(playbackFrame);playbackFrame=null}
+  }
+  function playbackFollowFrame(){
+    playbackFrame=null;
+    showPlaybackPosition();
+    if(!audio.paused&&!audio.ended&&!live){
+      playbackFrame=requestAnimationFrame(playbackFollowFrame);
+    }
+  }
+  function startPlaybackFollow(){
+    stopPlaybackFollow();
+    if(!live)playbackFrame=requestAnimationFrame(playbackFollowFrame);
+  }
+  audio.onloadedmetadata=showPlaybackPosition;
+  audio.onseeked=showPlaybackPosition;
+  audio.ontimeupdate=showPlaybackPosition;
+  audio.onplay=startPlaybackFollow;
+  audio.onpause=stopPlaybackFollow;
+  audio.onended=()=>{
+    stopPlaybackFollow();
+    playingIndex++;
+    currentAudioIdx=-1;
+    if(playingIndex<playlist.length){
+      audio.src=playlist[playingIndex];
+      audio.play().catch(()=>{playCaption.textContent="Tap Play to continue to the next ayah."});
+    }else{
+      playingIndex=0;
+      playCaption.textContent="Reciter passage finished.";
+      wordNodes.forEach(el=>{
+        el.classList.remove("am-active");
+        el.classList.remove("am-ayah-playing");
+      });
+      if(playlist.length)audio.src=playlist[0];
+    }
   };
   function updateMeter(analyser,stopAt) {
     const buffer=new Uint8Array(analyser.fftSize);
@@ -971,6 +1019,7 @@ export default function(component) {
     live=false;clearTimers();
     try{if(cleanupLive)void cleanupLive()}catch(_){}
     try{audio.pause()}catch(_){}
+    stopPlaybackFollow();
     try{micStream?.getTracks().forEach(t=>t.stop())}catch(_){}
     try{void micContext?.close()}catch(_){}
     if(meterAnimation)cancelAnimationFrame(meterAnimation);
