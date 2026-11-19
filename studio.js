@@ -21,15 +21,15 @@ export default function(component) {
   append(brandText,CE("strong","", "Al-Mu'allim"),CE("small","", "Your Qur'an companion"));
   append(brand,seal,brandText);
   const headRight=CE("div","am-head-right");
-  const versionChip=CE("span","am-chip","Qur'an listener · R5");
-  versionChip.setAttribute("title","Build 2026-11-19 R5 · repeat-aware playback + responsive short words");
+  const versionChip=CE("span","am-chip","Qur'an listener · R6");
+  versionChip.setAttribute("title","Build 2026-11-19 R6 · immersive 3D Prayer Room and earned furnishings");
   append(headRight,
     versionChip,
     CE("span","am-chip","✧ "+String(meta.xp||0)+" XP"),
     CE("span","am-chip","✺ "+String(meta.streak||0)+" day streak"));
   append(header,brand,headRight);
   const app=CE("section","am-app");
-  app.dataset.build="quran-listener-r5-20261119";
+  app.dataset.build="quran-listener-r6-20261119";
   app.appendChild(header);
   root.appendChild(app);
   const tabs=CE("div","am-tabs");
@@ -228,12 +228,18 @@ export default function(component) {
   const repeatMessage=CE("div","am-note","Small, consistent repetition is more useful than rushing through verses.");
   history.appendChild(repeatMessage);
   journeyPanel.appendChild(history);
+  const prayerRoom=attachPrayerRoom(component,D,{
+    stage,main,tabs,tabBtns,CE,btn,append,
+    onNavigate:(page)=>selectTab(page),
+    getCurrentTab:()=>currentTab,
+  });
   const footer=CE("footer","am-footer","");
   footer.appendChild(CE("strong","", "Al-Mu'allim"));
   footer.appendChild(document.createTextNode(" · QuranLife/EveryAyah word timings (CC BY 4.0) · AI practice observations are not certified Tajweed assessments."));
   app.appendChild(footer);
 
-  let currentTab=["read","cover"].includes(D.resumeTab)?D.resumeTab:(D.mode==="blind"?"cover":"read");
+  let currentTab=["read","cover","room","listen","journey"].includes(D.resumeTab)
+    ?D.resumeTab:(D.mode==="blind"?"cover":"read");
   let showHints=false,showTajweed=false;
   let currentWord=-1,confirmedWord=Number.isInteger(D.resumeWord)?Math.max(-1,Math.min(words.length-1,D.resumeWord)):-1;
   // A locked position only establishes that individual word. Never reveal
@@ -416,14 +422,17 @@ export default function(component) {
     el.appendChild(block);
   }
   function selectTab(tab){
-    if(live && (tab==="journey"||tab==="listen"))void stopLive();
+    if(live && (tab==="journey"||tab==="listen"||tab==="room"))void stopLive();
+    if(tab==="room" && !audio.paused)audio.pause();
     currentTab=tab;showHints=false;detail.hidden=true;
     Object.entries(tabBtns).forEach(([id,b])=>b.setAttribute("aria-selected",String(id===tab)));
-    const journey=tab==="journey";
-    layout.hidden=journey;
+    const journey=tab==="journey",room=tab==="room";
+    prayerRoom.setVisible(room);
+    prayerRoom.setPracticeMode(tab);
+    layout.hidden=journey||room;
     journeyPanel.hidden=!journey;
-    hero.hidden=journey;
-    if(journey){return}
+    hero.hidden=journey||room;
+    if(journey||room){return}
     sectionHeading.textContent=tab==="cover"?"Memorise with meaning":tab==="listen"?"Listen and follow":"The Noble Qur'an";
     micPanel.hidden=tab==="listen";
     toggleHint.hidden=tab==="listen";
@@ -1286,6 +1295,7 @@ export default function(component) {
     Promise.resolve().then(()=>{if(!live&&!starting)void micButton.onclick()});
   }
   return ()=>{
+    prayerRoom.dispose();
     live=false;clearTimers();
     try{if(cleanupLive)void cleanupLive()}catch(_){}
     try{audio.pause()}catch(_){}
