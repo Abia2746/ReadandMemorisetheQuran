@@ -5,11 +5,11 @@ mosque timetable or chosen school. This module controls visual atmosphere only:
 it does not issue religious notifications or determine prayer obligations.
 """
 from datetime import datetime
+from functools import lru_cache
 from zoneinfo import ZoneInfo
 import re
 
 import requests
-import streamlit as st
 
 TIME_ZONE = "Europe/London"
 CITIES = ("London", "Birmingham", "Manchester", "Leeds", "Glasgow", "Bristol", "Edinburgh", "Cardiff")
@@ -17,8 +17,8 @@ FIELDS = ("Fajr", "Sunrise", "Dhuhr", "Asr", "Maghrib", "Isha")
 _CLOCK = re.compile(r"^(\d{1,2}):(\d{2})")
 
 
-@st.cache_data(ttl=6 * 3600, show_spinner=False, max_entries=40)
-def _remote_times(city: str, date_string: str) -> dict:
+@lru_cache(maxsize=40)
+def _remote_times(city: str, date_string: str, six_hour_bucket: int) -> dict:
     if city not in CITIES:
         return {}
     try:
@@ -48,7 +48,7 @@ def room_prayer_times(city: str = "London") -> dict:
     """Provide visually indicative timings and the selected UK city only."""
     city = city if city in CITIES else "London"
     now = datetime.now(ZoneInfo(TIME_ZONE))
-    current = _remote_times(city, now.strftime("%d-%m-%Y"))
+    current = _remote_times(city, now.strftime("%d-%m-%Y"), now.hour // 6)
     return {
         "city": city,
         "cities": list(CITIES),
