@@ -118,7 +118,7 @@ export default function(component) {
   micPanel.appendChild(micTop);
   const micBody=CE("div","am-scaffold");
   const micDescription=CE("p","am-note",
-     "Recite the displayed ayahs and the Quran-specific listener follows your place. In Memorise mode each recognised word reveals its Arabic. In Read mode the word lights up. This beta cannot check Tajweed vowels.");
+     "Follow the word as you recite. In Memorise mode, a word is revealed only after the listener moves to the next word; this confirms progress, not correct vowels or Tajweed. Detailed phoneme verification requires a different model.");
   const micControls=CE("div","am-control-row");
   const micButton=btn("🎙 Start listening","am-button am-primary");
 
@@ -922,29 +922,55 @@ export default function(component) {
         if(!Number.isInteger(word)||word<1||word>Number(counts[verseIndex]))return -1;
         return counts.slice(0,verseIndex).reduce((n,c)=>n+Number(c||0),0)+word-1;
       };
+      // Recognising the beginning of a word does NOT verify its final vowel,
+      // shaddah or consonants. Visually follow the live word immediately,
+      // but only mark it completed on a subsequent consecutive locked word.
+      let pendingWord=-1;
+      let stableHits=0;
+      const suspectWords=new Set();
       session.subscribe(event=>{
         if(!live||disposed||!event)return;
         if(event.type==="position"){
           if(event.state!=="locked")return;
-          const observed=event.observed?.[0]?.word;
-          const location=observed||event.expected;
-          const idx=globalIndex(location);
-          if(idx>=0){
-            mark(idx,true);
-            setStatus("Quran-specific recognition · ayah "+location.ayah+
-              ", word "+location.word+" of your passage","active");
-          }else{
-            setStatus("Quran-specific model is listening for your selected passage...","active");
+          // In declared-passage sessions the SDK's expected position is
+          // constrained to the chosen ayahs. Observed candidates can refer
+          // to similar Quran phrases in other verses.
+          const expectedLocation=event.expected;
+          const observedLocation=event.observed?.[0]?.word;
+          const target=globalIndex(expectedLocation)>=0
+            ? expectedLocation : observedLocation;
+          const idx=globalIndex(target);
+          if(idx<0){
+            setStatus("Quran listener is looking for a stable match inside the selected passage...","active");
+            return;
           }
+          if(idx===pendingWord){
+            stableHits++;
+          }else{
+            if(pendingWord>=0 && idx===pendingWord+1 &&
+               stableHits>=1 && !suspectWords.has(pendingWord)){
+              mark(pendingWord,true);  // a completed position, NOT sound correctness
+            }
+            pendingWord=idx;
+            stableHits=1;
+          }
+          mark(idx,false);  // highlight current word without revealing/certifying it
+          setStatus("Following ayah "+target.ayah+", word "+target.word+
+            " · position only; vowels and articulation are not verified","active");
         }else if(event.type==="checker"&&event.state==="confirmed"){
           const idx=globalIndex(event.location);
           if(idx>=0){
+            suspectWords.add(idx);
+            confirmedIndices.delete(idx);
+            renderWords();
             wordNodes[idx]?.classList.add("am-review");
-            micMessage.textContent="Possible memorisation issue: "+String(event.errorClass||"word mismatch")+
-              ". Review the highlighted word; this is not a Tajweed verdict.";
+            micMessage.textContent="Possible memorisation issue at ayah "+
+              words[idx].ayah+", word "+(idx+1)+": "+
+              String(event.errorClass||"word mismatch")+
+              ". The model does not assess exact vowels or Tajweed.";
           }
         }else if(event.type==="capabilities"){
-          micMessage.textContent="Quran model ready · checks words and skipped passages, not individual vowels or Tajweed.";
+          micMessage.textContent="Quran-specific listener · follows word position, omitted/added/wrong words and skipped passages; NOT all vowels, consonant contrasts or Tajweed.";
         }
       });
       mic=await engine.listen(session,{
