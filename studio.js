@@ -309,7 +309,10 @@ export default function(component) {
     }
     wordNodes.forEach((el,i)=>{
       el.classList.toggle("am-active",i===index);
-      el.classList.toggle("am-confirmed",confirmedIndices.has(i)&&i!==index);
+      // Recording progress is kept in state; multiple completed words do not
+      // receive permanent background highlights, in either Read or Memorise.
+      el.classList.remove("am-confirmed");
+      el.classList.remove("am-ayah-playing");
       // Memorisation begins with English-only clues. Confirmed words reveal
       // their actual Arabic text progressively as the learner recites.
       if(currentTab==="cover" && confirmedIndices.has(i) && !el.querySelector(".am-revealed-ar")){
@@ -389,8 +392,9 @@ export default function(component) {
       const view=()=>{if(cover)showIndividualHint(i);else openWord(i)};
       el.addEventListener("click",view);
       el.addEventListener("keydown",e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();view()}});
+      // Only the single actively followed word is visually highlighted.
+      // Completed words can reveal Arabic in Cover, but are not all gold.
       if(i===currentWord)el.classList.add("am-active");
-      else if(confirmedIndices.has(i))el.classList.add("am-confirmed");
       if(cover && confirmedIndices.has(i)){
         el.appendChild(CE("span","am-revealed-ar",w.ar||""));
       }
@@ -433,6 +437,10 @@ export default function(component) {
     journeyPanel.hidden=!journey;
     hero.hidden=journey||room;
     if(journey||room){return}
+    // Switching between Read, Memorise and Listen resets stale playback
+    // highlights. Only an actively playing reciter or mic can mark a word.
+    lastPlaybackUiKey="";
+    currentWord=-1;
     sectionHeading.textContent=tab==="cover"?"Memorise with meaning":tab==="listen"?"Listen and follow":"The Noble Qur'an";
     micPanel.hidden=tab==="listen";
     toggleHint.hidden=tab==="listen";
@@ -662,15 +670,18 @@ export default function(component) {
     // Avoid repainting every Arabic word 60 times per second on iPad.
     const displayKey=ayah+":"+index+":"+(smartHasRepeat?"repeat":"timed")+
       ":"+Boolean(segments);
-    if(displayKey===lastPlaybackUiKey && playbackTimingWarning===playbackReason)return;
-    lastPlaybackUiKey=displayKey;
-    // A recording without matching timing may highlight its entire ayah, but
-    // never a guessed word. This avoids a seemingly precise false match.
+    if(displayKey+":"+(currentTab==="listen"&&!audio.paused)===lastPlaybackUiKey
+       && playbackTimingWarning===playbackReason)return;
+    lastPlaybackUiKey=displayKey+":"+(currentTab==="listen"&&!audio.paused);
+    // Critical: never colour an entire ayah as though every word is active.
+    // Only show audio-following while playback is actually active in Listen.
+    // Reader/Memorise words must not change merely because metadata loaded.
+    const followAudio=currentTab==="listen"&&!audio.paused&&!audio.ended;
     wordNodes.forEach((el,i)=>{
-      el.classList.toggle("am-active",index>=0&&i===index);
-      el.classList.toggle("am-ayah-playing",index<0&&Number(words[i].ayah)===ayah);
+      el.classList.toggle("am-active",followAudio&&index>=0&&i===index);
+      el.classList.remove("am-ayah-playing","am-confirmed");
     });
-    if(index!==currentAudioIdx){
+    if(index!==currentAudioIdx && followAudio){
       currentAudioIdx=index;
       if(index>=0)wordNodes[index]?.scrollIntoView({
         behavior:"auto",block:"nearest",inline:"nearest"
@@ -701,7 +712,13 @@ export default function(component) {
   audio.onseeked=showPlaybackPosition;
   audio.ontimeupdate=showPlaybackPosition;
   audio.onplay=startPlaybackFollow;
-  audio.onpause=stopPlaybackFollow;
+  audio.onpause=()=>{
+    stopPlaybackFollow();
+    if(currentTab==="listen"){
+      wordNodes.forEach(el=>el.classList.remove("am-active","am-ayah-playing"));
+      lastPlaybackUiKey="";
+    }
+  };
   audio.onended=()=>{
     stopPlaybackFollow();
     playingIndex++;
