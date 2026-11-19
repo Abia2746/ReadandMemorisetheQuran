@@ -466,10 +466,15 @@ export default function(component) {
     const encoded=inlineAudio[verseIndex];
     const ayah=Number(meta.a)+verseIndex;
     if(typeof encoded!=="string"||encoded.length<512){
-      smartAudioErrors.set(verseIndex,"This clip is too long or unavailable for local repeat recognition.");
+      const reason="This reciter clip could not be downloaded within the size limit; following the published word timings instead.";
+      smartAudioErrors.set(verseIndex,reason);
+      repeatHelp.textContent=reason;
       return;
     }
-    if(live)return;  // microphone should have priority on limited iPad CPU
+    if(live){
+      repeatHelp.textContent="Stop live recitation before analysing the sheikh recording; the microphone has priority.";
+      return;
+    }  // microphone should have priority on limited iPad CPU
     let ctx=null,session=null;
     try{
       repeatHelp.textContent="Preparing Quran-aware listening for "+meta.s+":"+ayah+
