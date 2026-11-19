@@ -21,15 +21,15 @@ export default function(component) {
   append(brandText,CE("strong","", "Al-Mu'allim"),CE("small","", "Your Qur'an companion"));
   append(brand,seal,brandText);
   const headRight=CE("div","am-head-right");
-  const versionChip=CE("span","am-chip","Qur'an listener · R4");
-  versionChip.setAttribute("title","Build 2026-11-19 R4 · source-matched playback + 16-topic review");
+  const versionChip=CE("span","am-chip","Qur'an listener · R5");
+  versionChip.setAttribute("title","Build 2026-11-19 R5 · repeat-aware playback + responsive short words");
   append(headRight,
     versionChip,
     CE("span","am-chip","✧ "+String(meta.xp||0)+" XP"),
     CE("span","am-chip","✺ "+String(meta.streak||0)+" day streak"));
   append(header,brand,headRight);
   const app=CE("section","am-app");
-  app.dataset.build="quran-listener-r4-20261119";
+  app.dataset.build="quran-listener-r5-20261119";
   app.appendChild(header);
   root.appendChild(app);
   const tabs=CE("div","am-tabs");
@@ -1090,7 +1090,7 @@ export default function(component) {
     tilawaSdkReady=m;
     if(!live){
       micText.textContent="Qur'an SDK ready · tap Start listening to load the model and begin.";
-      micMessage.textContent="R3 · Qur'an-specific on-device recognition selected. First use downloads the model. Cloud Live is an optional fallback.";
+      micMessage.textContent="R5 · Quran-specific recognition is ready for live practice. Soft short words may need repetition; individual vowels are not certified.";
     }
   }).catch(e=>{
     tilawaSdkError=e;
