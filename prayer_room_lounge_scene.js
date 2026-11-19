@@ -680,6 +680,15 @@ async function createPrayerRoomScene(canvas,config={}){
   }
   decor();
 
+  // Keep costly transforms out of the iPad's render loop. These meshes never
+  // move: only the camera, lighting and exterior window texture change.
+  for(const mesh of scene.meshes){
+    mesh.freezeWorldMatrix?.();
+    if(shadow && /bench|seat|pillow|throw|table|vase|curtain|Quran pages|plant/i.test(mesh.name||"")){
+      shadow.addShadowCaster(mesh);
+    }
+  }
+
   // Ambient transition tied to a mood chosen by the user / prayer period.
   let currentMood="";
   function applyMood(rawMood){
@@ -713,7 +722,14 @@ async function createPrayerRoomScene(canvas,config={}){
   applyMood(config.mood||"night");
 
   // Rendering stops off-tab so the 3D sanctuary does not drain iPad battery.
-  const render=()=>{if(!disposed&&running)scene.render()};
+  let previousFrame=0;
+  const render=()=>{
+    if(disposed||!running)return;
+    const now=Date.now();
+    if(mobile&&now-previousFrame<29)return; // iPad: efficient ~30 fps
+    previousFrame=now;
+    scene.render();
+  };
   const resize=()=>{if(!disposed)engine.resize()};
   const contextLost=()=>{
     config.onStatus?.("Graphics context interrupted. Return to the Prayer Room to resume.");
