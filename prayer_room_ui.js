@@ -16,6 +16,12 @@ function attachPrayerRoom(component, D, ui){
   const prayerClock=D.prayerClock||{};
   const validModes=new Set(["auto","fajr","day","asr","maghrib","night","rain"]);
   let moodSelection="auto";
+  let rainLevel="off";
+  let rainAudio=null;
+  try{
+    const savedRain=sessionStorage.getItem("amuallim:rainIntensity");
+    if(["off","drizzle","steady","storm"].includes(savedRain))rainLevel=savedRain;
+  }catch(_) {}
   try{
     const stored=sessionStorage.getItem("amuallim:roomMood");
     if(validModes.has(stored))moodSelection=stored;
@@ -124,8 +130,23 @@ function attachPrayerRoom(component, D, ui){
   }
   citySelect.value=prayerClock.city||"London";
   append(cityChooser,cityLabel,citySelect);
+  const rainChooser=CE("div","am-room-ambience-field");
+  const rainLabel=CE("label","","Rain on the window");
+  const rainSelect=CE("select","");
+  rainSelect.setAttribute("aria-label","Animated falling rain intensity");
+  for(const [level,label] of [
+    ["off","No rain"],["drizzle","Gentle drizzle"],
+    ["steady","Steady rain"],["storm","Immersive storm"]
+  ]){
+    const option=CE("option","",label);option.value=level;
+    rainSelect.appendChild(option);
+  }
+  rainSelect.value=rainLevel;
+  append(rainChooser,rainLabel,rainSelect);
+  const soundBtn=btn("♫ Rain sound off","am-room-sound-btn");
+  soundBtn.setAttribute("aria-pressed","false");
   const moodIndicator=CE("div","am-room-atmosphere-status");
-  append(moodPanel,moodChooser,cityChooser,moodIndicator);
+  append(moodPanel,moodChooser,cityChooser,rainChooser,soundBtn,moodIndicator);
   intro.appendChild(moodPanel);
   const prayerNote=CE("div","am-room-prayer-note",
     prayerClock.available
@@ -138,7 +159,67 @@ function attachPrayerRoom(component, D, ui){
     moodIndicator.textContent="✦ "+moodNames[chosen]+
       (moodSelection==="auto"?" · automatic":" · selected");
     if(controller && typeof controller.setMood==="function")controller.setMood(chosen);
+    const effective=chosen==="rain"&&rainLevel==="off"?"steady":rainLevel;
+    controller?.setRain?.(effective);
   }
+  rainSelect.onchange=()=>{
+    rainLevel=["off","drizzle","steady","storm"].includes(rainSelect.value)
+      ?rainSelect.value:"off";
+    try{sessionStorage.setItem("amuallim:rainIntensity",rainLevel)}catch(_){}
+    if(rainLevel==="off"&&currentRoomMood()==="rain"){
+      moodSelection="night";
+      moodSelect.value="night";
+    }
+    updateMood();
+    if(rainLevel==="off"&&rainAudio)stopRainSound();
+  };
+  function stopRainSound(){
+    if(!rainAudio)return;
+    try{rainAudio.source.stop()}catch(_){}
+    try{rainAudio.context.close()}catch(_){}
+    rainAudio=null;
+    soundBtn.textContent="♫ Rain sound off";
+    soundBtn.setAttribute("aria-pressed","false");
+  }
+  soundBtn.onclick=()=>{
+    if(rainAudio){stopRainSound();return}
+    const AudioCtx=window.AudioContext||window.webkitAudioContext;
+    if(!AudioCtx){
+      soundBtn.textContent="Sound unsupported on this device";return;
+    }
+    try{
+      // Fully original locally generated, band-limited rain noise.
+      // Never auto-starts: iPad requires a deliberate user gesture.
+      const ctx=new AudioCtx();
+      const length=Math.round(ctx.sampleRate*2.5);
+      const buffer=ctx.createBuffer(1,length,ctx.sampleRate);
+      const data=buffer.getChannelData(0);
+      let low=0;
+      for(let i=0;i<length;i++){
+        const white=Math.random()*2-1;
+        low=low*.992+white*.008;
+        data[i]=Math.max(-1,Math.min(1,(white*.42+low*8)*.52));
+      }
+      const source=ctx.createBufferSource();
+      source.buffer=buffer;source.loop=true;
+      const filter=ctx.createBiquadFilter();
+      filter.type="lowpass";filter.frequency.value=2900;
+      const gain=ctx.createGain();
+      gain.gain.value=.048; // quiet enough not to compete with Qur'an audio
+      source.connect(filter);filter.connect(gain);gain.connect(ctx.destination);
+      source.start();
+      void ctx.resume();
+      rainAudio={context:ctx,source};
+      soundBtn.textContent="♫ Rain sound on";
+      soundBtn.setAttribute("aria-pressed","true");
+      if(rainLevel==="off"&&currentRoomMood()!=="rain"){
+        rainLevel="steady";rainSelect.value="steady";updateMood();
+      }
+    }catch(e){
+      stopRainSound();
+      soundBtn.textContent="Audio unavailable on Safari";
+    }
+  };
   moodSelect.onchange=()=>{
     moodSelection=moodSelect.value;
     if(!validModes.has(moodSelection))moodSelection="auto";
@@ -328,6 +409,7 @@ function attachPrayerRoom(component, D, ui){
       const scene=await createPrayerRoomScene(canvas,{
         equipped:withPreview,
         mood:currentRoomMood(),
+        rainLevel:currentRoomMood()==="rain"&&rainLevel==="off"?"steady":rainLevel,
         onStatus:message=>{
           if(call===requestId){
             feedback.hidden=false;feedback.textContent=String(message||"");
@@ -373,6 +455,7 @@ function attachPrayerRoom(component, D, ui){
       page.hidden=!visible;
       if(!visible){
         controller?.stop();
+        stopRainSound();
         stopMoodRefresh();
         return;
       }
@@ -389,6 +472,7 @@ function attachPrayerRoom(component, D, ui){
       claimMem.hidden=tab!=="cover";
     },
     dispose(){
+      stopRainSound();
       stopMoodRefresh();
       requestId++;
       try{controller?.dispose()}catch(_){}
