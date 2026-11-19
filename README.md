@@ -16,6 +16,23 @@ A responsive original Qur'an learning application built with Streamlit and Strea
 
 This application is **not affiliated with Tilawa.ai**. Its visual design, text, and product implementation are original. Live word recognition does **not** reliably assess all 16 Tajweed rules or individual harakah articulation.
 
+## R6: The Prayer Room (19 November 2026)
+
+**New fifth tab: Prayer Room.** A procedural Babylon.js/WebGL sanctuary with curved Islamic architectural arches, a layered mihrab, handcrafted woven rug texture, window-light effects, elegant plaster and walnut materials, warm brass fixtures, orbit/zoom camera controls and optional rainy twilight atmosphere. The 3D library downloads only when opening the room, and rendering pauses when visiting other tabs to reduce iPad battery use. A styled CSS fallback keeps the shop functional if WebGL is unavailable.
+
+**Reward economy (no paywall or real-money purchases):**
+- A verse marked **Read** awards **50 permanent XP + 25 spendable coins**.
+- A verse marked **Memorised** awards **75 XP + 40 coins**.
+- Completing an analysed recitation recording awards **100 XP + 50 coins**, once per unique recording, with a three-reward-per-day cap.
+- Each verse/action pair awards XP **once per UTC calendar day** to prevent accidental repeated collection.
+- Rewards are **self-reported study progress, not certified Tajweed or verified Hifz accuracy**. Coins are not actual currency.
+
+**Shop:** 14 curated items priced 110–1,200 coins, with separate lifetime-XP unlock requirements. Examples include an olive tree, brass lantern, emerald prayer rug, walnut rehal, carved geometric art, bookshelves, cushions, linen curtains, a golden pendant, rainy window, marble mihrab, travertine floor, midnight-blue rug and candlelit atmosphere. Items can be previewed, purchased, equipped and unequipped. The premium base room is functional before purchasing anything.
+
+**Persistence and limitations:** XP, earned coins, purchases and room equipment are saved transactionally in the existing `muallim.db` SQLite file under the chosen user profile. This preserves state across normal Streamlit reruns and navigation, **but Streamlit Community Cloud local file storage is ephemeral**. Data may reset on app redeployment or instance replacement, and profile names alone are not secure authentication. Migrate the account database to persistent managed storage (e.g., Supabase/Postgres with authentication) before offering reliable multi-device or commercial progression. Browser-local previews are deliberately non-authoritative. Nothing in the Prayer Room changes the Qur'an recognition model.
+
+**Code:** `prayer_room.py`, `prayer_room_scene.js`, `prayer_room_ui.js`, `prayer_room.css`, and tests `tests/test_prayer_room.py` / `tests/prayer-room-ui.test.mjs`.
+
 ## R5: following repeated sheikh phrases and short-word sensitivity (19 November 2026)
 
 - **Audio-aware reciter following (beta):** The listening panel now offers *Follow repeated phrases* and *Analyse repeats*. Instead of assuming that a verse's words are spoken only once, the app can analyse the **actual EveryAyah MP3** with the open-source `@tilawa/core` word recogniser. It records `timeMs → {surah, ayah, word}` events, retaining backward movement when the reciter repeats a phrase. The player can then jump backward to the earlier word at the correct audio time.
