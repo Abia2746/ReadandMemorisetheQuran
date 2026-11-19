@@ -3,13 +3,14 @@
  * Reminders are calendar exports; no false background push promises.
  */
 function attachHifdhJourney(component,D,ui){
-  const {panel,CE,btn,append,tabBtns,navigate}=ui;
+  const {panel,stage,CE,btn,append,tabBtns,navigate}=ui;
   const state=D.hifdhPlan||{},config=state.config||{};
   const saved=Boolean(state.configured);
   const days=new Set(config.weekdays||[0,1,2,3,4,5]);
   let alertTimer=null,focusBypassed=false;
   const root=CE("section","am-hifdh");
-  panel.appendChild(root);
+  if(typeof panel.prepend==="function")panel.prepend(root);
+  else panel.appendChild(root);
   const header=CE("div","am-hifdh-heading");
   append(header,CE("div","am-hifdh-overline","Your Qur'an · your pace"),
     CE("h2","","Noor's Hifdh Journey"),
@@ -186,7 +187,7 @@ function attachHifdhJourney(component,D,ui){
   const continueBtn=btn("Continue anyway","am-button");
   continueBtn.onclick=()=>{gate.hidden=true;focusBypassed=true;navigate("room")};
   append(gateActions,goBack,continueBtn);
-  gateCard.appendChild(gateActions);gate.appendChild(gateCard);panel.appendChild(gate);
+  gateCard.appendChild(gateActions);gate.appendChild(gateCard);stage.appendChild(gate);
   const priorRoomClick=tabBtns.room?.onclick;
   if(tabBtns.room && typeof priorRoomClick==="function"){
     tabBtns.room.onclick=()=>{
@@ -225,6 +226,7 @@ function attachHifdhJourney(component,D,ui){
   }
   function setVisible(visible){
     root.hidden=!visible;
+    if(!visible)gate.hidden=true;
     if(visible){
       if(alertTimer===null)alertTimer=setInterval(checkOpenReminder,45000);
     }else if(alertTimer!==null){clearInterval(alertTimer);alertTimer=null}
