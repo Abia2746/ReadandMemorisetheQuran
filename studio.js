@@ -294,6 +294,8 @@ export default function(component) {
   }
   function mark(index,confirm){
     if(index<0||index>=words.length)return;
+    const alreadyConfirmed=confirmedIndices.has(index);
+    if(currentWord===index && (!confirm || alreadyConfirmed))return;
     currentWord=index;
     if(confirm){
       confirmedIndices.add(index);
@@ -437,7 +439,7 @@ export default function(component) {
   }
   toggleHint.onclick=()=>{showHints=!showHints;renderWords()};
   toggleColour.onclick=()=>{showTajweed=!showTajweed;renderWords()};
-  resetBtn.onclick=()=>{currentWord=-1;confirmedWord=-1;confirmedIndices.clear();progressFill.style.width="0%";setStatus("Ready to practise from the beginning.");transcript.textContent="";renderWords()};
+  resetBtn.onclick=()=>{currentWord=-1;confirmedWord=-1;confirmedIndices.clear();lastPlaybackUiKey="";progressFill.style.width="0%";setStatus("Ready to practise from the beginning.");transcript.textContent="";renderWords()};
   recordHint.onclick=()=>{
     micPanel.scrollIntoView({behavior:"smooth",block:"center"});
     // Start capture from the original tap, preserving the iPad user gesture.
@@ -455,6 +457,7 @@ export default function(component) {
   // *same* reciter and audio file. Never invent word positions by text length.
   let playbackFrame=null;
   let playbackTimingWarning="";
+  let lastPlaybackUiKey="";
   // Analyse the *actual MP3 samples* using the Quran-specific speech model.
   // A 1-time mapping from recording milliseconds to observed Quran words can
   // contain 4,5,6,4,5 when the sheikh repeats a phrase. Static word timings
@@ -563,6 +566,9 @@ export default function(component) {
   analyseRepeatBtn.onclick=async()=>{
     if(audioAnalysisPending.has(playingIndex))return;
     const idx=playingIndex;
+    // A user-triggered retry should be possible after a temporary network
+    // or model download error; never trap the interface in a failed state.
+    smartAudioErrors.delete(idx);
     analyseRepeatBtn.disabled=true;
     analyseRepeatBtn.textContent="Analysing "+meta.s+":"+(Number(meta.a)+idx)+"...";
     try{await requestAudioAwareFollowing(idx)}
@@ -639,6 +645,11 @@ export default function(component) {
         if(now<segments[i].end)break;
       }
     }
+    // Avoid repainting every Arabic word 60 times per second on iPad.
+    const displayKey=ayah+":"+index+":"+(smartHasRepeat?"repeat":"timed")+
+      ":"+Boolean(segments);
+    if(displayKey===lastPlaybackUiKey && playbackTimingWarning===playbackReason)return;
+    lastPlaybackUiKey=displayKey;
     // A recording without matching timing may highlight its entire ayah, but
     // never a guessed word. This avoids a seemingly precise false match.
     wordNodes.forEach((el,i)=>{
@@ -681,6 +692,7 @@ export default function(component) {
     stopPlaybackFollow();
     playingIndex++;
     currentAudioIdx=-1;
+    lastPlaybackUiKey="";
     if(playingIndex<playlist.length){
       audio.src=playlist[playingIndex];
       analyseRepeatBtn.textContent=smartAudioTracks.has(playingIndex)
@@ -1196,10 +1208,14 @@ export default function(component) {
           micMessage.textContent="Quran-specific listener · follows word position, omitted/added/wrong words and skipped passages; NOT all vowels, consonant contrasts or Tajweed.";
         }
       });
+      let lastMeterUpdate=0;
       mic=await engine.listen(session,{
         prepared,
         onLevel:db=>{
           if(disposed)return;
+          const now=Date.now();
+          if(now-lastMeterUpdate<70)return; // at most ~14 paint updates/sec
+          lastMeterUpdate=now;
           const level=Number.isFinite(db)?Math.min(100,Math.max(0,(db+65)*1.8)):0;
           meterFill.style.width=level+"%";
         },
