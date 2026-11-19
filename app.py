@@ -1,5 +1,6 @@
 import base64
 import hashlib
+import logging
 import datetime
 import json
 import os
@@ -690,22 +691,39 @@ audio_inline = inline_passage_clips(
 )
 
 # The full study environment is provided through a modern non-iframe Streamlit component.
-render_studio(
-    words=words,
-    meta=meta,
-    profile=st.session_state.name,
-    tracks=tracks,
-    inline_audio=audio_inline,
-    reciter=reciter,
-    segments=segments,
-    word_counts=track_word_counts,
-    mode="blind" if st.session_state.recite_from_memory else "full",
-    teacher_name=teacher_name,
-    avatar=avatar,
-    surah_arabic=surah_arabic,
-    surah_english=surah_english,
-    review=saved,
-)
+try:
+    render_studio(
+        words=words,
+        meta=meta,
+        profile=st.session_state.name,
+        tracks=tracks,
+        inline_audio=audio_inline,
+        reciter=reciter,
+        segments=segments,
+        word_counts=track_word_counts,
+        mode="blind" if st.session_state.recite_from_memory else "full",
+        teacher_name=teacher_name,
+        avatar=avatar,
+        surah_arabic=surah_arabic,
+        surah_english=surah_english,
+        review=saved,
+    )
+except (TypeError, ValueError, sqlite3.Error, RuntimeError) as studio_exc:
+    logging.getLogger(__name__).exception(
+        "Reader component failed; showing safe basic Quran reader"
+    )
+    st.warning(
+        "The interactive reader is unavailable because a component encountered "
+        "a startup error. The basic Qur'an text and reciter remain below."
+    )
+    with st.expander("Technical details for debugging"):
+        st.code(type(studio_exc).__name__ + ": " + str(studio_exc)[:350])
+    st.markdown("### " + str(surah_english) + " · " + str(ayah) + "–" + str(end_ayah))
+    st.markdown(
+        " ".join(str(word.get("ar", "")) for word in words)
+    )
+    if tracks:
+        st.audio(tracks[0])
 
 st.markdown(
     "<div class='am-python-section'>"
