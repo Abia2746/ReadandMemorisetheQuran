@@ -16,6 +16,16 @@ A responsive original Qur'an learning application built with Streamlit and Strea
 
 This application is **not affiliated with Tilawa.ai**. Its visual design, text, and product implementation are original. Live word recognition does **not** reliably assess all 16 Tajweed rules or individual harakah articulation.
 
+## R7: Luxury Window Lounge + prayer-period ambience (19 November 2026)
+
+**Selected visual design: Option 2 · Luxury Window Lounge.** This version replaces the empty, front-facing room with an original three-quarter architectural interior inspired by a calm, luxurious prayer lounge. It includes a near-wall-sized pointed panoramic window, a moonlit river and distant mosque silhouette, built-in upholstered window seating, layered linen pillows and a sculpted throw, a small walnut Quran-reading table with rehal, a detailed carpet, a fitted library, fireplace, pottery, side table and delicate furnishings. Original exterior sky, fabric and parquet textures are procedurally drawn on canvas and applied to Babylon.js 3D meshes, rather than copied from the user's inspiration images.
+
+**Light settings:** The Prayer Room offers **Auto (prayer-period)**, **Fajr · Dawn**, **Dhuhr · Day**, **Asr · Golden hour**, **Maghrib · Sunset**, **Isha · Moonlit**, and **Rain · Midnight blue**. Manual selection updates the lighting and window scene without recreating the room. Auto uses the selected **UK city** (London by default), and a general day/night fallback if the prayer-time service is unavailable. The app does not request GPS or a street address. City-level prayer times come from the [Aladhan API](https://aladhan.com/prayer-times-api), using Muslim World League calculation method 3. **Times are indicative and can differ from a local mosque timetable; this feature is aesthetic only, not a prayer schedule or religious determination.**
+
+**New files:** `prayer_room_lounge_scene.js` and `prayer_clock.py`; updated `prayer_room_ui.js`, `prayer_room.css` and `studio_ui.py`. The previous procedural scene is retained in `prayer_room_scene.js` as source reference but is no longer loaded. Scene updates are limited to approximately 30 frames per second on iPad, with frozen static geometry, selective shadows and texture updates only when the mood changes.
+
+**Limitations:** This is a procedurally generated real-time 3D scene, not a photorealistic prerender or a premium pre-modelled room asset. Actual iPad Safari lighting quality and frame rate require testing on a real device. The 3D renderer needs WebGL and the Babylon.js CDN; on failure the purchase shop remains available.
+
 ## R6: The Prayer Room (19 November 2026)
 
 **New fifth tab: Prayer Room.** A procedural Babylon.js/WebGL sanctuary with curved Islamic architectural arches, a layered mihrab, handcrafted woven rug texture, window-light effects, elegant plaster and walnut materials, warm brass fixtures, orbit/zoom camera controls and optional rainy twilight atmosphere. The 3D library downloads only when opening the room, and rendering pauses when visiting other tabs to reduce iPad battery use. A styled CSS fallback keeps the shop functional if WebGL is unavailable.
