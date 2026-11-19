@@ -16,7 +16,7 @@ jobs:
         with:
           node-version: '22'
       - name: Compile Python source
-        run: python -m py_compile app.py studio_ui.py live_auth.py timing_data.py tajweed_review.py tests/test_live_auth.py tests/test_timing_data.py tests/test_tajweed_review.py
+        run: python -m py_compile app.py studio_ui.py live_auth.py timing_data.py audio_embed.py tajweed_review.py tests/test_live_auth.py tests/test_timing_data.py tests/test_tajweed_review.py
       - name: Install minimal test dependency
         run: python -m pip install requests
       - name: Check token and streaming integration tests
@@ -25,5 +25,7 @@ jobs:
         run: node --check studio.js
       - name: Verify Quran listener and memorisation highlighting
         run: node tests/studio-ui.test.mjs
+      - name: Verify repeat-aware reciter audio and model reuse
+        run: node tests/repeat-audio.test.mjs
       - name: Verify design assets exist
         run: test -s studio.css && test -s studio.js
