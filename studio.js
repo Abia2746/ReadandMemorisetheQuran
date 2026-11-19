@@ -905,6 +905,40 @@ export default function(component) {
       throw Error("Tilawa Quran SDK exports are unavailable.");
     return mod;
   });
+  let sharedQuranEngine=null, sharedQuranEnginePromise=null;
+  const engineAbort=new AbortController();
+  async function ensureQuranEngine(purpose){
+    if(sharedQuranEngine)return sharedQuranEngine;
+    if(sharedQuranEnginePromise)return sharedQuranEnginePromise;
+    sharedQuranEnginePromise=(async()=>{
+      const sdk=tilawaSdkReady||await tilawaSdkModule;
+      const created=await sdk.createTilawa({
+        tier:"auto",
+        providers:["wasm"],threads:1,signal:engineAbort.signal,
+        onProgress:p=>{
+          const stage=p.stage==="model"?"speech model":
+            p.stage==="reference"?"Quran reference":"warm-up";
+          const fraction=Number.isFinite(p.fraction)?Math.round(p.fraction*100):0;
+          if(purpose==="live"){
+            setStatus("Loading on-device Quran "+stage+" · "+fraction+"%","active");
+          }else if(!live){
+            repeatHelp.textContent="Preparing audio-aware reciter following · "+
+              stage+" "+fraction+"% (playback remains available)";
+          }
+        }
+      });
+      if(engineAbort.signal.aborted){
+        await created.dispose();
+        throw Error("The component was closed");
+      }
+      sharedQuranEngine=created;
+      return created;
+    })().catch(e=>{
+      sharedQuranEnginePromise=null;
+      throw e;
+    });
+    return sharedQuranEnginePromise;
+  }
   let tilawaSdkReady=null,tilawaSdkError=null;
   tilawaSdkModule.then(m=>{
     tilawaSdkReady=m;
@@ -925,30 +959,17 @@ export default function(component) {
     if(!prepared)throw Error("The Quran microphone was not prepared. Tap Start again.");
     setStatus("Loading Quran-specific model · first download may be 25 MB on iPad...","active");
     let engine=null,session=null,mic=null,disposed=false;
-    const abortController=new AbortController();
     const cleanup=async()=>{
       if(disposed)return;
-      disposed=true;abortController.abort();
+      disposed=true;
       try{prepared.release()}catch(_){}
       try{if(mic)await mic.stop()}catch(_){}
       try{session?.dispose()}catch(_){}
-      try{if(engine)await engine.dispose()}catch(_){}
       meterFill.style.width="0%";
     };
     cleanupLive=cleanup;
     try{
-      const sdk=tilawaSdkReady||await tilawaSdkModule;
-      engine=await sdk.createTilawa({
-        tier:"auto",providers:["wasm"],threads:1,
-        signal:abortController.signal,
-        onProgress:p=>{
-          if(disposed)return;
-          const label=p.stage==="model"?"Quran voice model":
-            p.stage==="reference"?"Quran reference":"Model warm-up";
-          const percent=Number.isFinite(p.fraction)?Math.round(p.fraction*100):0;
-          setStatus("Loading "+label+" · "+percent+"%","active");
-        }
-      });
+      engine=await ensureQuranEngine("live");
       if(disposed)return;
       session=engine.startMemorization(
         {surah:Number(meta.s),fromAyah:Number(meta.a),toAyah:Number(meta.end)},
@@ -1087,6 +1108,8 @@ export default function(component) {
     try{if(cleanupLive)void cleanupLive()}catch(_){}
     try{audio.pause()}catch(_){}
     stopPlaybackFollow();
+    engineAbort.abort();
+    if(sharedQuranEngine)void sharedQuranEngine.dispose();
     try{micStream?.getTracks().forEach(t=>t.stop())}catch(_){}
     try{void micContext?.close()}catch(_){}
     if(meterAnimation)cancelAnimationFrame(meterAnimation);
