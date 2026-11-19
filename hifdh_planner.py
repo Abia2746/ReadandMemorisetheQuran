@@ -10,6 +10,7 @@ it and enables notifications. No hidden background push service is claimed.
 from __future__ import annotations
 
 import calendar
+import hashlib
 import datetime as dt
 import json
 import math
@@ -333,7 +334,7 @@ def build_calendar(name, *, start:dt.date|None=None, horizon_days=90):
         if current.weekday() not in config["weekdays"]:continue
         h,m=map(int,config["time"].split(":"))
         stamp=current.strftime("%Y%m%d")+f"T{h:02d}{m:02d}00"
-        uid=f"hifdh-{name.encode('utf8').hex()[:24]}-{current.strftime('%Y%m%d')}@almuallim"
+        uid=f"hifdh-{hashlib.sha256(name.encode('utf8')).hexdigest()[:20]}-{current.strftime('%Y%m%d')}@almuallim"
         reminder=config["remind_before"]
         events.extend([
             "BEGIN:VEVENT",
