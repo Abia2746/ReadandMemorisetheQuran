@@ -15,7 +15,7 @@ _STUDIO_CSS = (_ROOT / "studio.css").read_text(encoding="utf-8")
 _STUDIO_JS = (_ROOT / "studio.js").read_text(encoding="utf-8")
 
 _studio = st.components.v2.component(
-    "al_muallim_studio_20261119_r4",
+    "al_muallim_studio_20261119_r5",
     html='<div class="am-mount"></div>',
     css=_STUDIO_CSS,
     js=_STUDIO_JS,
@@ -48,7 +48,7 @@ def render_studio(
         1 for x in (review or {}).get("states", [])
         if x in {"good", "review"}
     )
-    key = f"studio_r4_{meta['s']}_{meta['a']}_{meta['end']}"
+    key = f"studio_r5_{meta['s']}_{meta['a']}_{meta['end']}"
     cloud_session = st.session_state.get("_am_live_cloud_session")
     cloud_view = st.session_state.get("_am_live_cloud_view", {})
     # Tokens are tied to exactly one selected passage and expire quickly.
@@ -59,7 +59,7 @@ def render_studio(
         cloud_session = None
         st.session_state.pop("_am_live_cloud_session", None)
     data = {
-        "buildVersion": "2026-11-19-r4",
+        "buildVersion": "2026-11-19-r5",
         "cloudAvailable": bool(configured_api_key()),
         "cloudSession": cloud_session,
         "cloudError": st.session_state.get("_am_live_cloud_error", ""),
