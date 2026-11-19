@@ -104,12 +104,21 @@ export default function(component) {
   const audio=CE("audio");
   audio.controls=true;audio.preload="none";
   const playlist=Array.isArray(D.audio)?D.audio:[];
+  const inlineAudio=Array.isArray(D.inlineAudio)?D.inlineAudio:[];
   let playingIndex=0;
   if(playlist.length)audio.src=playlist[0];
   audioPanel.appendChild(audio);
   const playCaption=CE("div","am-note","Follow the teacher's recitation at your own pace.");
   playCaption.style.marginTop="8px";
   audioPanel.appendChild(playCaption);
+  const repeatControls=CE("div","am-control-row");
+  const repeatBtn=btn("⟲ Follow repeated phrases","am-button am-on");
+  repeatBtn.setAttribute("aria-pressed","true");
+  const repeatHelp=CE("div","am-note","Repeat-aware following uses local Qur'an speech recognition when supported. Source-matched word timings remain the fallback.");
+  repeatHelp.style.margin="0 12px 10px";
+  repeatControls.appendChild(repeatBtn);
+  audioPanel.appendChild(repeatControls);
+  audioPanel.appendChild(repeatHelp);
   readerPanel.appendChild(audioPanel);
   const micPanel=CE("div","am-panel");
   micPanel.style.marginTop="14px";
@@ -222,6 +231,11 @@ export default function(component) {
   let meterAnimation=0,micStream=null,micContext=null;
   let audioSegments=Array.isArray(D.segments)?D.segments:[];
   let currentAudioIdx=-1;
+  let repeatAwareEnabled=true;
+  const smartAudioTracks=new Map();
+  const smartAudioErrors=new Map();
+  let audioAnalysisQueue=Promise.resolve();
+  const audioAnalysisPending=new Map();
   let repetitions=0;
   const sessionKey="amuallim:practice:"+String(meta.s||0)+":"+String(meta.a||0)+":"+String(meta.end||0);
   try{repetitions=Math.max(0,Math.min(1000,Number(localStorage.getItem(sessionKey)||0)||0))}catch(_){}
@@ -428,6 +442,14 @@ export default function(component) {
   // *same* reciter and audio file. Never invent word positions by text length.
   let playbackFrame=null;
   let playbackTimingWarning="";
+  repeatBtn.onclick=()=>{
+    repeatAwareEnabled=!repeatAwareEnabled;
+    repeatBtn.classList.toggle("am-on",repeatAwareEnabled);
+    repeatBtn.setAttribute("aria-pressed",String(repeatAwareEnabled));
+    repeatBtn.textContent=repeatAwareEnabled?"⟲ Follow repeated phrases":"⟲ Repeat-following off";
+    showPlaybackPosition();
+    if(repeatAwareEnabled && !audio.paused)void requestAudioAwareFollowing(playingIndex);
+  };
   const audioTimings=new Map();
   for(const seg of audioSegments){
     const ayah=Number(seg.ayah),word=Number(seg.word_idx);
@@ -461,8 +483,23 @@ export default function(component) {
     if(live)return;
     const ayah=selectCurrentAyah();
     const {segments,reason}=timingForCurrentRecording();
+    const smart=repeatAwareEnabled?smartAudioTracks.get(playingIndex):null;
     let index=-1;
-    if(segments){
+    let playbackReason=reason;
+    if(smart?.length){
+      const now=Math.max(0,Number(audio.currentTime)||0)*1000;
+      // Preserve deliberate backward movements when the sheikh repeats words.
+      let lo=0,hi=smart.length;
+      while(lo<hi){const m=(lo+hi)>>1;if(smart[m].timeMs<=now)lo=m+1;else hi=m}
+      const event=smart[Math.max(0,lo-1)];
+      if(event?.timeMs<=now){
+        index=event.word;
+        playbackReason=event.repeat
+          ?"Repeated phrase recognised · following the earlier word"
+          :"Audio-aware Qur'an word following";
+      }
+    }
+    if(index<0 && segments){
       const now=Math.max(0,Number(audio.currentTime)||0)*1000;
       // Keep a word highlighted during pauses *only inside the same ayah*.
       for(let i=0;i<segments.length;i++){
@@ -473,8 +510,8 @@ export default function(component) {
     // A recording without matching timing may highlight its entire ayah, but
     // never a guessed word. This avoids a seemingly precise false match.
     wordNodes.forEach((el,i)=>{
-      el.classList.toggle("am-active",segments!==null&&i===index);
-      el.classList.toggle("am-ayah-playing",!segments&&Number(words[i].ayah)===ayah);
+      el.classList.toggle("am-active",index>=0&&i===index);
+      el.classList.toggle("am-ayah-playing",index<0&&Number(words[i].ayah)===ayah);
     });
     if(index!==currentAudioIdx){
       currentAudioIdx=index;
@@ -483,8 +520,8 @@ export default function(component) {
       });
     }
     playCaption.textContent="Playing "+String(D.reciter||"reciter")+" · "+
-      meta.s+":"+ayah+" · "+reason;
-    playbackTimingWarning=reason;
+      meta.s+":"+ayah+" · "+playbackReason;
+    playbackTimingWarning=playbackReason;
   }
   function stopPlaybackFollow(){
     if(playbackFrame!==null){cancelAnimationFrame(playbackFrame);playbackFrame=null}
@@ -498,7 +535,10 @@ export default function(component) {
   }
   function startPlaybackFollow(){
     stopPlaybackFollow();
-    if(!live)playbackFrame=requestAnimationFrame(playbackFollowFrame);
+    if(!live){
+      playbackFrame=requestAnimationFrame(playbackFollowFrame);
+      if(repeatAwareEnabled)void requestAudioAwareFollowing(playingIndex);
+    }
   }
   audio.onloadedmetadata=showPlaybackPosition;
   audio.onseeked=showPlaybackPosition;
@@ -511,6 +551,7 @@ export default function(component) {
     currentAudioIdx=-1;
     if(playingIndex<playlist.length){
       audio.src=playlist[playingIndex];
+      if(repeatAwareEnabled)void requestAudioAwareFollowing(playingIndex);
       audio.play().catch(()=>{playCaption.textContent="Tap Play to continue to the next ayah."});
     }else{
       playingIndex=0;
