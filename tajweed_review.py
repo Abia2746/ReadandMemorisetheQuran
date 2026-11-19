@@ -51,7 +51,7 @@ def normalize_review(data: dict, words: list, duration_s: float | None = None) -
     for rule_id, (name, description) in enumerate(RULES, start=1):
         item = by_id.get(rule_id, {})
         status = item.get("status", "uncertain")
-        if status not in ALLOWED_STATUS:
+        if not isinstance(status, str) or status not in ALLOWED_STATUS:
             status = "uncertain"
         word_i = item.get("word_i", -1)
         if type(word_i) is not int or not 0 <= word_i < len(words):
