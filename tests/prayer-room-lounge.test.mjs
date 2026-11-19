@@ -98,7 +98,10 @@ assert.ok(textureCount>=3,"room generates sky, parquet and woven rug textures");
 assert.ok(shadowCount>0,"large furnishings cast selective soft shadows");
 for(const mood of ["fajr","day","asr","maghrib","night","rain"])
   room.setMood(mood);
+assert.equal(typeof room.setRain,"function","rain animation is adjustable");
+room.setRain("drizzle");room.setRain("steady");room.setRain("storm");
+room.setRain("off");
 room.resetCamera();
 room.stop();room.start();room.dispose();
 assert.ok(disposeCalls>=2,"room disposes scene and 3D engine");
-console.log("PASS: Window Lounge renderer, premium geometry, dynamic light, interior textures, camera and cleanup.");
+console.log("PASS: Window Lounge renderer, rain intensities, premium geometry, dynamic light and cleanup.");
