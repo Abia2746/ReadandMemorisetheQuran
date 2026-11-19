@@ -15,6 +15,7 @@ import numpy as np
 import requests
 import streamlit as st
 from timing_data import matched_word_segments
+from tajweed_review import rubric_for_prompt, normalize_review
 
 
 # ============================================================
@@ -329,52 +330,36 @@ def parse_tajweed_json(raw_text):
 
 
 def tajweed_response_schema():
+    """Structured potential evidence, not certified phoneme-by-phoneme grading."""
     return {
         "type": "object",
         "properties": {
             "teacher_label": {"type": "string"},
             "feedback": {"type": "string"},
             "tafsir_summary": {"type": "string"},
-            "letters": {
+            "rule_reviews": {
                 "type": "array",
                 "items": {
                     "type": "object",
                     "properties": {
-                        "word_i": {"type": "integer"}, "letter_i": {"type": "integer"},
-                        "status": {"type": "string", "enum": ["good", "review", "uncertain"]},
-                        "rule": {"type": "string"}, "feedback": {"type": "string"},
-                        "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
-                    },
-                    "required": ["word_i", "letter_i", "status", "rule", "feedback", "confidence"],
-                },
-            },
-            "word_feedback": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
+                        "rule_id": {"type": "integer"},
+                        "status": {
+                            "type": "string",
+                            "enum": ["possible_issue", "no_clear_issue",
+                                     "uncertain", "not_applicable"],
+                        },
                         "word_i": {"type": "integer"},
-                        "status": {"type": "string", "enum": ["good", "review", "uncertain"]},
-                        "feedback": {"type": "string"},
+                        "time_s": {"type": "number"},
+                        "evidence": {"type": "string"},
+                        "correction": {"type": "string"},
                     },
-                    "required": ["word_i", "status", "feedback"],
-                },
-            },
-            "tajweed_assessments": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "rule_id": {"type": "integer"}, "rule_name": {"type": "string"},
-                        "applied_correctly": {"type": "boolean"}, "location": {"type": "string"},
-                        "mistake_description": {"type": "string"}, "correction_guide": {"type": "string"},
-                        "repetition_exercise": {"type": "string"},
-                    },
-                    "required": ["rule_id", "rule_name", "applied_correctly", "location", "mistake_description", "correction_guide", "repetition_exercise"],
+                    "required": ["rule_id", "status", "word_i", "time_s",
+                                 "evidence", "correction"],
                 },
             },
         },
-        "required": ["teacher_label", "feedback", "tafsir_summary", "letters", "word_feedback", "tajweed_assessments"],
+        "required": ["teacher_label", "feedback", "tafsir_summary",
+                     "rule_reviews"],
     }
 
 
@@ -386,7 +371,7 @@ def post_interaction_with_retry(key, base_request_body, candidate_models):
             "contents": [{"parts": [{"text": base_request_body["input"][0]["text"]}, 
                                     {"inline_data": {"mime_type": base_request_body["input"][1]["mime_type"], "data": base_request_body["input"][1]["data"]}}]}],
             "systemInstruction": {"parts": [{"text": base_request_body["system_instruction"]}]},
-            "generationConfig": {"responseMimeType": "application/json", "responseSchema": base_request_body["response_format"]["schema"], "temperature": 0.1, "maxOutputTokens": 4096}
+            "generationConfig": {"responseMimeType": "application/json", "responseSchema": base_request_body["response_format"]["schema"], "temperature": 0.1, "maxOutputTokens": min(8192, max(1024, int(base_request_body.get("generation_config", {}).get("max_output_tokens", 4096))))}
         }
         
         for attempt in range(2):
@@ -407,58 +392,105 @@ def post_interaction_with_retry(key, base_request_body, candidate_models):
 
 
 def analyse_recitation(audio_bytes, mime_type, words, strictness, teacher_gender):
+    """Produce a cautious, structured practice review of an uploaded recording.
+
+    A general multimodal LLM is not an acoustic phoneme recogniser. All
+    observations are tentative and a missing finding is never proof of
+    correct pronunciation. The result therefore labels uncertainty explicitly.
+    """
     key = api_key()
-    if not key: raise RuntimeError("API key missing.")
-    if not audio_bytes: raise RuntimeError("Audio recording is empty.")
-    
+    if not key:
+        raise RuntimeError("API key missing.")
+    if not audio_bytes:
+        raise RuntimeError("Audio recording is empty.")
+    original_mime = normalize_audio_mime_type(mime_type)
     audio_bytes = compress_audio(audio_bytes)
-    
-    normalized_mime = normalize_audio_mime_type(mime_type)
+    if original_mime == "audio/wav":
+        normalized_mime = "audio/wav"
+    else:
+        normalized_mime = original_mime
+    try:
+        with wave.open(io.BytesIO(audio_bytes), "rb") as audio_file:
+            duration_s = audio_file.getnframes() / float(audio_file.getframerate())
+    except (wave.Error, OSError, ValueError, ZeroDivisionError):
+        duration_s = None
+
     candidate_models = get_available_models(key)
-    expected_text = [{"word_i": i, "ayah": w["ayah"], "text": w["ar"]} for i, w in enumerate(words)]
+    expected_text = [
+        {"word_i": i, "ayah": int(w["ayah"]), "text": w["ar"]}
+        for i, w in enumerate(words)
+    ]
+    rubrics = rubric_for_prompt()
     system_instruction = (
-        f"You are an AI Qur'an practice assistant in a {teacher_gender.lower()} tutor persona, "
-        "not a certified scholar or a human listening teacher. Use the reference in Hafs. "
-        "Assess ONLY observations supported by the recording. If a vowel, articulation point, "
-        "elongation or specific Tajweed rule cannot be heard reliably, label it 'uncertain'. "
-        "Do not invent a score, mistake, timestamp, rule assessment or evidence. "
-        "Distinguish actual omission and substitution from pronunciation uncertainty. "
-        "Focus on a few actionable corrections, accounting for noise and accent. "
-        "The supplied reference identifies expected words, not what was actually spoken. "
-        "Return the requested JSON."
+        "You are an AI audio learning aid reviewing Hafs Quran recitation. "
+        "You are NOT a certified Tajweed teacher, not a phoneme-alignment model, "
+        "and cannot certify makharij, individual short vowels, or all Tajweed. "
+        "The reference text is what SHOULD be recited; do not assume it WAS said. "
+        "Carefully listen to the actual audio. It may contain only ONE ayah "
+        "from a larger selected passage. Do not call unrecited later ayahs "
+        "mistakes. Do not hallucinate timestamps, words heard, pronunciations "
+        "or correct/incorrect rule judgements. Examine the sixteen provided "
+        "TOPIC AREAS only when applicable to what is audibly present. "
+        "For every rule ID return one status: possible_issue ONLY if there is "
+        "clearly audible, word-specific evidence and a defensible time offset; "
+        "otherwise uncertain or not_applicable. Never imply no_clear_issue "
+        "means certified correctness. The 16 topics are a practice rubric, "
+        "not a universal canonical count of Tajweed rules. "
+        "For a possible_issue provide valid zero-based word_i from the "
+        "supplied reference, time_s from the beginning of the audio in "
+        "seconds, an exact audible observation (not a generic compliment), "
+        "and one clear practical correction. For all other statuses use "
+        "word_i=-1, time_s=-1, evidence='', correction=''. "
+        "Use concise, accessible English and correct Arabic terminology. "
+        "Do not manufacture vowel-by-vowel findings when only an approximate "
+        "recitation match is audible. Return JSON only."
     )
     prompt = (
-        f"Review this recitation carefully, emphasizing verifiable observations. "
-        f"Strictness: {strictness}. If the audio is insufficiently clear, return uncertain. "
-        f"Expected words: {json.dumps(expected_text, ensure_ascii=False)}"
+        f"Study this actual recorded recitation. Style sensitivity: {strictness}. "
+        f"Selected text: {json.dumps(expected_text, ensure_ascii=False)}. "
+        f"Sixteen practice topics: {json.dumps(rubrics, ensure_ascii=False)}. "
+        f"Recording duration (if known): {duration_s}. "
+        "Report observations from ONLY the audible part, not all selected ayahs. "
+        "Give 16 rule_reviews with those topic IDs. "
+        "Specifically consider whether contrasting letters such as ص and ض, "
+        "short harakat, shaddah, and madd are actually acoustically discernible. "
+        "If not discernible say uncertain, NOT good or bad. "
+        "Keep the feedback practical, detailed where supported, and conservative."
     )
-    encoded_audio = base64.b64encode(audio_bytes).decode("ascii")
     base_request_body = {
-        "system_instruction": system_instruction, "store": False,
-        "input": [{"type": "text", "text": prompt}, {"type": "audio", "data": encoded_audio, "mime_type": normalized_mime}],
-        "response_format": {"type": "text", "mime_type": "application/json", "schema": tajweed_response_schema()},
-        "generation_config": {"temperature": 0.1, "max_output_tokens": 2048},
+        "system_instruction": system_instruction,
+        "input": [
+            {"type": "text", "text": prompt},
+            {"type": "audio", "data": base64.b64encode(audio_bytes).decode("ascii"),
+             "mime_type": normalized_mime},
+        ],
+        "response_format": {"schema": tajweed_response_schema()},
+        "generation_config": {"temperature": 0.1, "max_output_tokens": 8192},
     }
     response = post_interaction_with_retry(key, base_request_body, candidate_models)
-    
     try:
-        txt = "".join(p.get("text", "") for p in response.json()["candidates"][0]["content"]["parts"])
-    except Exception:
-        raise RuntimeError("Failed to parse Gemini response.")
-        
-    data = parse_tajweed_json(txt)
+        raw_text = "".join(
+            part.get("text", "")
+            for part in response.json()["candidates"][0]["content"]["parts"]
+        )
+    except (KeyError, IndexError, ValueError, TypeError):
+        raise RuntimeError("Gemini returned an invalid recording review.")
+    parsed = parse_tajweed_json(raw_text)
+    review = normalize_review(parsed, words, duration_s)
     states = ["uncertain"] * len(words)
-    for item in data.get("word_feedback", []):
-        if isinstance(item, dict) and 0 <= item.get("word_i", -1) < len(words):
-            states[item["word_i"]] = item.get("status", "uncertain")
+    for observation in review["observations"]:
+        states[observation["word_i"]] = "review"
+    word_feedback = {
+        item["word_i"]: (
+            item["rule_name"] + ": " + item["evidence"] +
+            " · Suggestion: " + item["correction"]
+        )
+        for item in review["observations"]
+    }
     return (
-        states,
-        {f"{k['word_i']}:{k['letter_i']}": k for k in data.get("letters", [])},
-        {k["word_i"]: k["feedback"] for k in data.get("word_feedback", []) if "word_i" in k},
-        data.get("tajweed_assessments", []),
-        data.get("feedback", "Evaluation complete."),
-        data.get("tafsir_summary", "Contextual wisdom provided."),
-        data.get("teacher_label", "Mashallah, beautiful recitation."),
+        states, {}, word_feedback,
+        [], review["summary"], review["tafsir_summary"],
+        review["teacher_label"], review
     )
 
 
