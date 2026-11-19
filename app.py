@@ -556,6 +556,10 @@ APP_STYLE = """
 [data-testid="stToolbar"] {opacity:.85}
 h1,h2,h3,h4 {color:#ebca88 !important; font-family:'Playfair Display',serif !important}
 [data-testid="stExpander"] {background:#30231c!important;border:1px solid #b288523f!important;border-radius:17px!important}
+[data-testid="stAlert"] {background:#3c2b20!important;border:1px solid #b88b4859!important;color:#f4dfba!important;border-radius:13px!important}
+[data-testid="stAlert"] p {color:#f4dfba!important}
+.stButton button[kind="secondary"] {background:#453124!important;color:#ecd5a7!important;border:1px solid #b88b4859!important}
+
 [data-testid="stAudioInput"],[data-testid="stTextInput"],[data-testid="stNumberInput"] {color:#f5e7ce!important}
 .stButton button[kind="primary"],[data-testid="stFormSubmitButton"] button {
   background:linear-gradient(110deg,#eed293,#c79540)!important;color:#2b1a10!important;
