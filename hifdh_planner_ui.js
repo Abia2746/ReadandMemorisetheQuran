@@ -227,9 +227,11 @@ function attachHifdhJourney(component,D,ui){
   function setVisible(visible){
     root.hidden=!visible;
     if(!visible)gate.hidden=true;
-    if(visible){
-      if(alertTimer===null)alertTimer=setInterval(checkOpenReminder,45000);
-    }else if(alertTimer!==null){clearInterval(alertTimer);alertTimer=null}
+    // While the app is open, an enabled notification permission can deliver
+    // reminders even if the student is Reading, not only in My Journey.
+    // Browser suspension/background delivery is NOT guaranteed.
+    if(saved && alertTimer===null)
+      alertTimer=setInterval(checkOpenReminder,60000);
   }
   return {setVisible,dispose(){
     if(alertTimer!==null)clearInterval(alertTimer);
