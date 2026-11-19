@@ -74,3 +74,68 @@
   .am-room-claim button{flex:1}
 }
 @media(prefers-reduced-motion:reduce){.am-room-item{transition:none}}
+
+
+/* R7 · luxury panoramic Window Lounge editorial design */
+.am-room{max-width:1370px}
+.am-room-intro{max-width:100%;margin:9px auto 15px}
+.am-room-intro h2{font-size:clamp(30px,3.35vw,43px);letter-spacing:-.025em;margin:9px 0}
+.am-room-intro p{font-size:13px;max-width:800px;color:#d0b99d}
+.am-room-layout{grid-template-columns:minmax(0,1.95fr) minmax(305px,.85fr);gap:16px}
+.am-room-scene-wrap{
+  height:min(730px,68vw);min-height:530px;
+  border:1px solid #d9b57861;
+  background:radial-gradient(ellipse at 50% 50%,#716252,#271b1a);
+  box-shadow:0 20px 55px #1009057d,inset 0 0 12px #d1a66b24
+}
+.am-room-stage-label b{font-size:14px;letter-spacing:.025em}
+.am-room-scene-shade{background:linear-gradient(180deg,#140e0ec9,transparent 84%)}
+.am-room-stage-bottom{background:linear-gradient(0deg,rgba(22,15,12,.8),transparent);font-size:11px}
+.am-room-shop{border:1px solid #d0ac7555;background:linear-gradient(160deg,#3a2a22f2,#241a17f5);max-height:730px}
+.am-room-item{background:linear-gradient(110deg,#33241e,#251b18);border-color:#bc925b34}
+.am-room-ambience{
+ display:flex;justify-content:center;align-items:end;gap:12px;flex-wrap:wrap;
+ max-width:900px;margin:16px auto 0;padding:13px 17px;
+ border:1px solid #ba915c50;border-radius:19px;
+ background:linear-gradient(125deg,rgba(79,57,41,.63),rgba(34,25,20,.82));
+ box-shadow:0 10px 30px #120c0b1f
+}
+.am-room-ambience-field{display:flex;flex-direction:column;gap:6px;text-align:left}
+.am-room-ambience-field label{
+ font:700 10px 'DM Sans',sans-serif;color:#f1d3a3;
+ letter-spacing:.08em;text-transform:uppercase;padding-left:3px
+}
+.am-room-ambience-field select{
+ min-width:185px;min-height:41px;padding:10px 32px 10px 13px;
+ font:600 12px 'DM Sans',sans-serif;
+ border-radius:12px;border:1px solid #cfaa715c;
+ background:#2c201b;color:#f4dbb1;
+ box-shadow:0 3px 15px #140e0e26
+}
+.am-room-ambience-field select:focus{outline:2px solid #e4b976;outline-offset:2px}
+.am-room-atmosphere-status{
+ min-height:40px;min-width:145px;display:flex;align-items:center;
+ justify-content:center;white-space:nowrap;padding:8px 13px;
+ border-radius:12px;background:rgba(160,117,71,.17);
+ border:1px solid #e1b7783b;
+ color:#f4dda9;font:600 11px 'DM Sans',sans-serif
+}
+.am-room-prayer-note{color:#a99279;font:10px/1.6 'DM Sans',sans-serif;margin:7px auto 0;max-width:640px}
+.am-room-stat{background:linear-gradient(120deg,#5a3e29a3,#271c18ba)}
+.am-room-loading{background:radial-gradient(circle at 50% 40%,#5c4a43,#1b1920 90%)}
+.am-room-rewards{background:linear-gradient(140deg,#372820,#281d1b)}
+@media(max-width:1000px){
+ .am-room-layout{grid-template-columns:1fr}
+ .am-room-scene-wrap{height:min(620px,68vw);min-height:425px}
+ .am-room-side{display:grid;grid-template-columns:minmax(0,1.45fr) minmax(260px,1fr)}
+ .am-room-shop{max-height:560px}
+}
+@media(max-width:690px){
+ .am-room-ambience{padding:11px;gap:8px}
+ .am-room-ambience-field{min-width:0;flex:1 1 144px}
+ .am-room-ambience-field select{min-width:0;width:100%;font-size:11px}
+ .am-room-atmosphere-status{width:100%;min-height:33px}
+ .am-room-scene-wrap{height:94vw;min-height:340px}
+ .am-room-side{display:flex}
+ .am-room-stage-label span{font-size:9px}
+}
