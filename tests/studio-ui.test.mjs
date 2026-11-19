@@ -11,7 +11,7 @@ import {resolve,dirname} from "node:path";
 const root=resolve(dirname(fileURLToPath(import.meta.url)),"..");
 let source=readFileSync(resolve(root,"studio.js"),"utf8");
 const roomUiSource=readFileSync(resolve(root,"prayer_room_ui.js"),"utf8");
-assert.match(source,/Qur'an listener · R6/);
+assert.match(source,/Window Lounge · R7/);
 assert.match(source,/@tilawa\/core@1\.0\.0-rc\.0\/web/);
 assert.match(source,/prepareMicrophone\(\)/);
 assert.doesNotMatch(source,/const micTest=btn/);
@@ -175,4 +175,4 @@ async function fixture(mode,overrides={},startListening=true){
     "without word data, highlight only the actual ayah");
   x.dispose();
 }
-console.log("PASS: R6 SDK events, delayed memorisation reveal, and source-matched reciter timing without guesswork.");
+console.log("PASS: R7 SDK events, delayed memorisation reveal, and source-matched reciter timing without guesswork.");
