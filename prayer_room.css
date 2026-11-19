@@ -139,3 +139,24 @@
  .am-room-side{display:flex}
  .am-room-stage-label span{font-size:9px}
 }
+
+/* R8 · user-controlled live rain and ambient sound */
+.am-room-sound-btn{
+  min-width:142px;min-height:41px;align-self:end;
+  border:1px solid #d9b47a65;border-radius:12px;
+  background:#352722;color:#ebd6b8;
+  font:700 11px 'DM Sans',sans-serif;
+  padding:9px 13px;cursor:pointer;
+  transition:background .2s,color .2s;
+}
+.am-room-sound-btn:hover{background:#50382b}
+.am-room-sound-btn[aria-pressed=true]{
+  background:linear-gradient(110deg,#ead19c,#b88b50);
+  color:#271b13;border-color:#f0d395
+}
+.am-room-ambience{max-width:1060px}
+.am-room-ambience-field{min-width:175px}
+@media(max-width:690px){
+  .am-room-sound-btn{flex:1 1 145px;min-width:0}
+  .am-room-ambience-field{min-width:0}
+}
