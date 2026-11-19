@@ -33,9 +33,11 @@ const CE=(tag,cl,text)=>{const n=new Element(tag,text);n.className=cl||"";return
 const btn=(text,cls="am-button")=>{const n=CE("button",cls,text);n.type="button";return n};
 const append=(parent,...kids)=>{kids.forEach(n=>n&&parent.appendChild(n));return parent};
 let sceneCalls=0,sceneStopped=0,sceneDisposed=0,lastScene=null;
+const recordedMoods=[];
 const createPrayerRoomScene=async(canvas,options)=>{
   sceneCalls++;lastScene=options;
-  return {start(){},stop(){sceneStopped++},dispose(){sceneDisposed++}};
+  return {start(){},stop(){sceneStopped++},dispose(){sceneDisposed++},
+    setMood(m){recordedMoods.push(m)},resetCamera(){} };
 };
 const make=new Function("createPrayerRoomScene",src+"\nreturn attachPrayerRoom;")(createPrayerRoomScene);
 const ui={
@@ -49,6 +51,13 @@ const events=[];
 const component={setTriggerValue:(key,val)=>events.push({key,val})};
 const room=make(component,{
   meta:{s:2,a:60,end:61},
+  prayerClock:{
+    city:"London",cities:["London","Birmingham"],timezone:"Europe/London",
+    available:true,times:{
+      Fajr:"05:30",Sunrise:"07:10",Dhuhr:"12:10",
+      Asr:"14:35",Maghrib:"16:18",Isha:"18:03"
+    }
+  },
   room:{
     xp:150,coins:175,owned:["plant_olive"],
     equipped:{plant:"plant_olive"},
@@ -77,13 +86,25 @@ for(let i=0;i<4;i++)await Promise.resolve();
 assert.equal(sceneCalls,1,"3D scene initialized when prayer room opened");
 assert.equal(ui.stage.children.length,1);
 assert.equal(ui.stage.children[0].hidden,false);
+const mood=all(ui.stage).find(n=>n.tag==="select"&&n.attrs["aria-label"]==="Room lighting and time of day");
+assert.ok(mood,"Auto / Fajr / day / sunset / night selector exists");
+mood.value="night";mood.onchange();
+assert.equal(recordedMoods.at(-1),"night","manual moonlit mood applies without 3D rebuild");
+mood.value="day";mood.onchange();
+assert.equal(recordedMoods.at(-1),"day","manual daylight applies without 3D rebuild");
+assert.equal(sceneCalls,1,"lighting changes do not re-initialise the 3D scene");
+const city=all(ui.stage).find(n=>n.tag==="select"&&n.attrs["aria-label"]==="City for prayer-time ambience");
+assert.ok(city,"City selector exists without GPS");
+city.value="Birmingham";city.onchange();
+assert.equal(events.at(-1).val.action,"set_prayer_city");
+assert.equal(events.at(-1).val.city,"Birmingham");
 const shopItems=all(ui.stage).filter(n=>n.className==="am-room-item");
 assert.equal(shopItems.length,2);
 const place=all(ui.stage).find(n=>n.tag==="button"&&n.textContent==="Remove");
 assert.ok(place,"Owned item can be unequipped");
 place.onclick();
-assert.equal(events[2].val.action,"unequip");
-assert.equal(events[2].val.category,"plant");
+assert.equal(events.at(-1).val.action,"unequip");
+assert.equal(events.at(-1).val.category,"plant");
 const preview=all(ui.stage).find(n=>n.tag==="button"&&n.textContent==="Preview");
 preview.onclick();
 for(let i=0;i<5;i++)await Promise.resolve();
