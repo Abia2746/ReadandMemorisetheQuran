@@ -232,6 +232,8 @@ function attachPrayerRoom(component, D, ui){
       }
       controller=scene;
       loading.hidden=true;
+      const fallback=viewport.querySelector(".am-room-fallback");
+      if(fallback && typeof fallback.remove==="function")fallback.remove();
       if(active)controller.start();
       else controller.stop();
     }catch(error){
