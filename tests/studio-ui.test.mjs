@@ -10,6 +10,7 @@ import {resolve,dirname} from "node:path";
 
 const root=resolve(dirname(fileURLToPath(import.meta.url)),"..");
 let source=readFileSync(resolve(root,"studio.js"),"utf8");
+const roomUiSource=readFileSync(resolve(root,"prayer_room_ui.js"),"utf8");
 assert.match(source,/Qur'an listener · R6/);
 assert.match(source,/@tilawa\/core@1\.0\.0-rc\.0\/web/);
 assert.match(source,/prepareMicrophone\(\)/);
@@ -81,12 +82,15 @@ async function fixture(mode,overrides={},startListening=true){
       };
     }
   };
+  const combined = roomUiSource+"\n"+
+    source.replace(/^export default function\(component\)/,"function Studio(component)")+
+    "\nreturn Studio;";
   const factory=new Function("mockSdk","document","window","navigator","sessionStorage",
-     "localStorage","AbortController",
-     "return ("+source.replace(/^export default\s*/,"")+")");
+     "localStorage","AbortController","createPrayerRoomScene", combined);
   const create=factory(mockSdk,document,{},{
     userAgent:"iPad",platform:"iPad",maxTouchPoints:5
-  },{getItem:()=>null,setItem(){}},{getItem:()=>null,setItem(){}},abortCtor);
+  },{getItem:()=>null,setItem(){}},{getItem:()=>null,setItem(){}},abortCtor,
+    async()=>({start(){},stop(){},dispose(){}}));
   const mount=new Element("div");
   mount.className="am-mount";
   const data={
