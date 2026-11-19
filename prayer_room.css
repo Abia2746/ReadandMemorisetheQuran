@@ -1,0 +1,76 @@
+/* Prayer Room — editorial interior-design layout, warm glass and ivory. */
+.am-room{margin:0 auto;max-width:1260px;padding:0 2px 24px}
+.am-room-intro{text-align:center;margin:14px auto 21px;padding:4px 8px 0}
+.am-room-overline{color:#d7ad60;letter-spacing:.24em;text-transform:uppercase;font:700 10px 'DM Sans',sans-serif}
+.am-room-intro h2{font:600 clamp(26px,3.2vw,37px)/1.25 'Playfair Display',serif;color:#f3d9a8;margin:7px 0}
+.am-room-intro p{margin:7px auto;color:#c7b197;font:13px/1.8 'DM Sans',sans-serif;max-width:660px}
+.am-room-stats{display:flex;align-items:center;justify-content:center;flex-wrap:wrap;gap:9px;margin:13px auto}
+.am-room-stat{font:600 12px 'DM Sans',sans-serif;color:#f3d7a0;border-radius:999px;border:1px solid rgba(233,192,114,.27);background:#b98c4c18;padding:7px 13px}
+.am-room-stat strong{color:#ffe8a9;font-weight:700}
+.am-room-layout{display:grid;grid-template-columns:minmax(0,1.74fr) minmax(310px,.92fr);gap:17px;align-items:stretch}
+.am-room-scene-wrap{position:relative;overflow:hidden;min-height:570px;height:min(660px,66vw);max-height:700px;border-radius:24px;border:1px solid #e5c68a51;box-shadow:0 16px 50px #0f09074d;background:radial-gradient(ellipse at 50% 20%,#765b42,#2b211c 80%);isolation:isolate}
+.am-room-canvas{display:block;width:100%;height:100%;touch-action:pan-y;outline:none}
+.am-room-scene-wrap canvas{touch-action:none}
+.am-room-scene-shade{position:absolute;left:0;right:0;top:0;pointer-events:none;background:linear-gradient(180deg,rgba(34,24,18,.66),transparent 80%);padding:17px 18px 60px}
+.am-room-stage-label{display:flex;align-items:center;gap:9px;justify-content:space-between}
+.am-room-stage-label b{font:600 13px 'Playfair Display',serif;color:#fbe5b8;letter-spacing:.03em}
+.am-room-stage-label span{font:600 10px 'DM Sans',sans-serif;color:#e4caa4;text-transform:uppercase;letter-spacing:.12em}
+.am-room-stage-bottom{position:absolute;bottom:0;left:0;right:0;min-height:60px;pointer-events:none;background:linear-gradient(0deg,rgba(22,15,11,.82),transparent);padding:28px 16px 12px;color:#e6cfb1;font:11px/1.6 'DM Sans',sans-serif;text-align:center}
+.am-room-loading{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:12px;background:radial-gradient(circle at 50% 40%,#68503d,#281d16);color:#eed7af;text-align:center;padding:35px}
+.am-room-loading .am-room-mark{font:58px 'Amiri',serif;color:#efd297;line-height:1.4}
+.am-room-loading strong{font:600 21px 'Playfair Display',serif;color:#ffe4b3}
+.am-room-loading p{font:13px/1.75 'DM Sans',sans-serif;color:#d5bb96;max-width:340px;margin:0}
+.am-room-scene-actions{position:absolute;right:13px;bottom:64px;display:flex;gap:6px;flex-direction:column}
+.am-room-scene-actions button{pointer-events:all;border:1px solid #f3d3a253;border-radius:99px;background:rgba(43,30,23,.78);color:#f3daa8;padding:7px 11px;font-size:12px;backdrop-filter:blur(8px)}
+.am-room-side{display:flex;flex-direction:column;gap:14px;min-height:0}
+.am-room-shop{background:linear-gradient(135deg,rgba(67,47,34,.95),rgba(43,31,24,.92));border:1px solid #c69f654c;border-radius:22px;padding:15px 16px 12px;display:flex;flex-direction:column;min-height:0;max-height:700px}
+.am-room-head{display:flex;align-items:center;justify-content:space-between;gap:7px;margin-bottom:11px}
+.am-room-head h3{font:600 19px 'Playfair Display',serif;color:#f7dfaf;margin:0}
+.am-room-head small{font:11px 'DM Sans',sans-serif;color:#ccaf82}
+.am-room-pills{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 11px}
+.am-room-pill{font:600 11px 'DM Sans',sans-serif;border:1px solid #bb915b67;border-radius:999px;background:transparent;color:#dec4a0;padding:7px 11px;cursor:pointer}
+.am-room-pill[aria-pressed=true]{background:linear-gradient(110deg,#e9ca89,#bf9450);color:#24150e;border-color:#e9c888}
+.am-room-items{overflow-y:auto;overscroll-behavior:contain;display:flex;flex-direction:column;gap:9px;padding-right:3px;scrollbar-width:thin;scrollbar-color:#ae885e transparent}
+.am-room-item{display:grid;grid-template-columns:48px minmax(0,1fr);gap:10px;padding:11px;border:1px solid #c9a56e35;border-radius:15px;background:#2a1d18ab;transition:border-color .2s,transform .2s}
+.am-room-item:hover{border-color:#eed09680;transform:translateY(-1px)}
+.am-room-item-dot{width:48px;height:52px;border:1px solid #e1c49450;border-radius:11px;background:linear-gradient(145deg,#765b43,#3d2d24);display:grid;place-items:center;font-size:24px;color:#ffdc98}
+.am-room-item-detail{min-width:0}
+.am-room-item-title{display:flex;align-items:center;justify-content:space-between;gap:7px;font:700 12px 'DM Sans',sans-serif;color:#ffe0aa}
+.am-room-item-desc{font:11px/1.5 'DM Sans',sans-serif;color:#bfa990;margin:3px 0 8px}
+.am-room-item-price{font:700 11px 'DM Sans',sans-serif;color:#edd09a;white-space:nowrap}
+.am-room-item button{font:700 11px 'DM Sans',sans-serif;background:#4b3827;border:1px solid #d2a76165;border-radius:999px;color:#f5d8a7;padding:6px 10px;cursor:pointer;min-height:31px}
+.am-room-item button.am-buy{background:linear-gradient(110deg,#f4d899,#c4984f);color:#302010;border-color:transparent}
+.am-room-item button:disabled{opacity:.55;cursor:default}
+.am-room-item-actions{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.am-room-item-lock{font:10px 'DM Sans',sans-serif;color:#c9a783;padding:5px 0}
+.am-room-rewards{padding:16px;border-radius:19px;background:rgba(63,43,29,.8);border:1px solid #c69f6540}
+.am-room-rewards h3{font:600 17px 'Playfair Display',serif;color:#f1d7a3;margin:0 0 8px}
+.am-room-rewards p{font:12px/1.65 'DM Sans',sans-serif;color:#c7b49b;margin:0}
+.am-room-reward-line{display:flex;justify-content:space-between;gap:12px;align-items:center;margin-top:9px;padding:8px 0;border-top:1px solid #d6ae6f24;color:#e3cead;font-size:12px}
+.am-room-reward-line b{color:#f8dc9f}
+.am-room-toast{font:12px/1.55 'DM Sans',sans-serif;border-radius:12px;padding:10px 13px;color:#f7dbac;background:#a9844930;border:1px solid #d6b06a55;margin:5px 0 11px}
+.am-room-claim{display:flex;align-items:center;flex-wrap:wrap;justify-content:center;gap:9px;padding:11px 10px;margin:0 0 13px;background:#2e2119;border:1px solid #b88a4e45;border-radius:15px}
+.am-room-claim select{font:12px 'DM Sans',sans-serif;padding:9px 10px;color:#f3ddbb;background:#201711;border:1px solid #c5a16f60;border-radius:9px;min-height:38px}
+.am-room-claim button{font:700 11px 'DM Sans',sans-serif;min-height:38px;border-radius:999px;padding:9px 15px;border:1px solid #d9b57b5c;background:#543c2a;color:#f5dfb7;cursor:pointer}
+.am-room-claim button.am-room-memorised{background:linear-gradient(110deg,#f1d395,#c49650);border-color:transparent;color:#281a12}
+.am-room-fallback{position:absolute;inset:0;background:radial-gradient(circle at 50% 34%,#978363 0%,#7e674f 36%,#33261f 85%);display:flex;justify-content:center;align-items:center}
+.am-room-fallback-arch{position:relative;width:36%;height:70%;border:17px solid #d8c2a1;border-bottom-width:35px;border-radius:50% 50% 8px 8px / 28% 28% 8px 8px;box-shadow:0 0 0 3px #e2c98c,0 30px 85px #21151270,inset 0 10px 25px #39261f77;background:linear-gradient(180deg,#6d654a,#382c28)}
+.am-room-fallback-arch:after{content:"۞";position:absolute;left:0;right:0;top:34%;color:#ebcd8e;font:45px 'Amiri',serif;text-align:center}
+@media(max-width:960px){
+  .am-room-layout{grid-template-columns:1fr}
+  .am-room-scene-wrap{height:55vw;min-height:390px;max-height:620px}
+  .am-room-side{display:grid;grid-template-columns:1.35fr 1fr;align-items:start}
+  .am-room-shop{max-height:520px}
+}
+@media(max-width:610px){
+  .am-room{padding:0 0 12px}
+  .am-room-intro h2{font-size:26px}
+  .am-room-intro p{font-size:12px}
+  .am-room-scene-wrap{min-height:330px;height:94vw;border-radius:16px}
+  .am-room-side{display:flex}
+  .am-room-shop{max-height:430px;border-radius:16px}
+  .am-room-claim{gap:6px}
+  .am-room-claim select{flex:1}
+  .am-room-claim button{flex:1}
+}
+@media(prefers-reduced-motion:reduce){.am-room-item{transition:none}}
