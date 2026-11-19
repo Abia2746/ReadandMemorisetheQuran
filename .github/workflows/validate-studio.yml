@@ -16,7 +16,7 @@ jobs:
         with:
           node-version: '22'
       - name: Compile Python source
-        run: python -m py_compile app.py studio_ui.py live_auth.py tests/test_live_auth.py
+        run: python -m py_compile app.py studio_ui.py live_auth.py timing_data.py tajweed_review.py tests/test_live_auth.py tests/test_timing_data.py tests/test_tajweed_review.py
       - name: Install minimal test dependency
         run: python -m pip install requests
       - name: Check token and streaming integration tests
