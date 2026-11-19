@@ -10,7 +10,7 @@ import {resolve,dirname} from "node:path";
 
 const root=resolve(dirname(fileURLToPath(import.meta.url)),"..");
 let source=readFileSync(resolve(root,"studio.js"),"utf8");
-assert.match(source,/Qur'an listener · R4/);
+assert.match(source,/Qur'an listener · R5/);
 assert.match(source,/@tilawa\/core@1\.0\.0-rc\.0\/web/);
 assert.match(source,/prepareMicrophone\(\)/);
 assert.doesNotMatch(source,/const micTest=btn/);
@@ -171,4 +171,4 @@ async function fixture(mode,overrides={},startListening=true){
     "without word data, highlight only the actual ayah");
   x.dispose();
 }
-console.log("PASS: R4 SDK events, delayed memorisation reveal, and source-matched reciter timing without guesswork.");
+console.log("PASS: R5 SDK events, delayed memorisation reveal, and source-matched reciter timing without guesswork.");
