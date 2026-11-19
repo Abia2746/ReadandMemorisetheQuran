@@ -5,6 +5,7 @@ All user data is passed as structured JSON through data; never interpolate
 user input into HTML, CSS or JavaScript source.
 """
 from pathlib import Path
+import json
 import logging
 import sqlite3
 import time
@@ -124,6 +125,19 @@ def render_studio(
         "letterResults": (review or {}).get("letter_results", {}),
         "wordFeedback": (review or {}).get("word_feedback", {}),
     }
+    # Force an ordinary JSON tree: Streamlit component payloads must not
+    # contain numpy scalars, dates, DB adapters or arbitrary Python objects.
+    # Converted values cannot execute code and are not interpolated into JS.
+    try:
+        data = json.loads(json.dumps(data, ensure_ascii=False, default=str))
+    except (TypeError, ValueError) as exc:
+        _LOG.exception("R6 component JSON normalization failed")
+        st.warning("Room payload could not be serialized; restoring safe defaults.")
+        data["room"] = {
+            "xp": 0, "coins": 0, "owned": [], "equipped": {}, "items": [],
+        }
+        data = json.loads(json.dumps(data, ensure_ascii=False, default=str))
+
     # A component/serialization TypeError is not allowed to take down the
     # entire Quran classroom. Preserve the exact exception in Streamlit logs.
     fallback = False
