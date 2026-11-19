@@ -458,6 +458,45 @@ async function createPrayerRoomScene(canvas,config={}){
       weatherParticles.colorDead=new B.Color4(.67,.75,.88,0);
     }catch(_){weatherParticles=null}
   }
+  // R9: independent near/mid/far volumetric rainfall sheets. Unlike the
+  // glass texture these droplets occupy real world-space positions and show
+  // perspective/parallax as the camera moves.
+  const depthRain=[];
+  if(typeof B.ParticleSystem==="function"){
+    for(const [layer,z,scale,capacity] of [
+      ["distant",6.8,.58,mobile?180:450],
+      ["midground",6.0,1,mobile?260:700],
+      ["near window",5.48,1.5,mobile?180:450]
+    ]){
+      try{
+        const ps=new B.ParticleSystem("Spatial rain · "+layer,capacity,scene);
+        const tex=new B.DynamicTexture("Rain streak · "+layer,{width:16,height:64},scene,false);
+        const g=tex.getContext();g.clearRect(0,0,16,64);
+        const grad=g.createLinearGradient(0,0,0,64);
+        grad.addColorStop(0,"rgba(245,250,255,0)");
+        grad.addColorStop(.35,"rgba(230,242,255,.54)");
+        grad.addColorStop(.75,"rgba(220,236,255,.40)");
+        grad.addColorStop(1,"rgba(225,245,255,0)");
+        g.fillStyle=grad;g.fillRect(6,0,4,64);tex.update();
+        ps.particleTexture=tex;
+        ps.emitter=new B.Vector3(windowX,5.65,z);
+        ps.minEmitBox=new B.Vector3(-3.85,-.05,-.20);
+        ps.maxEmitBox=new B.Vector3(3.85,.20,.20);
+        ps.direction1=new B.Vector3(-.18,-1,0);
+        ps.direction2=new B.Vector3(-.48,-1.3,0);
+        ps.minEmitPower=3.0;ps.maxEmitPower=5.3;
+        ps.minLifeTime=.65;ps.maxLifeTime=1.25;
+        ps.minSize=.025*scale;ps.maxSize=.065*scale;
+        ps.minScaleX=.25;ps.maxScaleX=.45;
+        ps.minScaleY=2.0;ps.maxScaleY=3.8;
+        ps.color1=new B.Color4(.82,.92,1,.48);
+        ps.color2=new B.Color4(.68,.83,.98,.26);
+        ps.colorDead=new B.Color4(.7,.8,.9,0);
+        ps.updateSpeed=.016;ps.emitRate=0;
+        depthRain.push({ps,scale});
+      }catch(_){/* Low-memory devices retain the glass rain layer. */}
+    }
+  }
   function setRain(level){
     const safe=Object.hasOwn(rainModes,level)?level:"off";
     if(safe===rainIntensity)return;
@@ -471,6 +510,11 @@ async function createPrayerRoomScene(canvas,config={}){
         weatherParticles.emitRate=Math.round((mobile?150:340)*rainModes[safe]);
         if(running)weatherParticles.start();
       }
+    }
+    for(const layer of depthRain){
+      layer.ps.emitRate=Math.round((mobile?160:370)*layer.scale*rainModes[safe]);
+      if(safe==="off")layer.ps.stop();
+      else if(running)layer.ps.start();
     }
     if(safe==="off"){
       const g=rainGlassTex.getContext();
@@ -893,12 +937,14 @@ async function createPrayerRoomScene(canvas,config={}){
       if(disposed||running)return;
       running=true;engine.resize();
       if(weatherParticles&&rainIntensity!=="off")weatherParticles.start();
+       if(rainIntensity!=="off")for(const layer of depthRain)layer.ps.start();
       engine.runRenderLoop(render);
     },
     stop(){
       if(!running)return;
       running=false;engine.stopRenderLoop(render);
       weatherParticles?.stop();
+      for(const layer of depthRain)layer.ps.stop();
     },
     dispose(){
       if(disposed)return;
@@ -908,6 +954,7 @@ async function createPrayerRoomScene(canvas,config={}){
       canvas.removeEventListener("webglcontextlost",contextLost);
       resizeObserver?.disconnect();
       weatherParticles?.stop();
+      for(const layer of depthRain)layer.ps.stop();
       scene.dispose();engine.dispose();
     }
   };
