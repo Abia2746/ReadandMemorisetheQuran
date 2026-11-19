@@ -16,6 +16,17 @@ A responsive original Qur'an learning application built with Streamlit and Strea
 
 This application is **not affiliated with Tilawa.ai**. Its visual design, text, and product implementation are original. Live word recognition does **not** reliably assess all 16 Tajweed rules or individual harakah articulation.
 
+## R5: following repeated sheikh phrases and short-word sensitivity (19 November 2026)
+
+- **Audio-aware reciter following (beta):** The listening panel now offers *Follow repeated phrases* and *Analyse repeats*. Instead of assuming that a verse's words are spoken only once, the app can analyse the **actual EveryAyah MP3** with the open-source `@tilawa/core` word recogniser. It records `timeMs → {surah, ayah, word}` events, retaining backward movement when the reciter repeats a phrase. The player can then jump backward to the earlier word at the correct audio time.
+- **Prepare before listening for repeats:** Press **Analyse repeats** for the current ayah, let the on-device analysis finish, then press Play to use its repeat-aware timeline from the beginning. Automatic analysis also starts during playback, but until it finishes, the player retains ordinary source-matched timestamps.
+- **Honest fallbacks:** If the MP3 exceeds size limits, model initialization fails, Safari cannot decode it, or the model detects too few reliable word positions, the existing source-matched timings are used. The recognition engine may miss repetitions or confuse near-identical Quranic passages; this is beta, not guaranteed precision.
+- **Low-overhead MP3 preparation:** Python fetches only explicitly known EveryAyah reciter folders, limits each clip to 750 kB and the total selection to 3 MB, and caches clip bytes. In-browser analysis happens locally without uploading the reader's voice. The recognition model is reused for subsequent microphone sessions instead of loading again.
+- **Responsive / Careful live word following:** The recitation panel offers a user-selectable confidence threshold. *Responsive* accepts lower-confidence short-word matches, while *Careful* waits for stronger position evidence. It does not provide new vowel, letter or phoneme accuracy. Both modes still mark a word as completed only after the listener advances beyond it; no model can certify a correct word based solely on its initial vowel.
+- **Performance:** Browser updates skip redundant full-verse repaint operations, and the live microphone level indicator updates at roughly 14 fps rather than repainting dozens of times per second.
+
+**Testing boundary:** A deterministic mock reproduces a sheikh's pattern of words 1, 2, 3, 1, 2, and verifies that the audio-aware timeline returns the highlight to word 1. This is not a real recitation accuracy test. Real Safari/iPad memory, codec compatibility and on-device recognition need testing with the actual reciter recording.
+
 ## R4: reciter synchronisation and recording review (19 November 2026)
 
 - **Yasser Al-Dosari and Mishary Alafasy timing integration:** the app now plays the matching EveryAyah recording for which QuranLife published word timestamps. Automated word timings cover 4,502 Yasser verse records and 6,236 Mishary verse records. Each ayah's word count and timing order are validated before use. Missing or mismatched alignment highlights the **verse only**, not guessed individual words. These word timings are machine-generated and may still drift; no audio timing was human-certified.
