@@ -11,7 +11,8 @@ import {resolve,dirname} from "node:path";
 const root=resolve(dirname(fileURLToPath(import.meta.url)),"..");
 let source=readFileSync(resolve(root,"studio.js"),"utf8");
 const roomUiSource=readFileSync(resolve(root,"prayer_room_ui.js"),"utf8");
-assert.match(source,/Window Lounge · R7/);
+const hifdhUiSource=readFileSync(resolve(root,"hifdh_planner_ui.js"),"utf8");
+assert.match(source,/Noor Hifdh · R8/);
 assert.match(source,/@tilawa\/core@1\.0\.0-rc\.0\/web/);
 assert.match(source,/prepareMicrophone\(\)/);
 assert.doesNotMatch(source,/const micTest=btn/);
@@ -82,7 +83,7 @@ async function fixture(mode,overrides={},startListening=true){
       };
     }
   };
-  const combined = roomUiSource+"\n"+
+  const combined = roomUiSource+"\n"+hifdhUiSource+"\n"+
     source.replace(/^export default function\(component\)/,"function Studio(component)")+
     "\nreturn Studio;";
   const factory=new Function("mockSdk","document","window","navigator","sessionStorage",
@@ -155,7 +156,7 @@ async function fixture(mode,overrides={},startListening=true){
   const x=await fixture("full",{audio:["https://everyayah.com/data/test/002060.mp3"],segments},false);
   const a=nodes(x.mount).find(node=>node.tag==="audio");
   assert.ok(a,"audio player exists");
-  a.duration=3;a.currentTime=1.5;
+  a.duration=3;a.currentTime=1.5;a.paused=false;
   a.ontimeupdate();
   const words=nodes(x.mount).filter(n=>n.className.split(" ").includes("am-word"));
   assert.match(words[1].className,/am-active/,"aligned reciter highlight follows true second-word timestamp");
@@ -167,12 +168,12 @@ async function fixture(mode,overrides={},startListening=true){
 {
   const x=await fixture("full",{audio:["https://everyayah.com/data/test/002060.mp3"],segments:[]},false);
   const audio=nodes(x.mount).find(node=>node.tag==="audio");
-  audio.duration=3;audio.currentTime=1.6;audio.ontimeupdate();
+  audio.duration=3;audio.currentTime=1.6;audio.paused=false;audio.ontimeupdate();
   const words=nodes(x.mount).filter(n=>n.className.split(" ").includes("am-word"));
   assert.equal(words.filter(n=>n.className.includes("am-active")).length,0,
     "missing timings must NOT produce a guessed active word");
-  assert.equal(words.filter(n=>n.className.includes("am-ayah-playing")).length,3,
-    "without word data, highlight only the actual ayah");
+  assert.equal(words.filter(n=>n.className.includes("am-ayah-playing")).length,0,
+    "without word timing, never highlight all ayah words");
   x.dispose();
 }
-console.log("PASS: R7 SDK events, delayed memorisation reveal, and source-matched reciter timing without guesswork.");
+console.log("PASS: R8 SDK events, delayed memorisation reveal, and source-matched reciter timing without guesswork.");
