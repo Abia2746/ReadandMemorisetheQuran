@@ -620,6 +620,10 @@ if not st.session_state.name:
 # Sidebar configuration remains accessible, without dominating the reading page.
 with st.sidebar:
     st.markdown("### ✦ Al-Mu'allim")
+    st.caption("Noor Hifdh · R8 · 19 November 2026")
+    if st.button("Refresh R8 interface", use_container_width=True, help="Clear cached Quran data and reload the current Streamlit build."):
+        st.cache_data.clear()
+        st.rerun()
     st.caption("Choose a passage and customise your practice.")
     st.markdown("**Your practice profile**")
     st.write(html_escape.escape(st.session_state.name))
@@ -689,6 +693,8 @@ saved = st.session_state.results.get(result_key)
 audio_inline = inline_passage_clips(
     surah, ayah, end_ayah, RECITERS[reciter]["folder"]
 )
+
+st.caption("Al-Mu'allim · Noor Hifdh R8 | My Journey and Prayer Room are inside the interactive studio below.")
 
 # The full study environment is provided through a modern non-iframe Streamlit component.
 try:
