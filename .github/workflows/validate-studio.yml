@@ -16,7 +16,7 @@ jobs:
         with:
           node-version: '22'
       - name: Compile Python source
-        run: python -m py_compile app.py studio_ui.py live_auth.py timing_data.py audio_embed.py tajweed_review.py prayer_room.py tests/test_live_auth.py tests/test_timing_data.py tests/test_tajweed_review.py tests/test_prayer_room.py
+        run: python -m py_compile app.py studio_ui.py live_auth.py timing_data.py audio_embed.py tajweed_review.py prayer_room.py prayer_clock.py tests/test_live_auth.py tests/test_timing_data.py tests/test_tajweed_review.py tests/test_prayer_room.py tests/test_prayer_clock.py
       - name: Install minimal test dependency
         run: python -m pip install requests
       - name: Check token and streaming integration tests
@@ -30,8 +30,11 @@ jobs:
       - name: Validate 3D Prayer Room source
         run: |
           node --check prayer_room_scene.js
+          node --check prayer_room_lounge_scene.js
           node --check prayer_room_ui.js
       - name: Test Prayer Room shop, preview and controls
         run: node tests/prayer-room-ui.test.mjs
+      - name: Test luxury Window Lounge geometry and prayer-time moods
+        run: node tests/prayer-room-lounge.test.mjs
       - name: Verify design assets exist
-        run: test -s studio.css && test -s studio.js && test -s prayer_room.css && test -s prayer_room_scene.js
+        run: test -s studio.css && test -s studio.js && test -s prayer_room.css && test -s prayer_room_lounge_scene.js
