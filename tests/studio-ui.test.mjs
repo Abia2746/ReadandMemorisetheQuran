@@ -114,10 +114,14 @@ async function fixture(mode){
   x.callback({type:"position",state:"acquiring",observed:[{word:{surah:2,ayah:60,word:1}}]});
   reveal=nodes(x.mount).filter(n=>n.className.split(" ").includes("am-revealed-ar"));
   assert.equal(reveal.length,0,"uncertain audio cannot reveal answers");
+  // The first vowel/word position must NOT count as completed.
   x.callback({type:"position",state:"locked",observed:[{word:{surah:2,ayah:60,word:1}}]});
   reveal=nodes(x.mount).filter(n=>n.className.split(" ").includes("am-revealed-ar"));
-  assert.deepEqual(reveal.map(n=>n.textContent),["فَقُلْنَا"],"correct first word revealed");
+  assert.equal(reveal.length,0,"first locked word only highlights current position");
   x.callback({type:"position",state:"locked",observed:[{word:{surah:2,ayah:60,word:2}}]});
+  reveal=nodes(x.mount).filter(n=>n.className.split(" ").includes("am-revealed-ar"));
+  assert.deepEqual(reveal.map(n=>n.textContent),["فَقُلْنَا"],"first word only reveals after moving to the second");
+  x.callback({type:"position",state:"locked",observed:[{word:{surah:2,ayah:60,word:3}}]});
   reveal=nodes(x.mount).filter(n=>n.className.split(" ").includes("am-revealed-ar"));
   assert.deepEqual(reveal.map(n=>n.textContent),["فَقُلْنَا","اضْرِبْ"]);
   x.callback({type:"position",state:"locked",observed:[{word:{surah:99,ayah:60,word:3}}]});
@@ -135,4 +139,4 @@ async function fixture(mode){
     "reading mode does not insert duplicate Arabic text");
   x.dispose();
 }
-console.log("PASS: R3 build; Quran SDK imports; microphone gesture; read highlighting; gated memory reveal; verse filtering.");
+console.log("PASS: R3 build; Quran SDK imports; microphone gesture; read highlighting; gated delayed memory reveal; verse filtering.");
