@@ -34,10 +34,11 @@ const btn=(text,cls="am-button")=>{const n=CE("button",cls,text);n.type="button"
 const append=(parent,...kids)=>{kids.forEach(n=>n&&parent.appendChild(n));return parent};
 let sceneCalls=0,sceneStopped=0,sceneDisposed=0,lastScene=null;
 const recordedMoods=[];
+const recordedRain=[];
 const createPrayerRoomScene=async(canvas,options)=>{
   sceneCalls++;lastScene=options;
   return {start(){},stop(){sceneStopped++},dispose(){sceneDisposed++},
-    setMood(m){recordedMoods.push(m)},resetCamera(){} };
+    setMood(m){recordedMoods.push(m)},setRain(level){recordedRain.push(level)},resetCamera(){} };
 };
 const make=new Function("createPrayerRoomScene",src+"\nreturn attachPrayerRoom;")(createPrayerRoomScene);
 const ui={
@@ -93,6 +94,13 @@ assert.equal(recordedMoods.at(-1),"night","manual moonlit mood applies without 3
 mood.value="day";mood.onchange();
 assert.equal(recordedMoods.at(-1),"day","manual daylight applies without 3D rebuild");
 assert.equal(sceneCalls,1,"lighting changes do not re-initialise the 3D scene");
+const rain=all(ui.stage).find(n=>n.tag==="select"&&n.attrs["aria-label"]==="Animated falling rain intensity");
+assert.ok(rain,"immersive rain intensity selector exists");
+rain.value="storm";rain.onchange();
+assert.equal(recordedRain.at(-1),"storm","storm starts without rebuilding room");
+rain.value="off";rain.onchange();
+assert.equal(recordedRain.at(-1),"off","rain can be turned off instantly");
+assert.equal(sceneCalls,1,"weather intensity does not recreate 3D scene");
 const city=all(ui.stage).find(n=>n.tag==="select"&&n.attrs["aria-label"]==="City for prayer-time ambience");
 assert.ok(city,"City selector exists without GPS");
 city.value="Birmingham";city.onchange();
