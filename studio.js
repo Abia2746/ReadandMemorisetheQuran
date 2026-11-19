@@ -1079,7 +1079,9 @@ export default function(component) {
       if(disposed)return;
       session=engine.startMemorization(
         {surah:Number(meta.s),fromAyah:Number(meta.a),toAyah:Number(meta.end)},
-        {confirm:{after:"next-word"}}
+        // Preserve SDK-default confidence: lowering it would increase false
+        // pronunciation warnings without teaching the model subtle vowels.
+        {confirm:{after:"next-word"},minConfidence:0.60}
       );
       const counts=Array.isArray(D.trackWordCounts)?D.trackWordCounts:[];
       const globalIndex=location=>{
@@ -1095,36 +1097,58 @@ export default function(component) {
       // but only mark it completed on a subsequent consecutive locked word.
       let pendingWord=-1;
       let stableHits=0;
+      let lastDisplayed=-1;
       const suspectWords=new Set();
       session.subscribe(event=>{
         if(!live||disposed||!event)return;
         if(event.type==="position"){
           if(event.state!=="locked")return;
-          // In declared-passage sessions the SDK's expected position is
-          // constrained to the chosen ayahs. Observed candidates can refer
-          // to similar Quran phrases in other verses.
-          const expectedLocation=event.expected;
-          const observedLocation=event.observed?.[0]?.word;
-          const target=globalIndex(expectedLocation)>=0
-            ? expectedLocation : observedLocation;
+          const candidates=Array.isArray(event.observed)?event.observed:[];
+          // Prefer the actually observed Quran word. The memorization
+          // session's expected position can get ahead of the reciter and is
+          // not independent evidence of what was pronounced.
+          const candidate=candidates.find(c=>globalIndex(c?.word)>=0);
+          const target=candidate?.word;
           const idx=globalIndex(target);
           if(idx<0){
-            setStatus("Quran listener is looking for a stable match inside the selected passage...","active");
+            setStatus("Quran listener is listening · waiting for a recognised word in the selected passage","active");
+            return;
+          }
+          const confidence=Number(candidate?.confidence);
+          const cleanLength=normalized(words[idx].ar||"").length;
+          const shortWord=cleanLength<=3;
+          const threshold=shortWord?0.62:0.48;
+          if(Number.isFinite(confidence)&&confidence<threshold){
+            micMessage.textContent="Short or similar-sounding phrase is uncertain (model confidence "+
+              Math.round(confidence*100)+"%). Repeat slowly; this is not a Tajweed verdict.";
+            setStatus("Waiting for a stronger match before moving the word highlight...","active");
             return;
           }
           if(idx===pendingWord){
             stableHits++;
           }else{
+            // Count the previous word only after a *subsequent* clear position.
+            // Very short words require two consistent locks first; this
+            // reduces false completion when a brief vowel sounds similar.
+            const previousShort=pendingWord>=0 &&
+              normalized(words[pendingWord].ar||"").length<=3;
             if(pendingWord>=0 && idx===pendingWord+1 &&
-               stableHits>=1 && !suspectWords.has(pendingWord)){
-              mark(pendingWord,true);  // a completed position, NOT sound correctness
+               stableHits>=(previousShort?2:1) &&
+               !suspectWords.has(pendingWord)){
+              mark(pendingWord,true);
             }
             pendingWord=idx;
             stableHits=1;
           }
-          mark(idx,false);  // highlight current word without revealing/certifying it
+          mark(idx,false);
+          if(idx!==lastDisplayed){
+            lastDisplayed=idx;
+            micMessage.textContent=shortWord
+              ?"Short word detected · waiting for enough context to confirm passage progress; exact vowels remain unchecked."
+              :"Quran word position detected · fine articulation and Tajweed remain unchecked.";
+          }
           setStatus("Following ayah "+target.ayah+", word "+target.word+
-            " · position only; vowels and articulation are not verified","active");
+            " · observed audio position only, not a pronunciation grade","active");
         }else if(event.type==="checker"&&event.state==="confirmed"){
           const idx=globalIndex(event.location);
           if(idx>=0){
