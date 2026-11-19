@@ -37,7 +37,7 @@ const createPrayerRoomScene=async(canvas,options)=>{
   sceneCalls++;lastScene=options;
   return {start(){},stop(){sceneStopped++},dispose(){sceneDisposed++}};
 };
-const make=new Function("createPrayerRoomScene",src+"\\nreturn attachPrayerRoom;")(createPrayerRoomScene);
+const make=new Function("createPrayerRoomScene",src+"\nreturn attachPrayerRoom;")(createPrayerRoomScene);
 const ui={
   stage:new Element("div"),
   main:new Element("div"),tabs:new Element("div"),tabBtns:{},CE,btn,append,
