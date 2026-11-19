@@ -5,6 +5,8 @@ All user data is passed as structured JSON through data; never interpolate
 user input into HTML, CSS or JavaScript source.
 """
 from pathlib import Path
+import logging
+import sqlite3
 import time
 
 import streamlit as st
@@ -31,6 +33,18 @@ _studio = st.components.v2.component(
     js=_STUDIO_JS,
     isolate_styles=True,
 )
+
+# Last working reader build. If an R6 Python component API incompatibility
+# occurs, the Quran reader should remain usable while the error is logged.
+_r5_source = (_ROOT / "studio_r5_recovery.js").read_text(encoding="utf-8")
+_recovery = st.components.v2.component(
+    "al_muallim_studio_r5_recovery_20261119",
+    html='<div class="am-mount"></div>',
+    css=(_ROOT / "studio.css").read_text(encoding="utf-8"),
+    js=_r5_source,
+    isolate_styles=True,
+)
+_LOG = logging.getLogger(__name__)
 
 
 def render_studio(
@@ -60,7 +74,20 @@ def render_studio(
         if x in {"good", "review"}
     )
     key = f"studio_r6_{meta['s']}_{meta['a']}_{meta['end']}"
-    room_data = get_room_state(profile)
+    try:
+        room_data = get_room_state(profile)
+    except (TypeError, ValueError, sqlite3.Error, OSError) as exc:
+        _LOG.exception("R6 Prayer Room storage failed during profile load")
+        st.warning(
+            "Prayer Room storage encountered a startup problem. "
+            "The Qur'an reader can still be used. Error type: "
+            + type(exc).__name__ + "."
+        )
+        room_data = {
+            "xp": int(meta.get("xp", 0) or 0),
+            "coins": 0, "streak": int(meta.get("streak", 0) or 0),
+            "owned": [], "equipped": {}, "items": [],
+        }
     last_study_tab = st.session_state.get("_am_studio_active_tab")
     cloud_session = st.session_state.get("_am_live_cloud_session")
     cloud_view = st.session_state.get("_am_live_cloud_view", {})
@@ -97,13 +124,41 @@ def render_studio(
         "letterResults": (review or {}).get("letter_results", {}),
         "wordFeedback": (review or {}).get("word_feedback", {}),
     }
-    result = _studio(
-        data=data,
-        key=key,
-        on_request_cloud_change=lambda: None,
-        on_room_action_change=lambda: None,
-    )
-    room_action = result.get("room_action")
+    # A component/serialization TypeError is not allowed to take down the
+    # entire Quran classroom. Preserve the exact exception in Streamlit logs.
+    fallback = False
+    try:
+        result = _studio(
+            data=data,
+            key=key,
+            on_request_cloud_change=lambda: None,
+            on_room_action_change=lambda: None,
+        )
+    except (TypeError, ValueError, RuntimeError) as exc:
+        fallback = True
+        _LOG.exception("R6 component could not mount; recovering previous reader")
+        st.warning(
+            "The new Prayer Room component could not start "
+            "(" + type(exc).__name__ + "). "
+            "The earlier Qur'an reader has been restored below while "
+            "the room is repaired."
+        )
+        st.caption(
+            "Technical message (no credentials): "
+            + str(exc).replace("\n", " ")[:200]
+        )
+        recovery_data = {
+            field: value for field, value in data.items()
+            if field not in ("room", "roomMessage")
+        }
+        result = _recovery(
+            data=recovery_data,
+            key="studio_r5_recovery_"
+                + str(meta["s"]) + "_" + str(meta["a"])
+                + "_" + str(meta["end"]),
+            on_request_cloud_change=lambda: None,
+        )
+    room_action = None if fallback else result.get("room_action")
     if isinstance(room_action, dict):
         action_id = str(room_action.get("id", ""))[:90]
         if action_id and action_id != st.session_state.get("_am_last_room_action"):
