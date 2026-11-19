@@ -57,6 +57,6 @@ def room_prayer_times(city: str = "London") -> dict:
         "method": "MWL (approximate)",
         "times": current,
         "available": bool(current),
-        "note": ("Indicative city-level times, not a local mosque timetable."
+        "note": ("Approximate city-level times for ambience, not a local mosque timetable."
                  if current else "Prayer times unavailable; automatic ambience follows approximate local daylight instead."),
     }
