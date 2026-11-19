@@ -21,15 +21,15 @@ export default function(component) {
   append(brandText,CE("strong","", "Al-Mu'allim"),CE("small","", "Your Qur'an companion"));
   append(brand,seal,brandText);
   const headRight=CE("div","am-head-right");
-  const versionChip=CE("span","am-chip","Window Lounge · R7");
-  versionChip.setAttribute("title","Build 2026-11-19 R7 · panoramic prayer lounge and prayer-time ambience");
+  const versionChip=CE("span","am-chip","Noor Hifdh · R8");
+  versionChip.setAttribute("title","Build 2026-11-19 R8 · focused word highlighting, Noor Hifdh planner and immersive rain");
   append(headRight,
     versionChip,
     CE("span","am-chip","✧ "+String(meta.xp||0)+" XP"),
     CE("span","am-chip","✺ "+String(meta.streak||0)+" day streak"));
   append(header,brand,headRight);
   const app=CE("section","am-app");
-  app.dataset.build="quran-listener-r7-window-lounge-20261119";
+  app.dataset.build="quran-listener-r8-hifdh-20261119";
   app.appendChild(header);
   root.appendChild(app);
   const tabs=CE("div","am-tabs");
@@ -233,6 +233,10 @@ export default function(component) {
     onNavigate:(page)=>selectTab(page),
     getCurrentTab:()=>currentTab,
   });
+  const journeyPlanner=attachHifdhJourney(component,D,{
+    panel:journeyPanel,stage,CE,btn,append,tabBtns,
+    navigate:(page)=>selectTab(page),
+  });
   const footer=CE("footer","am-footer","");
   footer.appendChild(CE("strong","", "Al-Mu'allim"));
   footer.appendChild(document.createTextNode(" · QuranLife/EveryAyah word timings (CC BY 4.0) · AI practice observations are not certified Tajweed assessments."));
@@ -433,6 +437,7 @@ export default function(component) {
     const journey=tab==="journey",room=tab==="room";
     prayerRoom.setVisible(room);
     prayerRoom.setPracticeMode(tab);
+    journeyPlanner.setVisible(journey);
     layout.hidden=journey||room;
     journeyPanel.hidden=!journey;
     hero.hidden=journey||room;
@@ -670,13 +675,14 @@ export default function(component) {
     // Avoid repainting every Arabic word 60 times per second on iPad.
     const displayKey=ayah+":"+index+":"+(smartHasRepeat?"repeat":"timed")+
       ":"+Boolean(segments);
-    if(displayKey+":"+(currentTab==="listen"&&!audio.paused)===lastPlaybackUiKey
+    if(displayKey+":"+((currentTab==="read"||currentTab==="listen")&&!audio.paused)===lastPlaybackUiKey
        && playbackTimingWarning===playbackReason)return;
-    lastPlaybackUiKey=displayKey+":"+(currentTab==="listen"&&!audio.paused);
+    lastPlaybackUiKey=displayKey+":"+((currentTab==="read"||currentTab==="listen")&&!audio.paused);
     // Critical: never colour an entire ayah as though every word is active.
     // Only show audio-following while playback is actually active in Listen.
     // Reader/Memorise words must not change merely because metadata loaded.
-    const followAudio=currentTab==="listen"&&!audio.paused&&!audio.ended;
+    const followAudio=(currentTab==="read"||currentTab==="listen")
+      &&!audio.paused&&!audio.ended;
     wordNodes.forEach((el,i)=>{
       el.classList.toggle("am-active",followAudio&&index>=0&&i===index);
       el.classList.remove("am-ayah-playing","am-confirmed");
@@ -714,7 +720,7 @@ export default function(component) {
   audio.onplay=startPlaybackFollow;
   audio.onpause=()=>{
     stopPlaybackFollow();
-    if(currentTab==="listen"){
+    if(currentTab==="listen"||currentTab==="read"){
       wordNodes.forEach(el=>el.classList.remove("am-active","am-ayah-playing"));
       lastPlaybackUiKey="";
     }
@@ -1313,6 +1319,7 @@ export default function(component) {
   }
   return ()=>{
     prayerRoom.dispose();
+    journeyPlanner.dispose();
     live=false;clearTimers();
     try{if(cleanupLive)void cleanupLive()}catch(_){}
     try{audio.pause()}catch(_){}
