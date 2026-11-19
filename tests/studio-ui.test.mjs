@@ -64,7 +64,7 @@ const testWords=[
   {ar:"اضْرِبْ",en:"Strike",tr:"idrib",ayah:60,letters:[]},
   {ar:"الْحَجَرَ",en:"The stone",tr:"al-hajara",ayah:60,letters:[]}
 ];
-async function fixture(mode){
+async function fixture(mode,overrides={},startListening=true){
   let callback,prepared=0,listenCount=0,stopCount=0;
   const mockSdk={
     prepareMicrophone(){
@@ -92,7 +92,8 @@ async function fixture(mode){
   const data={
     mode,cloudAvailable:true,meta:{s:2,a:60,end:60,xp:0,streak:0},
     words:testWords,trackWordCounts:[3],audio:[],segments:[],
-    surahEnglish:"Al-Baqarah",reciter:"Yasser"
+    surahEnglish:"Al-Baqarah",reciter:"Yasser",
+    ...overrides
   };
   const dispose=create({parentElement:mount,data,setTriggerValue(){}});
   for(let i=0;i<12;i++)await Promise.resolve();
@@ -100,10 +101,12 @@ async function fixture(mode){
   assert.ok(start,"direct microphone start exists");
   const select=nodes(mount).find(x=>x.tag==="select");
   assert.equal(select.value,"local","Quran listener selected rather than browser dictation");
-  await start.onclick();
-  assert.equal(prepared,1,"Safari microphone prepared on the real tap");
-  assert.equal(listenCount,1,"SDK listen() invoked");
-  assert.ok(callback,"received SDK position subscription");
+  if(startListening){
+    await start.onclick();
+    assert.equal(prepared,1,"Safari microphone prepared on the real tap");
+    assert.equal(listenCount,1,"SDK listen() invoked");
+    assert.ok(callback,"received SDK position subscription");
+  }
   return {mount,callback,dispose,getStopCount:()=>stopCount};
 }
 
@@ -139,4 +142,33 @@ async function fixture(mode){
     "reading mode does not insert duplicate Arabic text");
   x.dispose();
 }
-console.log("PASS: R3 build; Quran SDK imports; microphone gesture; read highlighting; gated delayed memory reveal; verse filtering.");
+{
+  const segments = [
+    {ayah:60,word_idx:0,start:0,end:1000},
+    {ayah:60,word_idx:1,start:1000,end:2000},
+    {ayah:60,word_idx:2,start:2000,end:3000},
+  ];
+  const x=await fixture("full",{audio:["https://everyayah.com/data/test/002060.mp3"],segments},false);
+  const a=nodes(x.mount).find(node=>node.tag==="audio");
+  assert.ok(a,"audio player exists");
+  a.duration=3;a.currentTime=1.5;
+  a.ontimeupdate();
+  const words=nodes(x.mount).filter(n=>n.className.split(" ").includes("am-word"));
+  assert.match(words[1].className,/am-active/,"aligned reciter highlight follows true second-word timestamp");
+  assert.equal(words.filter(n=>n.className.includes("am-active")).length,1);
+  a.currentTime=2.5;a.ontimeupdate();
+  assert.match(words[2].className,/am-active/,"aligned reciter highlight advances with audio time");
+  x.dispose();
+}
+{
+  const x=await fixture("full",{audio:["https://everyayah.com/data/test/002060.mp3"],segments:[]},false);
+  const audio=nodes(x.mount).find(node=>node.tag==="audio");
+  audio.duration=3;audio.currentTime=1.6;audio.ontimeupdate();
+  const words=nodes(x.mount).filter(n=>n.className.split(" ").includes("am-word"));
+  assert.equal(words.filter(n=>n.className.includes("am-active")).length,0,
+    "missing timings must NOT produce a guessed active word");
+  assert.equal(words.filter(n=>n.className.includes("am-ayah-playing")).length,3,
+    "without word data, highlight only the actual ayah");
+  x.dispose();
+}
+console.log("PASS: R3 SDK events, delayed memorisation reveal, and source-matched reciter timing without guesswork.");
