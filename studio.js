@@ -442,6 +442,111 @@ export default function(component) {
   // *same* reciter and audio file. Never invent word positions by text length.
   let playbackFrame=null;
   let playbackTimingWarning="";
+  // Analyse the *actual MP3 samples* using the Quran-specific speech model.
+  // A 1-time mapping from recording milliseconds to observed Quran words can
+  // contain 4,5,6,4,5 when the sheikh repeats a phrase. Static word timings
+  // cannot represent this because each expected word appears only once.
+  async function buildAudioAwareTrack(verseIndex){
+    const encoded=inlineAudio[verseIndex];
+    const ayah=Number(meta.a)+verseIndex;
+    if(typeof encoded!=="string"||encoded.length<512){
+      smartAudioErrors.set(verseIndex,"This clip is too long or unavailable for local repeat recognition.");
+      return;
+    }
+    if(live)return;  // microphone should have priority on limited iPad CPU
+    let ctx=null,session=null;
+    try{
+      repeatHelp.textContent="Preparing Quran-aware listening for "+meta.s+":"+ayah+
+        " · reciter playback still uses verified-source timings.";
+      const engine=await ensureQuranEngine("reciter");
+      if(live)return;
+      const AudioContextClass=window.AudioContext||window.webkitAudioContext;
+      if(!AudioContextClass)throw Error("This browser cannot decode recitation for analysis.");
+      ctx=new AudioContextClass();
+      const bytes=Uint8Array.from(atob(encoded),ch=>ch.charCodeAt(0));
+      const buffer=await ctx.decodeAudioData(bytes.buffer.slice(0));
+      const duration=buffer.duration;
+      if(!Number.isFinite(duration)||duration>120||duration<0.4)
+        throw Error("The clip exceeds the analysis duration limit.");
+      const left=buffer.getChannelData(0);
+      let mono=left;
+      if(buffer.numberOfChannels>1){
+        const right=buffer.getChannelData(1);
+        mono=new Float32Array(left.length);
+        for(let i=0;i<left.length;i++)mono[i]=(left[i]+right[i])*0.5;
+      }
+      const sourceRate=buffer.sampleRate;
+      session=engine.startFreeRecitation({minConfidence:0.60});
+      const locations=[];
+      const countForAyah=words.reduce((sum,w)=>sum+(Number(w.ayah)===ayah?1:0),0);
+      let base=words.findIndex(w=>Number(w.ayah)===ayah);
+      const validLocation=location=>{
+        if(Number(location?.surah)!==Number(meta.s)||Number(location?.ayah)!==ayah)return -1;
+        const wi=Number(location?.word);
+        return Number.isInteger(wi)&&wi>=1&&wi<=countForAyah?base+wi-1:-1;
+      };
+      session.subscribe(event=>{
+        if(event?.type!=="position"||event.state!=="locked")return;
+        const possible=(Array.isArray(event.observed)?event.observed:[])
+          .filter(candidate=>validLocation(candidate.word)>=0);
+        if(!possible.length)return;
+        const candidate=possible[0];
+        const word=validLocation(candidate.word);
+        const confidence=Number(candidate.confidence);
+        if(Number.isFinite(confidence)&&confidence<0.48)return;
+        const timeMs=Number(event.timeMs);
+        if(!Number.isFinite(timeMs)||timeMs<0||timeMs>duration*1000+800)return;
+        const previous=locations[locations.length-1];
+        if(previous?.word===word && timeMs-previous.timeMs<800)return;
+        const repeated=Boolean(previous&&word<previous.word);
+        locations.push({word,timeMs:Math.round(timeMs),repeat:repeated});
+      });
+      const chunkSamples=Math.max(2048,Math.floor(sourceRate*.32));
+      for(let start=0;start<mono.length;start+=chunkSamples){
+        if(engineAbort.signal.aborted||live||!repeatAwareEnabled)return;
+        const part=mono.subarray(start,Math.min(start+chunkSamples,mono.length));
+        await session.pushAudio(part,sourceRate);
+        if((Math.floor(start/chunkSamples)%12)===0){
+          repeatHelp.textContent="Analysing "+meta.s+":"+ayah+" for repeated words · "+
+            Math.round(start/mono.length*100)+"% · normal playback remains available";
+          await new Promise(resolve=>setTimeout(resolve,0));
+        }
+      }
+      await session.end();
+      if(!locations.length){
+        throw Error("The recogniser did not locate enough Quran words to build an audio-aware timeline.");
+      }
+      locations.sort((a,b)=>a.timeMs-b.timeMs);
+      const backwardCount=locations.filter(x=>x.repeat).length;
+      const distinct=new Set(locations.map(x=>x.word)).size;
+      if(distinct<2)throw Error("Too few distinct words were recognised.");
+      smartAudioTracks.set(verseIndex,locations);
+      repeatHelp.textContent=backwardCount
+        ? "Repeat-aware alignment ready for "+meta.s+":"+ayah+
+          " · "+backwardCount+" backwards phrase movement(s) detected"
+        : "Quran model did not confirm a repeat in "+meta.s+":"+ayah+
+          " · source-matched word timing stays active";
+      showPlaybackPosition();
+    }catch(e){
+      const message=String(e?.message||e).slice(0,190);
+      smartAudioErrors.set(verseIndex,message);
+      repeatHelp.textContent="Repeat-aware analysis unavailable ("+message+
+        "). Existing reciter playback remains available.";
+    }finally{
+      try{session?.dispose()}catch(_){}
+      try{await ctx?.close()}catch(_){}
+    }
+  }
+  function requestAudioAwareFollowing(verseIndex){
+    if(!repeatAwareEnabled||live||smartAudioTracks.has(verseIndex)||
+       smartAudioErrors.has(verseIndex))return Promise.resolve();
+    if(audioAnalysisPending.has(verseIndex))return audioAnalysisPending.get(verseIndex);
+    const job=audioAnalysisQueue.then(()=>buildAudioAwareTrack(verseIndex));
+    audioAnalysisPending.set(verseIndex,job);
+    audioAnalysisQueue=job.catch(()=>{});
+    job.finally(()=>{audioAnalysisPending.delete(verseIndex)}).catch(()=>{});
+    return job;
+  }
   repeatBtn.onclick=()=>{
     repeatAwareEnabled=!repeatAwareEnabled;
     repeatBtn.classList.toggle("am-on",repeatAwareEnabled);
@@ -486,7 +591,8 @@ export default function(component) {
     const smart=repeatAwareEnabled?smartAudioTracks.get(playingIndex):null;
     let index=-1;
     let playbackReason=reason;
-    if(smart?.length){
+    const smartHasRepeat=Boolean(smart?.some(item=>item.repeat));
+    if(smart?.length && (smartHasRepeat || !segments)){
       const now=Math.max(0,Number(audio.currentTime)||0)*1000;
       // Preserve deliberate backward movements when the sheikh repeats words.
       let lo=0,hi=smart.length;
