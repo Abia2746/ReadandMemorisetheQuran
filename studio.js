@@ -272,6 +272,7 @@ export default function(component) {
   // A locked position only establishes that individual word. Never reveal
   // all intervening Arabic words after a skip, seek or erroneous match.
   const confirmedIndices=new Set();
+  const flaggedIndices=new Set();
   let wordNodes=[];
   let live=false,starting=false,cleanupLive=null,recognition=null;
   let meterAnimation=0,micStream=null,micContext=null;
@@ -356,6 +357,7 @@ export default function(component) {
     currentWord=index;
     if(confirm){
       confirmedIndices.add(index);
+      flaggedIndices.delete(index);
       confirmedWord=Math.max(confirmedWord,index);
     }
     wordNodes.forEach((el,i)=>{
@@ -363,6 +365,7 @@ export default function(component) {
       // Recording progress is kept in state; multiple completed words do not
       // receive permanent background highlights, in either Read or Memorise.
       el.classList.toggle("am-confirmed",confirmedIndices.has(i));
+      el.classList.toggle("am-review",flaggedIndices.has(i));
       el.classList.remove("am-ayah-playing");
       // Memorisation begins with English-only clues. Confirmed words reveal
       // their actual Arabic text progressively as the learner recites.
@@ -448,6 +451,7 @@ export default function(component) {
       // Completed words can reveal Arabic in Cover, but are not all gold.
       if(i===currentWord&&live)el.classList.add("am-active");
       if(confirmedIndices.has(i))el.classList.add("am-confirmed");
+      if(flaggedIndices.has(i))el.classList.add("am-review");
       if(cover && confirmedIndices.has(i)){
         el.appendChild(CE("span","am-revealed-ar",w.ar||""));
       }
@@ -510,7 +514,7 @@ export default function(component) {
   }
   toggleHint.onclick=()=>{showHints=!showHints;renderWords()};
   toggleColour.onclick=()=>{showTajweed=!showTajweed;renderWords()};
-  resetBtn.onclick=()=>{currentWord=-1;confirmedWord=-1;confirmedIndices.clear();lastPlaybackUiKey="";progressFill.style.width="0%";setStatus("Ready to practise from the beginning.");transcript.textContent="";renderWords()};
+  resetBtn.onclick=()=>{currentWord=-1;confirmedWord=-1;confirmedIndices.clear();flaggedIndices.clear();lastPlaybackUiKey="";progressFill.style.width="0%";setStatus("Ready to practise from the beginning.");transcript.textContent="";renderWords()};
   recordHint.onclick=()=>{
     micPanel.scrollIntoView({behavior:"smooth",block:"center"});
     // Start capture from the original tap, preserving the iPad user gesture.
@@ -860,8 +864,21 @@ export default function(component) {
       }
       let idx=-1;
       if(final.trim()){
-        idx=match(final,cursor);
-        if(idx>=0){mark(idx,true);cursor=Math.max(cursor,idx+1)}
+        // Final browser transcripts can contain multiple words per event.
+        // Confirm consecutive words individually instead of jumping ahead.
+        const tokens=normalized(final).split(" ").filter(Boolean);
+        for(const token of tokens){
+          const target=expected[cursor];
+          if(!target)break;
+          if(token===target||(token.length>=5&&target.length>=5&&distance(token,target)<=1)){
+            mark(cursor,true);
+            idx=cursor;
+            cursor++;
+          }else{
+            coach("↶ Please repeat the next word clearly.","guide");
+            break;
+          }
+        }
       }
       if(interim.trim()){
         const guess=match(interim,cursor);
@@ -1295,6 +1312,7 @@ export default function(component) {
           const idx=globalIndex(event.location);
           if(idx>=0){
             suspectWords.add(idx);
+            flaggedIndices.add(idx);
             confirmedIndices.delete(idx);
             renderWords();
             wordNodes[idx]?.classList.add("am-review");
