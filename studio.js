@@ -268,7 +268,7 @@ export default function(component) {
   let currentTab=["read","cover","room","listen","journey"].includes(D.resumeTab)
     ?D.resumeTab:(D.mode==="blind"?"cover":"read");
   let showHints=false,showTajweed=false;
-  let currentWord=-1,confirmedWord=Number.isInteger(D.resumeWord)?Math.max(-1,Math.min(words.length-1,D.resumeWord)):-1;
+  let currentWord=-1,confirmedWord=-1; // A fresh live session must establish its own word evidence.
   // A locked position only establishes that individual word. Never reveal
   // all intervening Arabic words after a skip, seek or erroneous match.
   const confirmedIndices=new Set();
@@ -825,6 +825,7 @@ export default function(component) {
     micButton.textContent="🎙 Start listening";
     micButton.classList.remove("am-danger");
     micButton.classList.add("am-primary");
+    wordNodes.forEach(el=>el.classList.remove("am-active"));
     setStatus("Listening stopped.");
     coaching.hidden=true;
   }
