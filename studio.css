@@ -193,3 +193,9 @@
 .am-build-stamp{font:500 11px/1.4 system-ui,sans-serif;letter-spacing:.025em;
 color:#a7b2a4;opacity:.8;text-align:right;padding:4px 12px 2px;
 pointer-events:none;direction:ltr}
+
+/* Explicitly selected practice phrase: distinct from recognition confidence. */
+.am-word.am-practice-selected{outline:2px solid #b28a42;outline-offset:3px;border-radius:5px}
+.am-word.am-practice-flag{text-decoration:underline dotted #c28b49;text-underline-offset:5px}
+.am-rescue-panel .am-note{color:#4b4336!important}
+.am-rescue-panel .am-control-row{gap:8px;flex-wrap:wrap}
