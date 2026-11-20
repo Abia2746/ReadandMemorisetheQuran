@@ -390,7 +390,7 @@ function attachPrayerRoom(component, D, ui){
       preview.onclick=()=>{
         previewItem=item;
         previewNote.hidden=false;
-        previewNote.textContent="Previewing "+item.name+" in your 3D room · this does not spend coins.";
+        previewNote.textContent="Previewing "+item.name+" in your 3D room · no coins spent. Tap Restore view to return to your saved room.";
         void buildScene();
       };
       actions.appendChild(preview);
