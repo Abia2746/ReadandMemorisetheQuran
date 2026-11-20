@@ -28,6 +28,7 @@ _STUDIO_JS = (
     (_ROOT / "prayer_room_lounge_scene.js").read_text(encoding="utf-8")
     + "\n" + (_ROOT / "prayer_room_ui.js").read_text(encoding="utf-8")
     + "\n" + (_ROOT / "hifdh_planner_ui.js").read_text(encoding="utf-8")
+    + "\n" + (_ROOT / "studio_locales.js").read_text(encoding="utf-8")
     + "\n" + (_ROOT / "studio.js").read_text(encoding="utf-8")
 )
 
