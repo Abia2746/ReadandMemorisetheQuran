@@ -362,7 +362,7 @@ export default function(component) {
       el.classList.toggle("am-active",i===index);
       // Recording progress is kept in state; multiple completed words do not
       // receive permanent background highlights, in either Read or Memorise.
-      el.classList.toggle("am-confirmed",live&&confirmedIndices.has(i));
+      el.classList.toggle("am-confirmed",confirmedIndices.has(i));
       el.classList.remove("am-ayah-playing");
       // Memorisation begins with English-only clues. Confirmed words reveal
       // their actual Arabic text progressively as the learner recites.
@@ -446,7 +446,8 @@ export default function(component) {
       el.addEventListener("keydown",e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();view()}});
       // Only the single actively followed word is visually highlighted.
       // Completed words can reveal Arabic in Cover, but are not all gold.
-      if(i===currentWord)el.classList.add("am-active");
+      if(i===currentWord&&live)el.classList.add("am-active");
+      if(confirmedIndices.has(i))el.classList.add("am-confirmed");
       if(cover && confirmedIndices.has(i)){
         el.appendChild(CE("span","am-revealed-ar",w.ar||""));
       }
@@ -493,7 +494,7 @@ export default function(component) {
     // Switching between Read, Memorise and Listen resets stale playback
     // highlights. Only an actively playing reciter or mic can mark a word.
     lastPlaybackUiKey="";
-    currentWord=-1;
+    if(!live)currentWord=-1;
     sectionHeading.textContent=tab==="cover"?"Memorise with meaning":tab==="listen"?"Listen and follow":"The Noble Qur'an";
     micPanel.hidden=tab==="listen";
     toggleHint.hidden=tab==="listen";
@@ -1260,23 +1261,27 @@ export default function(component) {
             setStatus("Waiting for a stronger match before moving the word highlight...","active");
             return;
           }
+          // Only the NEXT word in the selected passage can advance progress.
+          // A stable repeated lock confirms it immediately; if the next
+          // word begins first, confirm the previous observed word then follow.
           if(idx===pendingWord){
             stableHits++;
-          }else{
-            // Count the previous word only after a *subsequent* clear position.
-            // Very short words require two consistent locks first; this
-            // reduces false completion when a brief vowel sounds similar.
-            const previousShort=pendingWord>=0 &&
-              normalized(words[pendingWord].ar||"").length<=3;
-            if(pendingWord>=0 && idx===pendingWord+1 &&
-               stableHits>=(previousShort?2:1) &&
-               !suspectWords.has(pendingWord)){
+          }else if(idx===pendingWord+1 && pendingWord===confirmedWord+1){
+            if(stableHits>=1 && !suspectWords.has(pendingWord)){
               mark(pendingWord,true);
             }
             pendingWord=idx;
             stableHits=1;
+          }else{
+            pendingWord=idx;
+            stableHits=1;
           }
-          mark(idx,false);
+          if(idx===confirmedWord+1){
+            mark(idx,false);
+            if(stableHits>=2 && !suspectWords.has(idx)){
+              mark(idx,true);
+            }
+          }
           if(idx!==lastDisplayed){
             lastDisplayed=idx;
             micMessage.textContent=shortWord
@@ -1292,6 +1297,7 @@ export default function(component) {
             confirmedIndices.delete(idx);
             renderWords();
             wordNodes[idx]?.classList.add("am-review");
+            coach("↶ A possible word mismatch was detected. Repeat this word carefully.","guide");
             micMessage.textContent="Possible memorisation issue at ayah "+
               words[idx].ayah+", word "+(idx+1)+": "+
               String(event.errorClass||"word mismatch")+
@@ -1322,6 +1328,7 @@ export default function(component) {
       if(disposed)return;
       micText.textContent="On-device Quran recognition active · no recitation audio sent to Gemini.";
       setStatus("Quran model listening. Begin reciting the displayed ayahs...","active");
+      coach("🎙 I’m listening. Start with the first word; Arabic will reveal as words are recognised.","guide");
     }catch(error){
       await cleanup();
       cleanupLive=null;
