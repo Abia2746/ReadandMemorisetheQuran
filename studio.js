@@ -284,6 +284,7 @@ export default function(component) {
   const userCorrected=new Set();
   let reviewRound=false;
   let revealIndex=-1;
+  let selectedPracticeWord=-1;
   let revealTimer=null;
 
   let wordNodes=[];
@@ -309,13 +310,15 @@ export default function(component) {
   const revealButton=btn("✦ Reveal phrase","am-button");
   const hearButton=btn("▶ Hear recitation","am-button");
   const correctButton=btn("✓ Recognition was wrong","am-button");
+  const flagButton=btn("⚑ Flag selected phrase","am-button");
   const roundButton=btn("↻ Review difficult words","am-button");
   const rescueText=CE("div","am-note","");
   rescueText.style.marginTop="8px";
-  append(rescueControls,revealButton,hearButton,correctButton,roundButton);
+  append(rescueControls,revealButton,hearButton,flagButton,correctButton,roundButton);
   append(rescuePanel,rescueHeading,rescueControls,rescueText);
   micPanel.appendChild(rescuePanel);
   function rescueTarget(){
+    if(selectedPracticeWord>=0&&selectedPracticeWord<words.length)return selectedPracticeWord;
     if(currentWord>=0&&currentWord<words.length)return currentWord;
     return Math.min(words.length-1,Math.max(0,confirmedWord+1));
   }
@@ -336,6 +339,25 @@ export default function(component) {
     clearTimeout(revealTimer);
     revealTimer=setTimeout(()=>{revealIndex=-1;rescueText.textContent="✦ Phrase hidden again. Try reciting from memory.";},16000);
   }
+  const selectedLabel=CE("div","am-note","Tap any Qur'an word above to select the exact phrase you want to practise.");
+  selectedLabel.style.margin="8px 0";
+  rescuePanel.insertBefore(selectedLabel,rescueControls);
+  function selectPracticeWord(i){
+    if(i<0||i>=words.length)return;
+    selectedPracticeWord=i;
+    selectedLabel.textContent="Selected · Ayah "+words[i].ayah+", word "+(i+1)+": "+words[i].ar;
+    wordNodes.forEach((el,j)=>el.classList.toggle("am-practice-selected",j===i));
+    rescueText.textContent="Choose Flag, Reveal or Hear for this selected phrase.";
+  }
+  flagButton.onclick=()=>{
+    const i=rescueTarget();
+    if(i<0)return;
+    selectedPracticeWord=i;
+    practiceReview.add(i);
+    selectedLabel.textContent="⚑ Saved · Ayah "+words[i].ayah+", word "+(i+1);
+    wordNodes[i]?.classList.add("am-practice-flag");
+    rescueText.textContent="Saved for your difficult-phrase review. This is your own practice flag, not a pronunciation error.";
+  };
   revealButton.onclick=()=>{const i=rescueTarget();practiceReview.add(i);showRescue(i)};
   hearButton.onclick=()=>{
     const i=rescueTarget(),w=words[i];if(!w)return;
@@ -350,7 +372,7 @@ export default function(component) {
   correctButton.onclick=()=>{
     const i=rescueTarget();if(i<0)return;
     userCorrected.add(i);flaggedIndices.delete(i);practiceReview.delete(i);confirmedIndices.add(i);
-    wordNodes[i]?.classList.remove("am-review","am-uncertain");
+    wordNodes[i]?.classList.remove("am-review","am-uncertain","am-practice-flag");
     wordNodes[i]?.classList.add("am-confirmed");
     rescueText.textContent="✓ Marked as recognised by you. This corrects the practice record; it does not verify Tajweed.";
   };
@@ -522,7 +544,7 @@ export default function(component) {
         el.textContent=w.ar||"";
         el.setAttribute("aria-label","Study Arabic word "+(w.tr||String(i+1)));
       }
-      const view=()=>{if(cover)showIndividualHint(i);else openWord(i)};
+      const view=()=>{selectPracticeWord(i);if(cover)showIndividualHint(i);else openWord(i)};
       el.addEventListener("click",view);
       el.addEventListener("keydown",e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();view()}});
       // Only the single actively followed word is visually highlighted.
@@ -530,6 +552,8 @@ export default function(component) {
       if(i===currentWord&&live)el.classList.add("am-active");
       if(confirmedIndices.has(i))el.classList.add("am-confirmed");
       if(flaggedIndices.has(i))el.classList.add("am-review");
+      if(practiceReview.has(i))el.classList.add("am-practice-flag");
+      if(selectedPracticeWord===i)el.classList.add("am-practice-selected");
       if(cover && confirmedIndices.has(i)){
         el.appendChild(CE("span","am-revealed-ar",w.ar||""));
       }
