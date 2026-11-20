@@ -20,28 +20,63 @@ class QuranVerse {
 
 class QuranService {
   static Future<List<QuranVerse>> fetchVerses(int surah) async {
-    final uri = Uri.https('api.quran.com', '/api/v4/verses/by_chapter/$surah', {
-      'language': 'en',
-      'words': 'true',
-      'word_fields': 'text_uthmani,translation',
-      'per_page': '50',
-      'page': '1',
-    });
-    final response = await http.get(uri).timeout(const Duration(seconds: 18));
-    if (response.statusCode != 200) throw Exception('Qur’an service unavailable');
-    final data = jsonDecode(response.body) as Map<String, dynamic>;
-    final verses = (data['verses'] as List<dynamic>? ?? []);
-    return verses.map((raw) {
-      final v = raw as Map<String, dynamic>;
-      final words = (v['words'] as List<dynamic>? ?? []).cast<Map<String, dynamic>>()
-          .where((w) => w['char_type_name'] == 'word')
-          .map((w) => QuranWord(
-                (w['text_uthmani'] ?? '').toString(),
-                ((w['translation'] as Map?)?['text'] ?? '').toString(),
-                (w['position'] as num?)?.toInt() ?? 0,
-              )).toList();
-      return QuranVerse((v['verse_number'] as num?)?.toInt() ?? 0, words);
-    }).toList();
+    if (surah < 1 || surah > 114) throw ArgumentError.value(surah, 'surah');
+    final results = <QuranVerse>[];
+    final seen = <int>{};
+    int page = 1;
+    int? totalPages;
+    while (true) {
+      if (page > 20) throw const FormatException('Unexpected Qur’an pagination length');
+      final uri = Uri.https('api.quran.com', '/api/v4/verses/by_chapter/$surah', {
+        'language': 'en',
+        'words': 'true',
+        'word_fields': 'text_uthmani,translation',
+        'per_page': '50',
+        'page': '$page',
+      });
+      final response = await http.get(uri).timeout(const Duration(seconds: 18));
+      if (response.statusCode != 200) {
+        throw Exception('Qur’an service unavailable (HTTP ${response.statusCode})');
+      }
+      final data = jsonDecode(response.body);
+      if (data is! Map<String, dynamic>) throw const FormatException('Invalid Qur’an response');
+      final rawVerses = data['verses'];
+      if (rawVerses is! List || rawVerses.isEmpty) {
+        throw const FormatException('Missing Qur’an verses');
+      }
+      for (final raw in rawVerses) {
+        if (raw is! Map<String, dynamic>) throw const FormatException('Invalid verse');
+        final number = (raw['verse_number'] as num?)?.toInt();
+        if (number == null || number != results.length + 1 || !seen.add(number)) {
+          throw const FormatException('Missing, duplicate or out-of-order verse');
+        }
+        final rawWords = raw['words'];
+        if (rawWords is! List) throw const FormatException('Missing word data');
+        final words = <QuranWord>[];
+        for (final item in rawWords) {
+          if (item is! Map<String, dynamic> || item['char_type_name'] != 'word') continue;
+          final arabic = (item['text_uthmani'] ?? '').toString();
+          if (arabic.trim().isEmpty) throw const FormatException('Empty Qur’an word');
+          final translation = item['translation'];
+          words.add(QuranWord(
+            arabic,
+            translation is Map ? (translation['text'] ?? '').toString() : '',
+            (item['position'] as num?)?.toInt() ?? words.length + 1,
+          ));
+        }
+        if (words.isEmpty) throw const FormatException('Verse has no words');
+        results.add(QuranVerse(number, words));
+      }
+      final pagination = data['pagination'];
+      if (pagination is! Map) throw const FormatException('Missing pagination metadata');
+      totalPages ??= (pagination['total_pages'] as num?)?.toInt();
+      if (totalPages == null || totalPages < 1 || totalPages > 20) {
+        throw const FormatException('Invalid pagination metadata');
+      }
+      if (page >= totalPages) break;
+      page++;
+    }
+    return results;
   }
 }
 
