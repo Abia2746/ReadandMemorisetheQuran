@@ -251,21 +251,22 @@ async function createPrayerRoomScene(canvas,config={}){
     return x-Math.floor(x);
   };
   const floorTex=texture("Walnut grain and fine-cut parquet",512,512,(g,w,h)=>{
-    const stone=equipped.floor==="floor_travertine";
-    g.fillStyle=stone?"#d2bfa7":"#927258";g.fillRect(0,0,w,h);
+    const stone=["floor_travertine","floor_marble","floor_onyx"].includes(equipped.floor);
+    const pearl=equipped.floor==="floor_marble",onyx=equipped.floor==="floor_onyx";
+    g.fillStyle=pearl?"#f0e9de":onyx?"#292d32":stone?"#d2bfa7":"#927258";g.fillRect(0,0,w,h);
     for(let row=0;row<16;row++){
       const yy=row*32;
       for(let col=0;col<6;col++){
         const xx=col*94-(row%2)*47;
         g.fillStyle=stone
-          ?(row+col)%2?"#d9c9b6":"#cdbba6"
+          ?pearl?((row+col)%2?"#f5efe6":"#e8dfd5"):onyx?((row+col)%2?"#363b42":"#252b30"):((row+col)%2?"#d9c9b6":"#cdbba6")
           :(row+col)%3===0?"#a98c70":(row+col)%3===1?"#957557":"#9f8062";
         g.fillRect(xx+1,yy+1,92,30);
       }
     }
     for(let i=0;i<280;i++){
       const x=noise(i)*w,y=noise(i+211)*h;
-      g.strokeStyle=stone?"rgba(80,69,56,.036)":"rgba(59,36,25,.10)";
+      g.strokeStyle=pearl?"rgba(117,115,112,.12)":onyx?"rgba(198,151,90,.25)":stone?"rgba(80,69,56,.036)":"rgba(59,36,25,.10)";
       g.lineWidth=.5+noise(i+8);
       g.beginPath();g.moveTo(x,y);g.bezierCurveTo(x+14,y-3,x+29,y+2,x+70,y);g.stroke();
     }
@@ -734,8 +735,9 @@ async function createPrayerRoomScene(canvas,config={}){
     const g=t.getContext();
     const midnight=equipped.rug==="rug_midnight";
     const jade=equipped.rug==="rug_emerald";
-    const base=midnight?"#263b4b":jade?"#3e695e":"#b79b7a";
-    const secondary=midnight?"#566980":jade?"#6e9b82":"#d0b795";
+    const rose=equipped.rug==="rug_rose",ivory=equipped.rug==="rug_ivory";
+    const base=midnight?"#263b4b":jade?"#3e695e":rose?"#b77f85":ivory?"#eee0c8":"#b79b7a";
+    const secondary=midnight?"#566980":jade?"#6e9b82":rose?"#edc7b1":ivory?"#c3a16e":"#d0b795";
     g.fillStyle=base;g.fillRect(0,0,512,768);
     // Thousands of fine weaving threads create texture instead of a flat plane.
     for(let y=0;y<768;y+=3){
