@@ -366,6 +366,7 @@ export default function(component) {
       // receive permanent background highlights, in either Read or Memorise.
       el.classList.toggle("am-confirmed",confirmedIndices.has(i));
       el.classList.toggle("am-review",flaggedIndices.has(i));
+      if(confirmedIndices.has(i))el.classList.remove("am-uncertain");
       el.classList.remove("am-ayah-playing");
       // Memorisation begins with English-only clues. Confirmed words reveal
       // their actual Arabic text progressively as the learner recites.
@@ -1244,6 +1245,8 @@ export default function(component) {
       let pendingWord=-1;
       let stableHits=0;
       let lastDisplayed=-1;
+      let lastLockAt=0;
+      let lastLockedIndex=-1;
       const suspectWords=new Set();
       session.subscribe(event=>{
         if(!live||disposed||!event)return;
@@ -1272,25 +1275,25 @@ export default function(component) {
             return;
           }
           const confidence=Number(candidate?.confidence);
-          const cleanLength=normalized(words[idx].ar||"").length;
-          const shortWord=cleanLength<=3;
-          // The responsive setting accepts quieter short phrases, while
-          // Careful requires stronger evidence. Neither checks precise vowels.
-          const responsive=sensitivitySelect.value==="responsive";
-          const threshold=shortWord?(responsive?0.52:0.68):(responsive?0.40:0.55);
-          if(Number.isFinite(confidence)&&confidence<threshold){
-            micMessage.textContent="Short or similar-sounding phrase is uncertain (model confidence "+
-              Math.round(confidence*100)+"%). Repeat slowly; this is not a Tajweed verdict.";
-            coach("✧ Almost there. Please repeat that word clearly.","guide");
-            setStatus("Waiting for a stronger match before moving the word highlight...","active");
-            return;
-          }
+          const shortWord=normalized(words[idx].ar||"").length<=3;
+          const now=Date.now();
+          // Position evidence is displayed immediately. Low confidence is
+          // uncertainty, not a reason to freeze the reader.
           if(idx===pendingWord)stableHits++;
           else{pendingWord=idx;stableHits=1;}
+          lastLockAt=now;
+          lastLockedIndex=idx;
           if(idx===confirmedWord+1){
-            // Yellow = currently heard; green = consecutively confirmed.
             mark(idx,false);
-            if(stableHits>=2 && !suspectWords.has(idx))mark(idx,true);
+            // Confirmation requires either repeated independent locked
+            // observations or subsequent forward word evidence.
+            const strong=Number.isFinite(confidence)&&confidence>=0.62;
+            if(stableHits>=2 && strong && !suspectWords.has(idx)){
+              mark(idx,true);
+            }else{
+              wordNodes[idx]?.classList.add("am-uncertain");
+              coach("✧ Following your recitation. Keep going; this word is still being checked.","guide");
+            }
           }
           if(idx!==lastDisplayed){
             lastDisplayed=idx;
@@ -1299,13 +1302,17 @@ export default function(component) {
               :"Quran word position detected · fine articulation and Tajweed remain unchecked.";
           }
           setStatus("Following ayah "+target.ayah+", word "+target.word+
-            " · observed audio position only, not a pronunciation grade","active");
+            " · "+(confirmedIndices.has(idx)?"recognised in sequence":"heard · awaiting confirmation"),"active");
         }else if(event.type==="checker"&&event.state==="confirmed"){
           const idx=globalIndex(event.location);
           if(idx>=0){
             suspectWords.add(idx);
             flaggedIndices.add(idx);
             confirmedIndices.delete(idx);
+            if(idx<=confirmedWord){
+              for(let i=idx;i<words.length;i++)confirmedIndices.delete(i);
+              confirmedWord=idx-1;
+            }
             renderWords();
             wordNodes[idx]?.classList.add("am-review");
             coach("↶ A possible word mismatch was detected. Repeat this word carefully.","guide");
