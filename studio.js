@@ -10,7 +10,7 @@ export default function(component) {
   const root=component.parentElement.querySelector(".am-mount");
   if(!root)return;
   root.replaceChildren();
-  if(typeof localizeStudioShell==="function")queueMicrotask(()=>localizeStudioShell(root,String(D.language||"en")));
+  if(typeof localizeStudioShell==="function")queueMicrotask(()=>localizeStudioShell(root,String(D.language||"en"),D.uiCatalogue||{}));
   const CE=(tag,cls,text)=>{
     const n=document.createElement(tag);
     if(cls)n.className=cls;
