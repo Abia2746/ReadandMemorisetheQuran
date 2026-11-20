@@ -627,6 +627,16 @@ if not st.session_state.name:
                 st.warning("Enter a name to start.")
     st.stop()
 
+language_labels, translation_resources = available_translations()
+st.session_state.setdefault("quran_language", "en")
+language_options = sorted(language_labels, key=lambda code: (code != "en", language_labels[code].casefold()))
+language = st.selectbox(
+    "🌐 Language / اللغة / Langue",
+    options=language_options,
+    format_func=lambda code: f"{language_labels[code]} ({code})",
+    key="quran_language",
+)
+ui_labels = UI_STRINGS.get(language, UI_STRINGS["en"])
 # Sidebar configuration remains accessible, without dominating the reading page.
 with st.sidebar:
     st.markdown("### ✦ Al-Mu'allim")
@@ -658,8 +668,8 @@ with st.sidebar:
 
 # Prominent Qur'an navigation shared by Read, Memorise and Listen.
 # These widgets are intentionally on the main page, not in the collapsed sidebar.
-st.markdown("### 📖 Choose your Qur'an passage")
-st.caption("Select a surah, starting and ending ayah, and reciter. Changes load automatically.")
+st.markdown("### 📖 " + ui_labels.get("passage", "Choose your Qur'an passage"))
+st.caption(ui_labels.get("passage_help", "Select a surah, starting and ending ayah, and reciter. Changes load automatically."))
 def _on_surah_change():
     st.session_state.quran_nav_start = 1
     st.session_state.quran_nav_end = 1
@@ -668,33 +678,22 @@ st.session_state.setdefault("quran_nav_surah", int(st.session_state.surah))
 st.session_state.setdefault("quran_nav_start", int(st.session_state.ayah))
 st.session_state.setdefault("quran_nav_end", int(st.session_state.end_ayah))
 st.session_state.setdefault("quran_nav_reciter", st.session_state.get("selected_reciter", "Yasser Al-Dosari"))
-language_labels, translation_resources = available_translations()
-st.session_state.setdefault("quran_language", "en")
-language_options = sorted(language_labels, key=lambda code: (code != "en", language_labels[code].casefold()))
-language = st.selectbox(
-    "🌐 Language / اللغة / Langue",
-    options=language_options,
-    format_func=lambda code: f"{language_labels[code]} ({code})" + (" · Default" if code == "en" else ""),
-    key="quran_language",
-    help="Arabic Qur'an text stays unchanged. Published translations are shown where available; interface wording falls back to English when not yet localised.",
-)
-ui_labels = UI_STRINGS.get(language, UI_STRINGS["en"])
 nav_surah, nav_start, nav_end, nav_reciter = st.columns([2.1, 1, 1, 1.8])
 with nav_surah:
     surah = st.selectbox(
-        "Surah · سورة", options=list(range(1, 115)),
+        ui_labels.get("surah", "Surah") + " · سورة", options=list(range(1, 115)),
         format_func=lambda n: f"{n}. {SURAH_TITLES.get(n, ('', f'Surah {n}'))[1]} · {SURAH_TITLES.get(n, ('', ''))[0]}",
         key="quran_nav_surah", on_change=_on_surah_change,
     )
 with nav_start:
-    ayah = st.number_input("From ayah", min_value=1, max_value=AYAHS[surah],
+    ayah = st.number_input(ui_labels.get("from_ayah", "From ayah"), min_value=1, max_value=AYAHS[surah],
                            step=1, key="quran_nav_start")
 with nav_end:
-    end_ayah = st.number_input("To ayah", min_value=int(ayah),
+    end_ayah = st.number_input(ui_labels.get("to_ayah", "To ayah"), min_value=int(ayah),
                                max_value=min(AYAHS[surah], int(ayah) + 9),
                                step=1, key="quran_nav_end")
 with nav_reciter:
-    reciter = st.selectbox("Reciter · القارئ", options=list(RECITERS),
+    reciter = st.selectbox(ui_labels.get("reciter", "Reciter") + " · القارئ", options=list(RECITERS),
                            key="quran_nav_reciter")
 st.session_state.surah = int(surah)
 st.session_state.ayah = int(ayah)
