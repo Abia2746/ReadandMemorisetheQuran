@@ -628,18 +628,6 @@ with st.sidebar:
     st.markdown("**Your practice profile**")
     st.write(html_escape.escape(st.session_state.name))
     st.divider()
-    surah = int(st.number_input("Surah number", min_value=1, max_value=114,
-                                value=int(st.session_state.surah), step=1))
-    max_ayah = AYAHS[surah]
-    ayah = int(st.number_input("Start ayah", min_value=1, max_value=max_ayah,
-                               value=min(int(st.session_state.ayah), max_ayah), step=1))
-    stop_max = min(max_ayah, ayah + 9)
-    end_ayah = int(st.number_input("End ayah (up to ten verses)", min_value=ayah,
-                                   max_value=stop_max,
-                                   value=min(max(ayah, int(st.session_state.end_ayah)), stop_max),
-                                   step=1))
-    reciter = st.selectbox("Listen to", list(RECITERS),
-                           index=1 if "Yasser Al-Dosari" in RECITERS else 0)
     st.session_state.teacher_gender = st.selectbox(
         "AI teacher", ["Female", "Male"],
         index=0 if st.session_state.teacher_gender == "Female" else 1,
@@ -652,17 +640,41 @@ with st.sidebar:
         "Begin in English-clue memorisation mode",
         value=st.session_state.recite_from_memory,
     )
-    if st.button("Load this passage", type="primary", use_container_width=True):
-        st.session_state.update(
-            surah=surah, ayah=ayah, end_ayah=end_ayah, tries=0,
-            teacher_label="Let's begin with the words you've selected.",
-        )
-        st.rerun()
     st.divider()
     st.caption("For accurate Tajweed, listen to a qualified teacher and compare with a reliable recitation.")
     if st.button("Switch practice profile", use_container_width=True):
         st.session_state.name = ""
         st.rerun()
+
+# Prominent Qur'an navigation shared by Read, Memorise and Listen.
+# These widgets are intentionally on the main page, not in the collapsed sidebar.
+st.markdown("### 📖 Choose your Qur'an passage")
+st.caption("Select a surah, starting and ending ayah, and reciter. Changes load automatically.")
+nav_surah, nav_start, nav_end, nav_reciter = st.columns([2.1, 1, 1, 1.8])
+with nav_surah:
+    surah = st.selectbox(
+        "Surah · سورة", options=list(range(1, 115)),
+        format_func=lambda n: f"{n}. {SURAH_TITLES.get(n, ('', f'Surah {n}'))[1]} · {SURAH_TITLES.get(n, ('', ''))[0]}",
+        key="quran_nav_surah",
+    )
+with nav_start:
+    ayah = st.number_input("From ayah", min_value=1, max_value=AYAHS[surah],
+                           value=min(int(st.session_state.ayah), AYAHS[surah]),
+                           step=1, key="quran_nav_start")
+with nav_end:
+    end_ayah = st.number_input("To ayah", min_value=int(ayah),
+                               max_value=min(AYAHS[surah], int(ayah) + 9),
+                               value=min(max(int(ayah), int(st.session_state.end_ayah)),
+                                         min(AYAHS[surah], int(ayah) + 9)),
+                               step=1, key="quran_nav_end")
+with nav_reciter:
+    reciter = st.selectbox("Reciter · القارئ", options=list(RECITERS),
+                           index=1 if "Yasser Al-Dosari" in RECITERS else 0,
+                           key="quran_nav_reciter")
+st.session_state.surah = int(surah)
+st.session_state.ayah = int(ayah)
+st.session_state.end_ayah = int(end_ayah)
+st.session_state["selected_reciter"] = reciter
 
 passage_key = f"{surah}:{ayah}-{end_ayah}"
 result_key = f"{passage_key}|recitation"
