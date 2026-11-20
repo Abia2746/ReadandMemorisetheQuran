@@ -1,0 +1,13 @@
+name: al_muallim
+description: Al-Mu'allim Qur'an reading and memorisation
+publish_to: none
+version: 0.1.0+1
+environment:
+  sdk: '>=3.3.0 <4.0.0'
+dependencies:
+  flutter:
+    sdk: flutter
+  http: ^1.2.2
+  shared_preferences: ^2.3.2
+flutter:
+  uses-material-design: true
