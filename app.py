@@ -509,12 +509,12 @@ def analyse_recitation(audio_bytes, mime_type, words, strictness, teacher_gender
     )
 
 
-def ask_teacher_scholar(query, surah, start_ayah, end_ayah):
+def ask_teacher_scholar(query, surah, start_ayah, end_ayah, language="en"):
     key = api_key()
     if not key: return "API key missing."
     candidate_models = get_available_models(key)
     system_instruction = "You are an eminent master Qur'an scholar. Answer student inquiries with academic depth and professional courtesy."
-    prompt = f"Inquiry for Surah {surah} (Ayahs {start_ayah}-{end_ayah}): {query}"
+    prompt = f"Inquiry for Surah {surah} (Ayahs {start_ayah}-{end_ayah}): {query}. Respond in the language identified by ISO code {language}. Preserve quoted Quran Arabic, and distinguish interpretation from translation."
     request_body = {"system_instruction": system_instruction, "store": False, "input": [{"type": "text", "text": prompt}], "generation_config": {"temperature": 0.3, "max_output_tokens": 1024}}
     for model_id in candidate_models:
         try:
@@ -935,7 +935,7 @@ with st.form("teacher_question", clear_on_submit=True):
 if send and question.strip():
     try:
         with st.spinner(_ui("Preparing your answer...")):
-            answer = ask_teacher_scholar(question.strip(), surah, ayah, end_ayah)
+            answer = ask_teacher_scholar(question.strip(), surah, ayah, end_ayah, language)
         st.session_state.scholar_chat.append((question.strip(), answer))
     except Exception as exc:
         st.warning(_ui("The AI teacher is temporarily unavailable."))
