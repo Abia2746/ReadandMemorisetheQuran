@@ -175,21 +175,22 @@ async function createPrayerRoomScene(canvas,config={}){
       :selected==="wallpaper_almond"
       ?{base:"#e3d2b8",line:"#bfa477",accent:"#f4e9d6"}
       :{base:"#25364c",line:"#c7aa70",accent:"#43546b"};
-    const textile=new B.DynamicTexture("Artisan wallpaper 1024",{width:1024,height:1024},scene,false);
+    const texSize=mobile?384:768;
+    const textile=new B.DynamicTexture("Artisan wallpaper finish",{width:texSize,height:texSize},scene,false);
     const ctx=textile.getContext();
-    ctx.fillStyle=palette.base;ctx.fillRect(0,0,1024,1024);
+    ctx.fillStyle=palette.base;ctx.fillRect(0,0,texSize,texSize);
     // Fine linen texture and quiet tonal variation, no visible tile seams.
-    for(let x=0;x<1024;x+=4){
+    for(let x=0;x<texSize;x+=4){
       ctx.fillStyle=x%12===0?"rgba(255,255,255,.055)":"rgba(0,0,0,.025)";
-      ctx.fillRect(x,0,1,1024);
+      ctx.fillRect(x,0,1,texSize);
     }
-    for(let y=0;y<1024;y+=5){
-      ctx.fillStyle="rgba(255,255,255,.026)";ctx.fillRect(0,y,1024,1);
+    for(let y=0;y<texSize;y+=5){
+      ctx.fillStyle="rgba(255,255,255,.026)";ctx.fillRect(0,y,texSize,1);
     }
     ctx.strokeStyle=palette.line;ctx.lineWidth=2.3;
     if(selected==="wallpaper_sage"){
-      for(let x=64;x<1024;x+=170){
-        ctx.beginPath();ctx.moveTo(x,1024);ctx.bezierCurveTo(x+95,710,x-50,350,x+25,0);ctx.stroke();
+      for(let x=64;x<texSize;x+=170){
+        ctx.beginPath();ctx.moveTo(x,texSize);ctx.bezierCurveTo(x+95,710,x-50,350,x+25,0);ctx.stroke();
         for(let y=100;y<980;y+=105){
           const sway=Math.sin(y*.014)*22;
           ctx.save();ctx.translate(x+sway,y);ctx.rotate(y%210===100?-.65:.55);
@@ -198,13 +199,13 @@ async function createPrayerRoomScene(canvas,config={}){
         }
       }
     }else if(selected==="wallpaper_almond"){
-      for(let x=0;x<=1024;x+=128)for(let y=0;y<=1024;y+=128){
+      for(let x=0;x<=texSize;x+=128)for(let y=0;y<=texSize;y+=128){
         ctx.save();ctx.translate(x,y);ctx.globalAlpha=.53;
         ctx.strokeRect(-47,-47,94,94);ctx.rotate(Math.PI/4);ctx.strokeRect(-35,-35,70,70);
         ctx.beginPath();ctx.arc(0,0,19,0,Math.PI*2);ctx.stroke();ctx.restore();
       }
     }else{
-      for(let x=48;x<1024;x+=125)for(let y=48;y<1024;y+=125){
+      for(let x=48;x<texSize;x+=125)for(let y=48;y<texSize;y+=125){
         const cx=x+(y%250?34:0);
         ctx.save();ctx.translate(cx,y);ctx.globalAlpha=.65;
         ctx.beginPath();
@@ -218,7 +219,9 @@ async function createPrayerRoomScene(canvas,config={}){
     }
     textile.update();
     const mat=new B.StandardMaterial("Selected wallpaper finish",scene);
-    mat.diffuseTexture=textile;mat.specularColor=c("#453d31").scale(.09);
+    mat.diffuseTexture=textile;
+    textile.uScale=2;
+    textile.vScale=1.5;mat.specularColor=c("#453d31").scale(.09);
     mat.emissiveColor=c(palette.base).scale(.055);
     mat.backFaceCulling=false;
     return mat;
