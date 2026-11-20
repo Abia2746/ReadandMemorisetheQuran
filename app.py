@@ -868,21 +868,12 @@ if saved:
                     f"{item['rule_name']} · approximately {item['time_s']}s"
                 ):
                     st.write("**AI's possible observation:** " + item["evidence"])
-                    st.write("**Practice suggestion:** " + item["correction"])
-                    st.caption(
-                        "This is an unverified AI observation. Replay that part "
-                        "and confirm subtle pronunciation with a qualified teacher."
-                    )
+                    st.write("**" + _ui("Practice suggestion:") + "** " + item["correction"])
+                    st.caption(_ui("This is an unverified AI observation. Replay that part and confirm subtle pronunciation with a qualified teacher."))
         else:
-            st.info(
-                "The AI returned no adequately specific, timestamped findings. "
-                "That does not mean every vowel or Tajweed rule was correct."
-            )
+            st.info(_ui("The AI returned no adequately specific, timestamped findings. That does not mean every vowel or Tajweed rule was correct."))
         st.markdown("#### " + _ui("16-topic Tajweed practice checklist"))
-        st.caption(
-            "Sixteen learning categories, not a claim that sixteen rules were "
-            "acoustically graded. Uncertain is not a pass or a fail."
-        )
+        st.caption(_ui("Sixteen learning categories, not a claim that sixteen rules were acoustically graded. Uncertain is not a pass or a fail."))
         for item in review["rules"]:
             status = item["status"]
             label = (
@@ -902,21 +893,11 @@ if saved:
                     st.write("**Possible finding:** " + item["evidence"])
                     st.write("**How to practise:** " + item["correction"])
                 elif status == "not_applicable":
-                    st.write(
-                        "The AI did not identify a relevant example in the "
-                        "audio it assessed. This has not been independently verified."
-                    )
+                    st.write(_ui("The AI did not identify a relevant example in the audio it assessed. This has not been independently verified."))
                 else:
-                    st.write(
-                        "The available audio/model evidence is insufficient "
-                        "to assess this category reliably. Compare with your "
-                        "reciter and ask a qualified Tajweed teacher."
-                    )
+                    st.write(_ui("The available audio/model evidence is insufficient to assess this category reliably. Compare with your reciter and ask a qualified Tajweed teacher."))
     else:
-        st.warning(
-            "This is an older, non-standardised review. Make a new recording "
-            "to use the evidence-based 16-topic checklist."
-        )
+        st.warning(_ui("This is an older, non-standardised review. Make a new recording to use the evidence-based 16-topic checklist."))
     if saved.get("tafsir_summary"):
         with st.expander("Reflection and context"):
             st.write(saved["tafsir_summary"])
