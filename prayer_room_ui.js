@@ -291,7 +291,7 @@ function attachPrayerRoom(component, D, ui){
   const filters=CE("div","am-room-pills");
   const filterBtns={};
   for(const [name,label] of [
-    ["all","All pieces"],["owned","Owned"],["ready","Affordable"]
+    ["all","All pieces"],["wallpaper","Wallpapers"],["owned","Owned"],["ready","Affordable"]
   ]){
     const el=btn(label,"am-room-pill");
     el.setAttribute("aria-pressed",String(name==="all"));
@@ -332,7 +332,7 @@ function attachPrayerRoom(component, D, ui){
   const icon={
     plant:"❧",lamp:"✺",rug:"◈",rehal:"☷",art:"✧",shelf:"▤",
     cushion:"◌",curtain:"⌇",pendant:"✷",window:"☂",mihrab:"۞",
-    floor:"◇",ambience:"☾"
+    floor:"◇",ambience:"☾",wallpaper:"▧"
   };
   function send(action,additional={},tabHint=getCurrentTab()){
     if(typeof component.setTriggerValue!=="function"){
@@ -355,6 +355,7 @@ function attachPrayerRoom(component, D, ui){
     list.replaceChildren();
     const xp=Number(wallet.xp)||0,coins=Number(wallet.coins)||0;
     const shown=itemList.filter(item=>{
+      if(filter==="wallpaper")return item.category==="wallpaper";
       if(filter==="owned")return owned.has(item.id);
       if(filter==="ready")return !owned.has(item.id) &&
         xp>=item.unlock_xp && coins>=item.price;
@@ -368,11 +369,19 @@ function attachPrayerRoom(component, D, ui){
     for(const item of shown){
       const row=CE("article","am-room-item");
       const symbol=CE("div","am-room-item-dot",icon[item.category]||"✧");
+      if(item.category==="wallpaper"){
+        const swatch=CE("div","am-room-wallpaper-swatch");
+        swatch.classList.add("am-room-"+item.id);
+        swatch.setAttribute("aria-label",item.name+" decorative material sample");
+        symbol.replaceWith(swatch);
+        row.classList.add("am-room-wallpaper-card");
+      }
       const body=CE("div","am-room-item-detail");
       const title=CE("div","am-room-item-title");
       append(title,CE("span","",item.name),CE("span","am-room-item-price",item.price+" ◈"));
       body.appendChild(title);
       body.appendChild(CE("div","am-room-item-desc",item.description||"Thoughtful interior detailing"));
+      if(item.category==="wallpaper")body.appendChild(CE("small","am-room-finish-note","WALL FINISH · changes both 3D walls · preview before buying"));
       const actions=CE("div","am-room-item-actions");
       const preview=btn("Preview");
       preview.onclick=()=>{
