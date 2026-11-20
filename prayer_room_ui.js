@@ -13,6 +13,8 @@ function attachPrayerRoom(component, D, ui){
   const equipped={...(wallet.equipped||{})};
   let active=false,sceneStarted=false,controller=null,requestId=0;
   let previewItem=null,filter="all",clockTimer=null;
+  let sceneQueue=Promise.resolve();
+  let sceneClosed=false;
   const prayerClock=D.prayerClock||{};
   const validModes=new Set(["auto","fajr","day","asr","maghrib","night","rain"]);
   let moodSelection="auto";
@@ -419,48 +421,58 @@ function attachPrayerRoom(component, D, ui){
     }
   }
 
-  async function buildScene(){
+  function buildScene(){
+    // Serialize GPU scene creation. Rapid preview taps previously created
+    // overlapping WebGL engines on the same canvas, particularly on iPad Safari.
     const call=++requestId;
-    try{controller?.dispose()}catch(_){}
-    controller=null;
-    loading.hidden=false;
-    loadingNote.textContent="Creating a hand-detailed sanctuary…";
     const withPreview={...equipped};
     if(previewItem)withPreview[previewItem.category]=previewItem.id;
-    try{
-      const scene=await createPrayerRoomScene(canvas,{
-        equipped:withPreview,
-        mood:currentRoomMood(),
-        rainLevel:currentRoomMood()==="rain"&&rainLevel==="off"?"steady":rainLevel,
-        onStatus:message=>{
-          if(call===requestId){
-            feedback.hidden=false;feedback.textContent=String(message||"");
+    loading.hidden=false;
+    loadingNote.textContent="Preparing your sanctuary…";
+    sceneQueue=sceneQueue.catch(()=>{}).then(async()=>{
+      if(sceneClosed||call!==requestId)return;
+      try{controller?.stop();controller?.dispose()}catch(_){}
+      controller=null;
+      if(sceneClosed||call!==requestId)return;
+      let next=null;
+      try{
+        next=await createPrayerRoomScene(canvas,{
+          equipped:withPreview,
+          mood:currentRoomMood(),
+          rainLevel:currentRoomMood()==="rain"&&rainLevel==="off"?"steady":rainLevel,
+          onStatus:message=>{
+            if(call===requestId){
+              feedback.hidden=false;feedback.textContent=String(message||"");
+            }
           }
+        });
+        if(sceneClosed||call!==requestId){
+          next.dispose();return;
         }
-      });
-      if(call!==requestId){
-        scene.dispose();return;
+        controller=next;
+        updateMood();
+        loading.hidden=true;
+        feedback.hidden=true;
+        const fallback=viewport.querySelector(".am-room-fallback");
+        if(fallback)fallback.remove();
+        if(active)controller.start();
+        else controller.stop();
+      }catch(error){
+        try{next?.dispose()}catch(_){}
+        if(call!==requestId||sceneClosed)return;
+        loading.hidden=true;
+        let fallback=viewport.querySelector(".am-room-fallback");
+        if(!fallback){
+          fallback=CE("div","am-room-fallback");
+          fallback.appendChild(CE("div","am-room-fallback-arch"));
+          viewport.appendChild(fallback);
+        }
+        feedback.hidden=false;
+        feedback.textContent="3D viewer unavailable: "+String(error?.message||error)+
+          ". Your collection and saved purchases are unaffected.";
       }
-      controller=scene;
-      updateMood();
-      loading.hidden=true;
-      const fallback=viewport.querySelector(".am-room-fallback");
-      if(fallback && typeof fallback.remove==="function")fallback.remove();
-      if(active)controller.start();
-      else controller.stop();
-    }catch(error){
-      if(call!==requestId)return;
-      loading.hidden=true;
-      let fallback=viewport.querySelector(".am-room-fallback");
-      if(!fallback){
-        fallback=CE("div","am-room-fallback");
-        fallback.appendChild(CE("div","am-room-fallback-arch"));
-        viewport.appendChild(fallback);
-      }
-      feedback.hidden=false;
-      feedback.textContent="3D viewer unavailable: "+String(error?.message||error)+
-        ". Your collection and saved purchases are unaffected.";
-    }
+    });
+    return sceneQueue;
   }
   resetCamera.onclick=()=>{
     if(previewItem){
@@ -494,6 +506,7 @@ function attachPrayerRoom(component, D, ui){
       claimMem.hidden=tab!=="cover";
     },
     dispose(){
+      sceneClosed=true;
       stopRainSound();
       stopMoodRefresh();
       requestId++;
