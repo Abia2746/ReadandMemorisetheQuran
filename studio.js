@@ -762,9 +762,14 @@ export default function(component) {
   function stopPlaybackFollow(){
     if(playbackFrame!==null){cancelAnimationFrame(playbackFrame);playbackFrame=null}
   }
-  function playbackFollowFrame(){
+  let lastPlaybackPaint=0;
+  function playbackFollowFrame(timestamp){
     playbackFrame=null;
-    showPlaybackPosition();
+    // 15 Hz is enough for word-following; 60 Hz needlessly forces DOM work.
+    if(timestamp-lastPlaybackPaint>=65){
+      lastPlaybackPaint=timestamp;
+      if(!document.hidden)showPlaybackPosition();
+    }
     if(!audio.paused&&!audio.ended&&!live){
       playbackFrame=requestAnimationFrame(playbackFollowFrame);
     }
