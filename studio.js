@@ -1264,6 +1264,9 @@ export default function(component) {
       let lastObserved=-1;
       let lastObservationAt=0;
       const observedCounts=new Map();
+      const observedFirstAt=new Map();
+      let lastPaintAt=0;
+      let lastScrolled=-1;
       const suspectWords=new Set();
       const repaint=()=>{
         wordNodes.forEach((el,i)=>{
@@ -1300,10 +1303,17 @@ export default function(component) {
           if(idx<lastObserved-2 && now-lastObservationAt<1400)return;
           const repeated=idx===lastObserved;
           observedCounts.set(idx,(observedCounts.get(idx)||0)+1);
+          if(!observedFirstAt.has(idx))observedFirstAt.set(idx,now);
+          const moved=idx!==lastObserved;
           lastObserved=idx;lastObservationAt=now;
           currentWord=idx;
           const strong=Number.isFinite(candidate.confidence)&&candidate.confidence>=0.62;
-          if(strong&&observedCounts.get(idx)>=2&&!suspectWords.has(idx)){
+          // A repeated locked word may be lower confidence, especially for
+          // short words. Allow sustained independent observations to confirm
+          // recognition without treating that as phonetic/Tajweed accuracy.
+          const sustained=observedCounts.get(idx)>=3 &&
+            now-observedFirstAt.get(idx)>=180;
+          if((strong&&observedCounts.get(idx)>=2||sustained)&&!suspectWords.has(idx)){
             confirmedIndices.add(idx);
             flaggedIndices.delete(idx);
           }
@@ -1312,8 +1322,16 @@ export default function(component) {
           if(idx>0&&observedCounts.has(idx-1)&&!suspectWords.has(idx-1))
             confirmedIndices.add(idx-1);
           while(confirmedIndices.has(confirmedWord+1))confirmedWord++;
-          repaint();
-          wordNodes[idx]?.scrollIntoView({behavior:"smooth",block:"nearest",inline:"nearest"});
+          // Avoid repainting the entire passage for every duplicate model
+          // event, and avoid expensive animated scroll on each audio frame.
+          if(moved||now-lastPaintAt>=110){
+            repaint();
+            lastPaintAt=now;
+          }
+          if(moved&&idx!==lastScrolled){
+            lastScrolled=idx;
+            wordNodes[idx]?.scrollIntoView({behavior:"instant",block:"nearest",inline:"nearest"});
+          }
           const state=flaggedIndices.has(idx)?"possible mismatch":
             confirmedIndices.has(idx)?"recognised":"heard · not yet verified";
           micMessage.textContent="Ayah "+candidate.word.ayah+", word "+candidate.word.word+
