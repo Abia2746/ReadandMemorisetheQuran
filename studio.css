@@ -153,3 +153,28 @@
 .am-live-coaching[data-tone="success"]{border-color:rgba(103,211,157,.55);background:rgba(44,114,82,.19);color:#c5f3da}
 .am-live-coaching[data-tone="guide"]{border-color:rgba(224,183,112,.46)}
 .am-live-coaching[hidden]{display:none!important}
+
+/* Explicit, mutually exclusive live recognition states.
+   Green = recognised in sequence; red = possible word mismatch;
+   gold = currently heard but not confirmed. Not a Tajweed grade. */
+.am-app .am-mushaf .am-word.am-confirmed,
+.am-app .am-cover .am-word.am-confirmed,
+.am-app .am-mushaf .am-word.am-confirmed.am-active,
+.am-app .am-cover .am-word.am-confirmed.am-active{
+  background:rgba(33,146,94,.32)!important;
+  border-color:rgba(92,230,150,.85)!important;
+  box-shadow:inset 0 -3px rgba(72,218,137,.7),0 0 0 1px rgba(92,230,150,.24)!important;
+}
+.am-app .am-mushaf .am-word.am-review,
+.am-app .am-cover .am-word.am-review,
+.am-app .am-mushaf .am-word.am-review.am-active,
+.am-app .am-cover .am-word.am-review.am-active{
+  background:rgba(190,57,67,.31)!important;
+  border-color:rgba(247,113,117,.9)!important;
+  box-shadow:inset 0 -3px rgba(237,96,105,.75)!important;
+}
+.am-app .am-mushaf .am-word.am-active:not(.am-confirmed):not(.am-review),
+.am-app .am-cover .am-word.am-active:not(.am-confirmed):not(.am-review){
+  background:rgba(225,180,75,.32)!important;
+  border-color:rgba(240,196,106,.7)!important;
+}
