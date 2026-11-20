@@ -20,6 +20,7 @@ from timing_data import matched_word_segments
 from audio_embed import inline_passage_clips
 from language_support import available_translations, translated_verses, UI_STRINGS
 from interface_locales import ui_text
+from dynamic_localization import get_ui_translations
 from tajweed_review import rubric_for_prompt, normalize_review
 from prayer_room import earn_recording_review
 
@@ -638,8 +639,24 @@ language = st.selectbox(
     key="quran_language",
 )
 ui_labels = UI_STRINGS.get(language, UI_STRINGS["en"])
+# All languages use the same catalogue; reviewed localizations take precedence.
+built_in = {
+    english: translated for english, translated in [
+        ("Read", ui_labels.get("read", "Read")),
+        ("Memorise", ui_labels.get("cover", "Memorise")),
+        ("Listen", ui_labels.get("listen", "Listen")),
+        ("My journey", ui_labels.get("journey", "My journey")),
+        ("The Noble Qur'an", ui_labels.get("quran", "The Noble Qur'an")),
+        ("Your Qur'an companion", ui_labels.get("practice", "Your Qur'an companion")),
+        ("Translation", ui_labels.get("translation", "Translation")),
+    ] if translated != english
+}
+if language == "fa":
+    from interface_locales import FA
+    built_in.update(FA)
+ui_catalogue = get_ui_translations(language, api_key(), built_in)
 def _ui(text):
-    return ui_text(language, text)
+    return ui_catalogue.get(text, ui_text(language, text))
 # Sidebar configuration remains accessible, without dominating the reading page.
 with st.sidebar:
     st.markdown("### ✦ Al-Mu'allim")
@@ -754,6 +771,7 @@ try:
         reciter=reciter,
         language=language,
         ui_strings=ui_labels,
+        ui_catalogue=ui_catalogue,
         verse_translations=verse_translations,
         segments=segments,
         word_counts=track_word_counts,
