@@ -18,6 +18,7 @@ import requests
 import streamlit as st
 from timing_data import matched_word_segments
 from audio_embed import inline_passage_clips
+from language_support import available_translations, translated_verses, UI_STRINGS
 from tajweed_review import rubric_for_prompt, normalize_review
 from prayer_room import earn_recording_review
 
@@ -149,10 +150,10 @@ def award_xp(name, xp=10):
 # ----------------------------- Qur'an API & Exact Timings -----------------------------
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def fetch_words(surah, ayah):
+def fetch_words(surah, ayah, language="en"):
     response = requests.get(
         f"{QURAN_API}/verses/by_key/{surah}:{ayah}",
-        params={"words": "true", "word_fields": "text_uthmani", "language": "en"},
+        params={"words": "true", "word_fields": "text_uthmani", "language": language},
         timeout=20,
     )
     response.raise_for_status()
@@ -190,7 +191,7 @@ def harakah_labels(grapheme):
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def fetch_passage(surah, start_ayah, end_ayah, reciter_folder):
+def fetch_passage(surah, start_ayah, end_ayah, reciter_folder, language="en"):
     """Load the selected words with word timings from the SAME EveryAyah audio.
 
     Quran.com's by_ayah audio IDs are not interchangeable with a different
@@ -200,7 +201,7 @@ def fetch_passage(surah, start_ayah, end_ayah, reciter_folder):
     track_word_counts = []
     all_segments = []
     for current_ayah in range(start_ayah, end_ayah + 1):
-        verse_words = fetch_words(surah, current_ayah)
+        verse_words = fetch_words(surah, current_ayah, language)
         start_index = len(passage_words)
         track_word_counts.append(len(verse_words))
         all_segments.extend(
@@ -658,6 +659,17 @@ st.session_state.setdefault("quran_nav_surah", int(st.session_state.surah))
 st.session_state.setdefault("quran_nav_start", int(st.session_state.ayah))
 st.session_state.setdefault("quran_nav_end", int(st.session_state.end_ayah))
 st.session_state.setdefault("quran_nav_reciter", st.session_state.get("selected_reciter", "Yasser Al-Dosari"))
+language_labels, translation_resources = available_translations()
+st.session_state.setdefault("quran_language", "en")
+language_options = sorted(language_labels, key=lambda code: (code != "en", language_labels[code].casefold()))
+language = st.selectbox(
+    "🌐 Language / اللغة / Langue",
+    options=language_options,
+    format_func=lambda code: f"{language_labels[code]} ({code})" + (" · Default" if code == "en" else ""),
+    key="quran_language",
+    help="Arabic Qur'an text stays unchanged. Published translations are shown where available; interface wording falls back to English when not yet localised.",
+)
+ui_labels = UI_STRINGS.get(language, UI_STRINGS["en"])
 nav_surah, nav_start, nav_end, nav_reciter = st.columns([2.1, 1, 1, 1.8])
 with nav_surah:
     surah = st.selectbox(
@@ -685,7 +697,7 @@ result_key = f"{passage_key}|recitation"
 
 try:
     words, track_word_counts, segments = fetch_passage(
-        surah, ayah, end_ayah, RECITERS[reciter]["folder"]
+        surah, ayah, end_ayah, RECITERS[reciter]["folder"], language
     )
     tracks = [
         audio_url(surah, a, RECITERS[reciter]["folder"])
@@ -697,6 +709,14 @@ except Exception as exc:
         st.code(str(exc))
     st.stop()
 
+verse_translations = translated_verses(
+    surah, ayah, end_ayah, translation_resources.get(language)
+) if language != "en" else {}
+translation_available = bool(verse_translations)
+if language != "en" and not translation_available:
+    st.info(ui_labels["unavailable"])
+elif language != "en" and len(verse_translations) < end_ayah - ayah + 1:
+    st.info("Some ayahs have no published translation in this language; English meanings remain available.")
 xp, streak, _ = get_user(st.session_state.name)
 meta = {"s": surah, "a": ayah, "end": end_ayah, "xp": xp, "streak": streak}
 surah_arabic, surah_english = SURAH_TITLES.get(surah, ("القرآن الكريم", f"Surah {surah}"))
@@ -721,6 +741,9 @@ try:
         tracks=tracks,
         inline_audio=audio_inline,
         reciter=reciter,
+        language=language,
+        ui_strings=ui_labels,
+        verse_translations=verse_translations,
         segments=segments,
         word_counts=track_word_counts,
         mode="blind" if st.session_state.recite_from_memory else "full",
