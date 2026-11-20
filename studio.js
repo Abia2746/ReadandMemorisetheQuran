@@ -1030,10 +1030,22 @@ export default function(component) {
       gotTranscript=true;
       if(watchdogId!==null){clearTimeout(watchdogId);watchdogId=null}
       transcript.textContent=(final?"Recognised: ":"Listening: ")+phrase.slice(0,230);
-      const idx=match(phrase,cursor);
+      // Cloud responses often contain a full phrase. Never confirm only its
+      // final word: process each consecutive word and preserve intermediate
+      // progress. Partial transcripts may overlap previously heard words.
+      const tokens=normalized(phrase).split(" ").filter(Boolean);
+      let scan=cursor,idx=-1;
+      for(const token of tokens){
+        const target=expected[scan];
+        if(!target)break;
+        if(token===target||(token.length>=5&&target.length>=5&&distance(token,target)<=1)){
+          if(final)mark(scan,true);
+          idx=scan++;
+        }else if(idx>=0)break;
+      }
       if(idx>=0){
-        mark(idx,final);
-        if(final)cursor=Math.max(cursor,idx+1);
+        if(!final)mark(Math.min(cursor,idx),false);
+        else cursor=scan;
         setStatus("Cloud recognition active · "+Math.round((idx+1)*100/Math.max(1,words.length))+
           "% of the selected passage","active");
       } else {
@@ -1263,7 +1275,12 @@ export default function(component) {
           // Prefer the actually observed Quran word. The memorization
           // session's expected position can get ahead of the reciter and is
           // not independent evidence of what was pronounced.
-          const candidate=candidates.find(c=>globalIndex(c?.word)>=0);
+          // Prefer evidence for the next expected word, not an arbitrary
+          // first alternative in the model's candidate array.
+          const nextExpected=confirmedWord+1;
+          const candidate=candidates.find(c=>globalIndex(c?.word)===nextExpected)
+            ||candidates.find(c=>globalIndex(c?.word)===pendingWord+1)
+            ||candidates.find(c=>globalIndex(c?.word)>=0);
           const target=candidate?.word;
           const idx=globalIndex(target);
           if(idx<0){
