@@ -281,6 +281,7 @@ export default function(component) {
   const confirmedIndices=new Set();
   const flaggedIndices=new Set();
   const practiceReview=new Set();
+  const userCorrected=new Set();
   let reviewRound=false;
   let revealIndex=-1;
   let revealTimer=null;
@@ -348,7 +349,7 @@ export default function(component) {
   };
   correctButton.onclick=()=>{
     const i=rescueTarget();if(i<0)return;
-    flaggedIndices.delete(i);practiceReview.delete(i);confirmedIndices.add(i);
+    userCorrected.add(i);flaggedIndices.delete(i);practiceReview.delete(i);confirmedIndices.add(i);
     wordNodes[i]?.classList.remove("am-review","am-uncertain");
     wordNodes[i]?.classList.add("am-confirmed");
     rescueText.textContent="✓ Marked as recognised by you. This corrects the practice record; it does not verify Tajweed.";
@@ -1423,7 +1424,7 @@ export default function(component) {
           setStatus("Live tracking · "+state,"active");
         }else if(event.type==="checker"&&event.state==="confirmed"){
           const idx=globalIndex(event.location);
-          if(idx>=0){
+          if(idx>=0&&!userCorrected.has(idx)){
             suspectWords.add(idx);
             practiceReview.add(idx);
             flaggedIndices.add(idx);
