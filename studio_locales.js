@@ -91,10 +91,10 @@ const STUDIO_PREFIX_FA={
 " · 4 words · ":" · ۴ واژه · ",
 " · 0 words reviewed":" · ۰ واژه مرورشده"
 };
-function localizeStudioShell(root,language){
- const dictionary=STUDIO_LOCALES[language]||{};
+function localizeStudioShell(root,language,serverCatalogue={}){
+ const dictionary={...(STUDIO_LOCALES[language]||{}),...serverCatalogue};
  if(!Object.keys(dictionary).length)return;
- const skipSelector=".am-mushaf,.am-translations,.am-ar-title,.am-basmala,.am-translation-ayah,[lang=ar],[contenteditable]";
+ const skipSelector=".am-mushaf,.am-translations,.am-ar-title,.am-basmala,.am-translation-ayah,[lang=ar],[contenteditable],textarea";
  // Localize only interface chrome; never change the Quran or user-entered text.
  if(["fa","ar","ur"].includes(language)){
    root.setAttribute("dir","rtl");
