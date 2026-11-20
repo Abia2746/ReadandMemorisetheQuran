@@ -11,6 +11,55 @@ tr:{"Your learning companion":"Öğrenme arkadaşınız","Your selected passage"
 id:{"Your learning companion":"Pendamping belajar Anda","Your selected passage":"Bagian yang dipilih","How practice works":"Cara berlatih","Your practice session":"Sesi latihan Anda","Live recitation":"Tilawah langsung","Verses":"Ayat","Words":"Kata","Reciter":"Qari","Progress":"Kemajuan","Listen":"Dengarkan","Recall":"Ingat kembali","Recite":"Baca","Review":"Ulangi","Close":"Tutup","Play this ayah":"Putar ayat ini","Show hints":"Tampilkan petunjuk","Tajweed signs":"Tanda tajwid","Start listening":"Mulai mendengarkan","Stop listening":"Berhenti mendengarkan","My journey":"Perjalananku","Prayer Room":"Ruang salat","Day":"Siang","Night":"Malam","Settings":"Pengaturan"},
 ru:{"Your learning companion":"Ваш помощник в обучении","Your selected passage":"Выбранный отрывок","How practice works":"Как заниматься","Your practice session":"Ваше занятие","Live recitation":"Чтение в реальном времени","Verses":"Аяты","Words":"Слова","Reciter":"Чтец","Progress":"Прогресс","Listen":"Слушать","Recall":"Вспомнить","Recite":"Читать","Review":"Повторить","Close":"Закрыть","Play this ayah":"Воспроизвести аят","Show hints":"Показать подсказки","Tajweed signs":"Знаки таджвида","Start listening":"Начать прослушивание","Stop listening":"Остановить прослушивание","My journey":"Мой путь","Prayer Room":"Молитвенная комната","Day":"День","Night":"Ночь","Settings":"Настройки"}
 };
+// Complete Persian labels visible in the reader, audio player and teacher panels.
+Object.assign(STUDIO_LOCALES.fa,{
+"A moment with the Qur'an":"لحظه‌ای با قرآن",
+"Listen · Repeat · Reflect":"گوش بده · تکرار کن · تأمل کن",
+"Begin with a little, recite steadily, and review what needs attention. I can guide your practice, but detailed pronunciation should be checked against clear audio.":"با بخشی کوتاه شروع کنید، آرام و پیوسته تلاوت کنید و قسمت‌های نیازمند تمرین را مرور کنید. برای تلفظ دقیق، با صدای معتبر مقایسه کنید.",
+"Ready to practise. Tap the microphone to start.":"آمادهٔ تمرین هستید. برای شروع روی میکروفون بزنید.",
+"Follow the teacher's recitation at your own pace.":"با سرعت مناسب خود، تلاوت قاری را دنبال کنید.",
+"Repeat-aware following uses local Qur'an speech recognition when supported. Source-matched word timings remain the fallback.":"در صورت پشتیبانی، پیگیری تکرارها از تشخیص گفتار قرآن روی دستگاه استفاده می‌کند؛ در غیر این صورت زمان‌بندی واژه‌ها به کار می‌رود.",
+"Follow the word as you recite. In Memorise mode, a word is revealed only after the listener moves to the next word; this confirms progress, not correct vowels or Tajweed. Detailed phoneme verification requires a different model.":"هنگام تلاوت، واژه‌ها را دنبال کنید. در حالت حفظ، واژه پس از تشخیص واژهٔ بعدی آشکار می‌شود؛ این فقط پیشرفت را نشان می‌دهد، نه درستی حرکات و تجوید. بررسی دقیق آواها به مدل دیگری نیاز دارد.",
+"Beta · word following":"آزمایشی · پیگیری واژه‌ها",
+"01 · Listen":"۰۱ · گوش بده","02 · Recall":"۰۲ · به یاد بیاور","03 · Recite":"۰۳ · تلاوت کن","04 · Review":"۰۴ · مرور کن",
+"Hear the ayah from your selected reciter":"آیه را با صدای قاری انتخاب‌شده گوش دهید",
+"Use English clues in Memorise mode":"در حالت حفظ از راهنمای معنی استفاده کنید",
+"Follow the live speech indicator when supported":"در صورت پشتیبانی، نشانگر زندهٔ گفتار را دنبال کنید",
+"Record a passage below for AI-assisted feedback":"برای دریافت بازخورد کمکی هوش مصنوعی، تلاوت خود را در پایین ضبط کنید",
+"✓ I repeated this passage":"✓ این بخش را تکرار کردم",
+"Small, consistent repetition is more useful than rushing through verses.":"تکرار کوتاه و منظم از شتاب‌زدگی در آیات سودمندتر است.",
+"Follow repeated phrases":"عبارت‌های تکراری را دنبال کن",
+"Analyse repeats":"تکرارها را بررسی کن",
+"Start listening":"شروع شنیدن",
+"Live recitation":"تلاوت زنده",
+"Quran-specific model · on-device beta":"مدل ویژهٔ قرآن · آزمایشی روی دستگاه",
+"Listen to the reciter":"به تلاوت قاری گوش دهید",
+"LISTEN TO THE RECITER":"به تلاوت قاری گوش دهید",
+"Your selected passage":"بخش انتخاب‌شده",
+"Your practice session":"جلسهٔ تمرین شما",
+"Your learning companion":"همراه یادگیری شما",
+"How practice works":"روش تمرین",
+"Your Qur'an companion":"همراه قرآنی شما",
+"Show hints":"نمایش راهنما",
+"Tajweed signs":"نشانه‌های تجوید",
+"0 repetitions":"۰ بار تکرار",
+"English clues":"راهنمای معنی",
+"Share":"اشتراک‌گذاری",
+"Prayer Room":"اتاق نماز",
+"Recitation practice":"تمرین تلاوت",
+"Surah":"سوره","Ayahs":"آیات","words":"واژه","words reviewed":"واژه مرورشده",
+"Start over":"شروع دوباره",
+"Listening":"در حال شنیدن",
+"Preparing Qur’an recognition SDK…":"در حال آماده‌سازی تشخیص گفتار قرآن…"
+});
+const STUDIO_PREFIX_FA={
+"LISTEN TO THE RECITER · ":"به تلاوت قاری گوش دهید · ",
+"Playing ":"در حال پخش ",
+"Ayahs ":"آیات ",
+"Surah ":"سورهٔ ",
+" · 4 words · ":" · ۴ واژه · ",
+" · 0 words reviewed":" · ۰ واژه مرورشده"
+};
 function localizeStudioShell(root,language){
  const dictionary=STUDIO_LOCALES[language]||{};
  if(!Object.keys(dictionary).length)return;
@@ -22,8 +71,14 @@ function localizeStudioShell(root,language){
      if(!node.parentElement||node.parentElement.closest(skipSelector))continue;
      const original=node.textContent;
      const trimmed=original.trim();
-     if(!trimmed||!dictionary[trimmed])continue;
-     node.textContent=original.replace(trimmed,dictionary[trimmed]);
+     if(!trimmed)continue;
+     let translated=dictionary[trimmed];
+     if(!translated && language==="fa"){
+       for(const [prefix,replacement] of Object.entries(STUDIO_PREFIX_FA)){
+         if(trimmed.startsWith(prefix)){translated=replacement+trimmed.slice(prefix.length);break;}
+       }
+     }
+     if(translated)node.textContent=original.replace(trimmed,translated);
    }
  };
  apply();
