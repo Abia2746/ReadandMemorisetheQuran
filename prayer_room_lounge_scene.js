@@ -175,7 +175,18 @@ async function createPrayerRoomScene(canvas,config={}){
       :selected==="wallpaper_almond"
       ?{base:"#e3d2b8",line:"#bfa477",accent:"#f4e9d6"}
       :{base:"#25364c",line:"#c7aa70",accent:"#43546b"};
-    const texSize=mobile?384:768;
+    // On mobile, avoid DynamicTexture on vertical wall boxes: the UVs and
+    // repeated scene creation caused unstable stretched patterns in Safari.
+    // A consistent, lit material is preferable to flickering/blank walls.
+    if(mobile){
+      const mat=new B.StandardMaterial("Stable mobile wallpaper "+selected,scene);
+      mat.diffuseColor=c(palette.base);
+      mat.emissiveColor=c(palette.base).scale(.10);
+      mat.specularColor=c(palette.line).scale(.08);
+      mat.backFaceCulling=false;
+      return mat;
+    }
+    const texSize=768;
     const textile=new B.DynamicTexture("Artisan wallpaper finish",{width:texSize,height:texSize},scene,false);
     const ctx=textile.getContext();
     ctx.fillStyle=palette.base;ctx.fillRect(0,0,texSize,texSize);
@@ -484,7 +495,7 @@ async function createPrayerRoomScene(canvas,config={}){
   let rainIntensity="off",lastRainFrame=0,rainStart=Date.now();
   const rainModes={off:0,drizzle:.24,steady:.64,storm:1};
   let weatherParticles=null;
-  if(typeof B.ParticleSystem==="function"){
+  if(!mobile && typeof B.ParticleSystem==="function"){
     // An additional particle field moves OUTSIDE the glass only. WebGL
     // particle count is bounded for iPad memory and battery.
     try{
@@ -525,7 +536,7 @@ async function createPrayerRoomScene(canvas,config={}){
   // glass texture these droplets occupy real world-space positions and show
   // perspective/parallax as the camera moves.
   const depthRain=[];
-  if(typeof B.ParticleSystem==="function"){
+  if(!mobile && typeof B.ParticleSystem==="function"){
     for(const [layer,z,scale,capacity] of [
       ["distant",6.8,.58,mobile?180:450],
       ["midground",6.0,1,mobile?260:700],
