@@ -644,28 +644,28 @@ def _ui(text):
 with st.sidebar:
     st.markdown("### ✦ Al-Mu'allim")
     st.caption("Noor Hifdh · R8 · 19 November 2026")
-    if st.button("Refresh R8 interface", use_container_width=True, help="Clear cached Quran data and reload the current Streamlit build."):
+    if st.button(_ui("Refresh R8 interface"), use_container_width=True, help="Clear cached Quran data and reload the current Streamlit build."):
         st.cache_data.clear()
         st.rerun()
-    st.caption("Choose a passage and customise your practice.")
-    st.markdown("**Your practice profile**")
+    st.caption(_ui("Choose a passage and customise your practice."))
+    st.markdown("**" + _ui("Your practice profile") + "**")
     st.write(html_escape.escape(st.session_state.name))
     st.divider()
     st.session_state.teacher_gender = st.selectbox(
-        "AI teacher", ["Female", "Male"],
+        _ui("AI teacher"), ["Female", "Male"],
         index=0 if st.session_state.teacher_gender == "Female" else 1,
     )
     st.session_state.strictness = st.select_slider(
-        "Recording review sensitivity", ["Lenient", "Balanced", "Strict"],
+        _ui("Recording review sensitivity"), ["Lenient", "Balanced", "Strict"],
         value=st.session_state.strictness,
     )
     st.session_state.recite_from_memory = st.toggle(
-        "Begin in English-clue memorisation mode",
+        _ui("Begin in English-clue memorisation mode"),
         value=st.session_state.recite_from_memory,
     )
     st.divider()
-    st.caption("For accurate Tajweed, listen to a qualified teacher and compare with a reliable recitation.")
-    if st.button("Switch practice profile", use_container_width=True):
+    st.caption(_ui("For accurate Tajweed, listen to a qualified teacher and compare with a reliable recitation."))
+    if st.button(_ui("Switch practice profile"), use_container_width=True):
         st.session_state.name = ""
         st.rerun()
 
@@ -853,7 +853,7 @@ with right:
 
 if saved:
     st.markdown("### " + _ui("Your last practice review"))
-    st.caption("Recording: " + saved.get("recording_scope", "Selected passage"))
+    st.caption(_ui("Recording: ") + saved.get("recording_scope", _ui("Selected passage")))
     st.info(saved.get("feedback") or _ui("The AI returned no general feedback."))
     review = saved.get("review")
     if isinstance(review, dict) and review.get("rules"):
@@ -925,10 +925,7 @@ if saved:
         st.rerun()
 
 st.markdown("### " + _ui("Ask your AI teacher"))
-st.caption(
-    "Ask about the selected verses, Qur'anic vocabulary or Tajweed terminology. "
-    "AI responses can contain mistakes; verify religious rulings and precise recitation with reliable scholars."
-)
+st.caption(_ui("Ask about the selected verses, Qur'anic vocabulary or Tajweed terminology. AI responses can contain mistakes; verify religious rulings and precise recitation with reliable scholars."))
 with st.form("teacher_question", clear_on_submit=True):
     question = st.text_input(
         _ui("Your question"),
@@ -947,4 +944,4 @@ for user_q, reply in reversed(st.session_state.scholar_chat[-4:]):
     with st.expander(user_q):
         st.write(reply)
 
-st.caption("Al-Mu'allim · A focused Qur'an learning workspace. Your progress shown here is practice activity, not certified recitation mastery.")
+st.caption(_ui("Al-Mu'allim · A focused Qur'an learning workspace. Your progress shown here is practice activity, not certified recitation mastery."))
