@@ -309,8 +309,8 @@ export default function(component) {
     coaching.hidden=false;
   }
   function setStatus(message,state="idle"){
-    status.dataset.state=state;
-    statusText.textContent=message;
+    if(status.dataset.state!==state)status.dataset.state=state;
+    if(statusText.textContent!==message)statusText.textContent=message;
   }
   function normalized(text) {
     return String(text||"").normalize("NFKD")
@@ -1250,13 +1250,16 @@ export default function(component) {
         {confirm:{after:"next-word"},minConfidence:0.60}
       );
       const counts=Array.isArray(D.trackWordCounts)?D.trackWordCounts:[];
+      // Precompute verse offsets once; recognition events can arrive rapidly.
+      const verseOffsets=[0];
+      for(const count of counts)verseOffsets.push(verseOffsets[verseOffsets.length-1]+Number(count||0));
       const globalIndex=location=>{
         const surah=Number(location?.surah),ayah=Number(location?.ayah);
         const word=Number(location?.word);
         const verseIndex=ayah-Number(meta.a);
         if(surah!==Number(meta.s)||verseIndex<0||verseIndex>=counts.length)return -1;
         if(!Number.isInteger(word)||word<1||word>Number(counts[verseIndex]))return -1;
-        return counts.slice(0,verseIndex).reduce((n,c)=>n+Number(c||0),0)+word-1;
+        return verseOffsets[verseIndex]+word-1;
       };
       // Fast-recitation tracking is independent of the memorisation cursor:
       // a recogniser may emit one locked event for several spoken words.
@@ -1265,23 +1268,30 @@ export default function(component) {
       let lastObservationAt=0;
       const observedCounts=new Map();
       const observedFirstAt=new Map();
+      const paintedStates=new Map();
       let lastPaintAt=0;
       let lastScrolled=-1;
       const suspectWords=new Set();
       const repaint=()=>{
+        // Only mutate nodes whose visual state actually changed. Rewriting
+        // hundreds of DOM classes on every recognition event blocks audio UI.
         wordNodes.forEach((el,i)=>{
           const review=flaggedIndices.has(i);
           const good=confirmedIndices.has(i)&&!review;
           const active=i===currentWord;
+          const uncertain=!review&&!good&&(active||(i<currentWord&&i>confirmedWord));
+          const state=(review?1:0)|(good?2:0)|(active?4:0)|(uncertain?8:0);
+          if(paintedStates.get(i)===state)return;
+          paintedStates.set(i,state);
           el.classList.toggle("am-review",review);
           el.classList.toggle("am-confirmed",good);
           el.classList.toggle("am-active",active);
-          el.classList.toggle("am-uncertain",!review&&!good&&
-            (active||(i<currentWord&&i>confirmedWord)));
+          el.classList.toggle("am-uncertain",uncertain);
           if(currentTab==="cover"&&good&&!el.querySelector(".am-revealed-ar"))
             el.appendChild(CE("span","am-revealed-ar",words[i].ar||""));
         });
-        progressFill.style.width=Math.round(100*(Math.max(0,currentWord+1))/Math.max(1,words.length))+"%";
+        const percentage=Math.round(100*(Math.max(0,currentWord+1))/Math.max(1,words.length))+"%";
+        if(progressFill.style.width!==percentage)progressFill.style.width=percentage;
       };
       session.subscribe(event=>{
         if(!live||disposed||!event)return;
