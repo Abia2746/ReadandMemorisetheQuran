@@ -63,7 +63,30 @@ const STUDIO_PREFIX_FA={
 function localizeStudioShell(root,language){
  const dictionary=STUDIO_LOCALES[language]||{};
  if(!Object.keys(dictionary).length)return;
- const skipSelector=".am-mushaf,.am-translations,.am-ar-title,.am-basmala,.am-translation-ayah,[lang=ar],[contenteditable],input,textarea";
+ const skipSelector=".am-mushaf,.am-translations,.am-ar-title,.am-basmala,.am-translation-ayah,[lang=ar],[contenteditable]";
+ // Localize only interface chrome; never change the Quran or user-entered text.
+ if(["fa","ar","ur"].includes(language)){
+   root.setAttribute("dir","rtl");
+   root.style.textAlign="start";
+ } else {
+   root.setAttribute("dir","ltr");
+ }
+ const normalize=t=>t.replace(/\\s+/g," ").trim();
+ const translateText=original=>{
+   const trimmed=normalize(original);
+   if(!trimmed)return null;
+   if(dictionary[trimmed])return original.replace(trimmed,dictionary[trimmed]);
+   if(language==="fa"){
+     for(const [prefix,replacement] of Object.entries(STUDIO_PREFIX_FA)){
+       if(trimmed.startsWith(prefix))return original.replace(trimmed,replacement+trimmed.slice(prefix.length));
+     }
+     const prefixes={"LISTEN TO THE RECITER":"به تلاوت قاری گوش دهید","Ayahs":"آیات","Surah":"سوره","0 words reviewed":"۰ واژه مرورشده"};
+     for(const [prefix,replacement] of Object.entries(prefixes)){
+       if(trimmed.startsWith(prefix+" ")||trimmed.startsWith(prefix+" ·"))return original.replace(prefix,replacement);
+     }
+   }
+   return null;
+ };
  const apply=()=>{
    const walker=document.createTreeWalker(root,NodeFilter.SHOW_TEXT);
    let node;
@@ -72,13 +95,19 @@ function localizeStudioShell(root,language){
      const original=node.textContent;
      const trimmed=original.trim();
      if(!trimmed)continue;
-     let translated=dictionary[trimmed];
-     if(!translated && language==="fa"){
-       for(const [prefix,replacement] of Object.entries(STUDIO_PREFIX_FA)){
-         if(trimmed.startsWith(prefix)){translated=replacement+trimmed.slice(prefix.length);break;}
+     const translated=translateText(original);
+     if(translated!==null && translated!==original)node.textContent=translated;
+   }
+   // Labels, placeholders, accessibility and title attributes need localization too.
+   for(const el of root.querySelectorAll("button,select,option,[title],[aria-label],[placeholder]")){
+     if(el.matches(".am-mushaf *,[lang=ar] *"))continue;
+     for(const attr of ["title","aria-label","placeholder"]){
+       const value=el.getAttribute(attr);
+       if(value){
+         const translated=translateText(value);
+         if(translated!==null && translated!==value)el.setAttribute(attr,translated);
        }
      }
-     if(translated)node.textContent=original.replace(trimmed,translated);
    }
  };
  apply();
