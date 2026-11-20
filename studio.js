@@ -10,6 +10,13 @@ export default function(component) {
   const root=component.parentElement.querySelector(".am-mount");
   if(!root)return;
   root.replaceChildren();
+  // Visible build identifier lets users distinguish stale deployments from
+  // browser caching without needing developer tools or console access.
+  const buildStamp=document.createElement("div");
+  buildStamp.className="am-build-stamp";
+  buildStamp.textContent="Live reader · "+String(D.buildVersion||"unversioned");
+  root.appendChild(buildStamp);
+
   if(typeof localizeStudioShell==="function")queueMicrotask(()=>localizeStudioShell(root,String(D.language||"en"),D.uiCatalogue||{}));
   const CE=(tag,cls,text)=>{
     const n=document.createElement(tag);
