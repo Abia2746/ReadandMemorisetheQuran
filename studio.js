@@ -668,20 +668,19 @@ export default function(component) {
       const now=Math.max(0,Number(audio.currentTime)||0)*1000;
       // Keep a word highlighted during pauses *only inside the same ayah*.
       for(let i=0;i<segments.length;i++){
-        if(now>=segments[i].start)index=segments[i].word;
-        if(now<segments[i].end)break;
+        if(now>=segments[i].start && now<segments[i].end){index=segments[i].word;break;}
       }
     }
-    // Avoid repainting every Arabic word 60 times per second on iPad.
+    // Do not pretend alignment is precise when source-matched timings are absent.\n    // Avoid repainting every Arabic word 60 times per second on iPad.
     const displayKey=ayah+":"+index+":"+(smartHasRepeat?"repeat":"timed")+
       ":"+Boolean(segments);
-    if(displayKey+":"+((currentTab==="read"||currentTab==="listen")&&!audio.paused)===lastPlaybackUiKey
+    if(displayKey+":"+((currentTab==="read"||currentTab==="listen"||currentTab==="cover")&&!audio.paused)===lastPlaybackUiKey
        && playbackTimingWarning===playbackReason)return;
     lastPlaybackUiKey=displayKey+":"+((currentTab==="read"||currentTab==="listen")&&!audio.paused);
     // Critical: never colour an entire ayah as though every word is active.
     // Only show audio-following while playback is actually active in Listen.
     // Reader/Memorise words must not change merely because metadata loaded.
-    const followAudio=(currentTab==="read"||currentTab==="listen")
+    const followAudio=(currentTab==="read"||currentTab==="listen"||currentTab==="cover")
       &&!audio.paused&&!audio.ended;
     wordNodes.forEach((el,i)=>{
       el.classList.toggle("am-active",followAudio&&index>=0&&i===index);
@@ -720,7 +719,7 @@ export default function(component) {
   audio.onplay=startPlaybackFollow;
   audio.onpause=()=>{
     stopPlaybackFollow();
-    if(currentTab==="listen"||currentTab==="read"){
+    if(currentTab==="listen"||currentTab==="read"||currentTab==="cover"){
       wordNodes.forEach(el=>el.classList.remove("am-active","am-ayah-playing"));
       lastPlaybackUiKey="";
     }
