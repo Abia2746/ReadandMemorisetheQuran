@@ -173,6 +173,15 @@ def fetch_words(surah, ayah, language="en"):
         })
     if not output:
         raise RuntimeError(f"No words returned for {surah}:{ayah}.")
+    # The word-by-word service does not support every translation language.
+    # Preserve the selected Arabic text and use clearly marked English meanings
+    # when the selected language has no word-level translation.
+    if language != "en" and any(not item["en"] for item in output):
+        english_words = fetch_words(surah, ayah, "en")
+        if len(english_words) == len(output):
+            for translated, english in zip(output, english_words):
+                if not translated["en"]:
+                    translated["en"] = english["en"]
     return output
 
 
