@@ -64,7 +64,7 @@ def render_studio(
     ui_strings=None,
     verse_translations=None,
     segments=None,
-    word_counts,
+    word_counts=None,
     mode="full",
     teacher_name="Ustadha Noor",
     avatar="",
