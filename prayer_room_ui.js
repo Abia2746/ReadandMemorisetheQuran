@@ -291,7 +291,7 @@ function attachPrayerRoom(component, D, ui){
   const filters=CE("div","am-room-pills");
   const filterBtns={};
   for(const [name,label] of [
-    ["all","All pieces"],["wallpaper","Wallpapers"],["owned","Owned"],["ready","Affordable"]
+    ["all","All pieces"],["wallpaper","Wallpapers"],["rug","Prayer rugs"],["floor","Flooring"],["owned","Owned"],["ready","Affordable"]
   ]){
     const el=btn(label,"am-room-pill");
     el.setAttribute("aria-pressed",String(name==="all"));
@@ -355,7 +355,7 @@ function attachPrayerRoom(component, D, ui){
     list.replaceChildren();
     const xp=Number(wallet.xp)||0,coins=Number(wallet.coins)||0;
     const shown=itemList.filter(item=>{
-      if(filter==="wallpaper")return item.category==="wallpaper";
+      if(["wallpaper","rug","floor"].includes(filter))return item.category===filter;
       if(filter==="owned")return owned.has(item.id);
       if(filter==="ready")return !owned.has(item.id) &&
         xp>=item.unlock_xp && coins>=item.price;
@@ -384,7 +384,7 @@ function attachPrayerRoom(component, D, ui){
       body.appendChild(CE("div","am-room-item-desc",item.description||"Thoughtful interior detailing"));
       if(item.category==="wallpaper")body.appendChild(CE("small","am-room-finish-note","WALL FINISH · changes both 3D walls · preview before buying"));
       const actions=CE("div","am-room-item-actions");
-      const preview=btn("Preview in 3D");
+      const preview=btn("✧ Try in your room");
       preview.onclick=()=>{
         previewItem=item;
         previewNote.hidden=false;
