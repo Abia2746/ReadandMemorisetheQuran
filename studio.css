@@ -188,3 +188,8 @@
 }
 .am-app .am-mushaf .am-word.am-confirmed.am-uncertain,
 .am-app .am-cover .am-word.am-confirmed.am-uncertain{outline:none}
+
+/* Deployment diagnostic: tiny visible stamp, not part of Quranic content. */
+.am-build-stamp{font:500 11px/1.4 system-ui,sans-serif;letter-spacing:.025em;
+color:#a7b2a4;opacity:.8;text-align:right;padding:4px 12px 2px;
+pointer-events:none;direction:ltr}
