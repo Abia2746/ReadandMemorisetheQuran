@@ -1,7 +1,9 @@
 import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:path_provider/path_provider.dart';
 
 void main() => runApp(const AlMuallimApp());
 
@@ -20,6 +22,55 @@ class QuranVerse {
 
 class QuranService {
   static Future<List<QuranVerse>> fetchVerses(int surah) async {
+    try {
+      final fresh = await _fetchNetwork(surah);
+      await _saveCache(surah, fresh);
+      return fresh;
+    } catch (_) {
+      final cached = await _readCache(surah);
+      if (cached != null) return cached;
+      rethrow;
+    }
+  }
+
+  static Future<File> _cacheFile(int surah) async {
+    final directory = await getApplicationSupportDirectory();
+    return File('${directory.path}/quran_surah_$surah.v1.json');
+  }
+
+  static Future<void> _saveCache(int surah, List<QuranVerse> verses) async {
+    try {
+      final file = await _cacheFile(surah);
+      final payload = verses.map((v) => {'number': v.number, 'words': v.words.map((w) => {'arabic': w.arabic, 'translation': w.translation, 'position': w.position}).toList()}).toList();
+      final temporary = File('${file.path}.tmp');
+      await temporary.writeAsString(jsonEncode(payload), flush: true);
+      if (await file.exists()) await file.delete();
+      await temporary.rename(file.path);
+    } catch (_) { /* Cache failures must not block online reading. */ }
+  }
+
+  static Future<List<QuranVerse>?> _readCache(int surah) async {
+    try {
+      final file = await _cacheFile(surah);
+      if (!await file.exists()) return null;
+      final data = jsonDecode(await file.readAsString());
+      if (data is! List || data.isEmpty) return null;
+      final result = <QuranVerse>[];
+      for (final item in data) {
+        if (item is! Map || item['number'] != result.length + 1 || item['words'] is! List) return null;
+        final words = <QuranWord>[];
+        for (final raw in item['words'] as List) {
+          if (raw is! Map || raw['arabic'] is! String || (raw['arabic'] as String).isEmpty) return null;
+          words.add(QuranWord(raw['arabic'] as String, (raw['translation'] ?? '').toString(), (raw['position'] as num?)?.toInt() ?? words.length + 1));
+        }
+        if (words.isEmpty) return null;
+        result.add(QuranVerse(item['number'] as int, words));
+      }
+      return result;
+    } catch (_) { return null; }
+  }
+
+  static Future<List<QuranVerse>> _fetchNetwork(int surah) async {
     if (surah < 1 || surah > 114) throw ArgumentError.value(surah, 'surah');
     final results = <QuranVerse>[];
     final seen = <int>{};
