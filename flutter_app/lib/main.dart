@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:just_audio/just_audio.dart';
 
 void main() => runApp(const AlMuallimApp());
 
@@ -165,6 +166,36 @@ class _ReaderScreenState extends State<ReaderScreen> {
   final Set<String> revealed = {};
   final Set<String> difficult = {};
   String? selected;
+  final AudioPlayer reciter = AudioPlayer();
+  int? selectedAyah;
+  String? playbackError;
+  bool loadingAudio = false;
+  static const String reciterBase = 'https://everyayah.com/data/Alafasy_128kbps';
+
+  String _ayahAudioUrl(int chapter, int ayah) =>
+      '$reciterBase/${chapter.toString().padLeft(3, '0')}${ayah.toString().padLeft(3, '0')}.mp3';
+
+  Future<void> _playAyah(int ayah) async {
+    final chapter = surah;
+    setState(() { selectedAyah = ayah; playbackError = null; loadingAudio = true; });
+    try {
+      await reciter.stop();
+      await reciter.setUrl(_ayahAudioUrl(chapter, ayah));
+      if (!mounted || surah != chapter) return;
+      await reciter.play();
+    } catch (_) {
+      if (mounted) setState(() => playbackError = 'Recitation could not be played. Check your connection and retry.');
+    } finally {
+      if (mounted) setState(() => loadingAudio = false);
+    }
+  }
+
+  @override
+  void dispose() {
+    reciter.dispose();
+    super.dispose();
+  }
+
 
   @override
   void initState() {
@@ -193,7 +224,9 @@ class _ReaderScreenState extends State<ReaderScreen> {
 
   void _selectSurah(int value) {
     setState(() {
+      reciter.stop();
       surah = value;
+      selectedAyah = null;
       selected = null;
       revealed.clear();
       verses = QuranService.fetchVerses(surah);
@@ -204,6 +237,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
   void _selectWord(String key) {
     setState(() {
       selected = key;
+      selectedAyah = int.tryParse(key.split(':')[1]);
       if (mode == ReaderMode.memorise) revealed.add(key);
     });
   }
@@ -305,6 +339,14 @@ class _ReaderScreenState extends State<ReaderScreen> {
                           }),
                       ],
                     ),
+                    if (mode == ReaderMode.listen)
+                      Align(alignment: Alignment.centerRight,
+                        child: TextButton.icon(
+                          onPressed: loadingAudio ? null : () => _playAyah(verse.number),
+                          icon: const Icon(Icons.play_arrow_rounded),
+                          label: Text('Play ayah ${verse.number}'),
+                        ),
+                      ),
                     const SizedBox(height: 8),
                     Text('۞  ${verse.number}', textAlign: TextAlign.center,
                       style: const TextStyle(color: Color(0xFFB58A4A), fontSize: 17)),
@@ -340,10 +382,19 @@ class _ReaderScreenState extends State<ReaderScreen> {
               ),
           ]),
         ),
-        if (mode == ReaderMode.listen)
-          const Padding(
-            padding: EdgeInsets.all(12),
-            child: Text('Reciter playback will be connected in the next milestone.'),
+        if (mode == ReaderMode.listen || selectedAyah != null)
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              if (playbackError != null) Text(playbackError!, style: const TextStyle(color: Colors.redAccent)),
+              Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                if (loadingAudio) const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2)),
+                IconButton(tooltip: 'Play selected ayah', onPressed: selectedAyah == null || loadingAudio ? null : () => _playAyah(selectedAyah!), icon: const Icon(Icons.play_arrow_rounded)),
+                IconButton(tooltip: 'Pause recitation', onPressed: () => reciter.pause(), icon: const Icon(Icons.pause_rounded)),
+                IconButton(tooltip: 'Stop recitation', onPressed: () => reciter.stop(), icon: const Icon(Icons.stop_rounded)),
+                Text(selectedAyah == null ? 'Select an ayah' : 'Mishary Alafasy · Ayah $selectedAyah'),
+              ]),
+            ]),
           ),
       ]),
     ),
