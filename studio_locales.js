@@ -52,6 +52,37 @@ Object.assign(STUDIO_LOCALES.fa,{
 "Listening":"در حال شنیدن",
 "Preparing Qur’an recognition SDK…":"در حال آماده‌سازی تشخیص گفتار قرآن…"
 });
+Object.assign(STUDIO_LOCALES.fa,{
+"Follow the teacher's recitation at your own pace.":"تلاوت قاری را با سرعت مناسب خود دنبال کنید.",
+"Repeat-aware following uses local Qur'an speech recognition when supported. Source-matched word timings remain the fallback.":"برای دنبال‌کردن تکرارها، در صورت پشتیبانی از تشخیص گفتار قرآن روی دستگاه استفاده می‌شود؛ در غیر این صورت زمان‌بندی واژه‌ها جایگزین است.",
+"Listen to the reciter · Yasser Al-Dosari":"به تلاوت قاری گوش دهید · یاسر الدوسری",
+"Follow repeated phrases":"دنبال‌کردن عبارت‌های تکراری",
+"Analyse repeats":"بررسی تکرارها",
+"Ready to practise. Tap the microphone to start.":"آمادهٔ تمرین هستید. برای شروع میکروفون را لمس کنید.",
+"Follow the word as you recite. In Memorise mode, a word is revealed only after the listener moves to the next word; this confirms progress, not correct vowels or Tajweed. Detailed phoneme verification requires a different model.":"هنگام تلاوت، واژه‌ها را دنبال کنید. در حالت حفظ، واژه پس از رسیدن به واژهٔ بعدی آشکار می‌شود؛ این تنها نشان‌دهندهٔ پیشرفت است، نه صحت حرکات یا تجوید. بررسی دقیق آواها به مدل دیگری نیاز دارد.",
+"Beta · word following":"آزمایشی · دنبال‌کردن واژه‌ها",
+"Quran-specific model · on-device beta":"مدل ویژهٔ قرآن · نسخهٔ آزمایشی روی دستگاه",
+"Listen deeply. Improve gently.":"با دقت گوش دهید و آرام‌آرام پیشرفت کنید.",
+"Your practice session":"جلسهٔ تمرین شما",
+"Your selected passage":"بخش انتخاب‌شده",
+"How practice works":"روش تمرین",
+"01 · Listen":"۰۱ · گوش‌دادن",
+"02 · Recall":"۰۲ · یادآوری",
+"03 · Recite":"۰۳ · تلاوت",
+"04 · Review":"۰۴ · مرور",
+"Use English clues in Memorise mode":"در حالت حفظ از راهنمای معنی استفاده کنید",
+"Record a passage below for AI-assisted feedback":"برای دریافت بازخورد کمکی هوش مصنوعی، تلاوت خود را در پایین ضبط کنید",
+"Hear the ayah from your selected reciter":"آیه را با صدای قاری انتخاب‌شده بشنوید",
+"Follow the live speech indicator when supported":"در صورت پشتیبانی، نشانگر زندهٔ گفتار را دنبال کنید",
+"0 words reviewed":"۰ واژه مرورشده",
+"4 words":"۴ واژه",
+"Play":"پخش",
+"Pause":"مکث",
+"Stop":"توقف",
+"Start listening":"شروع شنیدن",
+"Listen · Repeat · Reflect":"گوش بده · تکرار کن · تأمل کن",
+"Begin with a little, recite steadily, and review what needs attention. I can guide your practice, but detailed pronunciation should be checked against clear audio.":"با بخشی کوتاه آغاز کنید، پیوسته تلاوت کنید و قسمت‌های نیازمند تمرین را مرور کنید. تلفظ دقیق باید با تلاوت روشن و معتبر سنجیده شود."
+});
 const STUDIO_PREFIX_FA={
 "LISTEN TO THE RECITER · ":"به تلاوت قاری گوش دهید · ",
 "Playing ":"در حال پخش ",
