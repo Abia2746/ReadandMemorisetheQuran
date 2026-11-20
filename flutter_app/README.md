@@ -6,9 +6,10 @@ This is the new **Flutter mobile client**, kept in the existing ReadandMemoriset
 
 - Material 3 ivory/sage foundation, mobile navigation, RTL Arabic word layout
 - Read / Memorise / Listen mode selector
-- Qur'an word data from Quran.com API v4 (first 50 verses of the selected surah)
+- Qur'an word data from Quran.com API v4 with multi-page loading and sequential verse validation
 - Tap-to-select word, flag for revision, memorisation reveal/hide
 - Local persistence of selected surah, mode, and review flags
+- Best-effort local file cache of fully fetched surahs; reopening previously loaded surahs can work offline. First-time downloads require internet.
 
 ## Run locally
 
@@ -25,4 +26,4 @@ Flutter's generated Android and iOS native folders are not committed yet; `flutt
 
 ## Next
 
-Implement pagination for longer surahs, local offline Qur'an storage, exact phrase audio playback, word study, accessible memorisation review, and native speech inference. The Listen tab is currently a placeholder and **does not play audio**. This foundation does not claim real-time Tajweed assessment. Check Quran.com API terms and content attribution before public distribution.
+Validate cached content against trusted surah verse counts and add offline download management, exact phrase audio playback, word study, accessible memorisation review, and native speech inference. The Listen tab is currently a placeholder and **does not play audio**. This foundation does not claim real-time Tajweed assessment. Check Quran.com API terms and content attribution before public distribution.
