@@ -650,26 +650,30 @@ with st.sidebar:
 # These widgets are intentionally on the main page, not in the collapsed sidebar.
 st.markdown("### 📖 Choose your Qur'an passage")
 st.caption("Select a surah, starting and ending ayah, and reciter. Changes load automatically.")
+def _on_surah_change():
+    st.session_state.quran_nav_start = 1
+    st.session_state.quran_nav_end = 1
+
+st.session_state.setdefault("quran_nav_surah", int(st.session_state.surah))
+st.session_state.setdefault("quran_nav_start", int(st.session_state.ayah))
+st.session_state.setdefault("quran_nav_end", int(st.session_state.end_ayah))
+st.session_state.setdefault("quran_nav_reciter", st.session_state.get("selected_reciter", "Yasser Al-Dosari"))
 nav_surah, nav_start, nav_end, nav_reciter = st.columns([2.1, 1, 1, 1.8])
 with nav_surah:
     surah = st.selectbox(
         "Surah · سورة", options=list(range(1, 115)),
         format_func=lambda n: f"{n}. {SURAH_TITLES.get(n, ('', f'Surah {n}'))[1]} · {SURAH_TITLES.get(n, ('', ''))[0]}",
-        key="quran_nav_surah",
+        key="quran_nav_surah", on_change=_on_surah_change,
     )
 with nav_start:
     ayah = st.number_input("From ayah", min_value=1, max_value=AYAHS[surah],
-                           value=min(int(st.session_state.ayah), AYAHS[surah]),
                            step=1, key="quran_nav_start")
 with nav_end:
     end_ayah = st.number_input("To ayah", min_value=int(ayah),
                                max_value=min(AYAHS[surah], int(ayah) + 9),
-                               value=min(max(int(ayah), int(st.session_state.end_ayah)),
-                                         min(AYAHS[surah], int(ayah) + 9)),
                                step=1, key="quran_nav_end")
 with nav_reciter:
     reciter = st.selectbox("Reciter · القارئ", options=list(RECITERS),
-                           index=1 if "Yasser Al-Dosari" in RECITERS else 0,
                            key="quran_nav_reciter")
 st.session_state.surah = int(surah)
 st.session_state.ayah = int(ayah)
