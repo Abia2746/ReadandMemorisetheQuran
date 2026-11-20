@@ -3,6 +3,10 @@ export default function(component) {
   const D=component.data || {};
   const words=Array.isArray(D.words)?D.words:[];
   const meta=D.meta || {};
+  const language=String(D.language||"en");
+  const labels=D.uiStrings||{};
+  const T=(key,fallback)=>String(labels[key]||fallback);
+  const verseTranslations=D.verseTranslations||{};
   const root=component.parentElement.querySelector(".am-mount");
   if(!root)return;
   root.replaceChildren();
@@ -35,10 +39,10 @@ export default function(component) {
   const tabs=CE("div","am-tabs");
   tabs.setAttribute("role","tablist");
   const pages=[
-    ["read","☷","Read"],
-    ["cover","◉","Memorise"],
-    ["listen","♫","Listen"],
-    ["journey","✦","My journey"]
+    ["read","☷",T("read","Read")],
+    ["cover","◉",T("cover","Memorise")],
+    ["listen","♫",T("listen","Listen")],
+    ["journey","✦",T("journey","My journey")]
   ];
   const tabBtns={};
   pages.forEach(([id,icon,title])=>{
@@ -79,10 +83,28 @@ export default function(component) {
   const textArea=CE("div","am-mushaf");
   textArea.setAttribute("aria-label","Uthmani Qur'an text");
   readerPanel.appendChild(textArea);
+  // Published verse meanings follow the selected locale; never replace Arabic.
+  const translatedEntries=Object.entries(verseTranslations)
+    .filter(([ayah,text])=>Number(ayah)>=Number(meta.a)&&Number(ayah)<=Number(meta.end)&&String(text).trim());
+  if(translatedEntries.length){
+    const translations=CE("section","am-panel am-translations");
+    translations.style.marginTop="14px";
+    translations.setAttribute("lang",language);
+    const heading=CE("h3","am-smallhead",T("translation","Translation")+" · "+language.toUpperCase());
+    translations.appendChild(heading);
+    translatedEntries.sort((a,b)=>Number(a[0])-Number(b[0])).forEach(([ayah,meaning])=>{
+      const row=CE("div","am-translation-ayah");
+      row.style.padding="10px 0";
+      row.style.borderBottom="1px solid rgba(155,135,99,.2)";
+      append(row,CE("strong","",String(meta.s)+":"+ayah),CE("p","",meaning));
+      translations.appendChild(row);
+    });
+    readerPanel.appendChild(translations);
+  }
   const controls=CE("div","am-control-row");
-  const toggleHint=btn("✧ Show hints");
+  const toggleHint=btn("✧ "+T("hints","Show hints"));
   const toggleColour=btn("◈ Tajweed signs");
-  const resetBtn=btn("↺ Start over");
+  const resetBtn=btn("↺ "+T("reset","Start over"));
   const recordHint=btn("🎙 Live recitation","am-button am-primary");
   append(controls,toggleHint,toggleColour,resetBtn,recordHint);
   readerPanel.appendChild(controls);
@@ -375,7 +397,7 @@ export default function(component) {
     const cover=currentTab==="cover",showArabic=currentTab!=="cover";
     textArea.className=cover?"am-mushaf am-cover":"am-mushaf";
     textArea.dir=cover?"ltr":"rtl";
-    textArea.setAttribute("lang",cover?"en":"ar");
+    textArea.setAttribute("lang",cover?language:"ar");
     textArea.setAttribute("aria-label",cover?"English clues for memorising the selected verses":"Arabic Qur'an passage");
     if(currentTab==="journey")return;
     words.forEach((w,i)=>{
