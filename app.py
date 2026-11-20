@@ -720,7 +720,7 @@ except Exception as exc:
 
 verse_translations = translated_verses(
     surah, ayah, end_ayah, translation_resources.get(language)
-) if language != "en" else {}
+)
 translation_available = bool(verse_translations)
 if language != "en" and not translation_available:
     st.info(ui_labels["unavailable"])
