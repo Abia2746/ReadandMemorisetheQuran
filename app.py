@@ -845,14 +845,14 @@ with left:
                 with st.expander(_ui("Technical details")):
                     st.code(str(exc))
 with right:
-    st.markdown("####  + _ui("Review guidance"))
+    st.markdown("#### " + _ui("Review guidance"))
     st.write(_ui("1. Recite just the chosen passage."))
     st.write(_ui("2. Use a quiet place."))
     st.write(_ui("3. Review uncertain words before attempting the passage again."))
     st.caption(_ui("Speech recognition and language-model feedback cannot certify every vowel, ghunnah or madd duration."))
 
 if saved:
-    st.markdown("###  + _ui("Your last practice review"))
+    st.markdown("### " + _ui("Your last practice review"))
     st.caption("Recording: " + saved.get("recording_scope", "Selected passage"))
     st.info(saved.get("feedback") or _ui("The AI returned no general feedback."))
     review = saved.get("review")
@@ -861,7 +861,7 @@ if saved:
                    _ui("AI practice suggestions are not verified Tajweed grades."))
         observations = review.get("observations", [])
         if observations:
-            st.markdown("####  + _ui("Possible points to review"))
+            st.markdown("#### " + _ui("Possible points to review"))
             for item in observations:
                 with st.expander(
                     f"Ayah {item['ayah']} · {item['arabic']} · "
@@ -878,7 +878,7 @@ if saved:
                 "The AI returned no adequately specific, timestamped findings. "
                 "That does not mean every vowel or Tajweed rule was correct."
             )
-        st.markdown("####  + _ui("16-topic Tajweed practice checklist"))
+        st.markdown("#### " + _ui("16-topic Tajweed practice checklist"))
         st.caption(
             "Sixteen learning categories, not a claim that sixteen rules were "
             "acoustically graded. Uncertain is not a pass or a fail."
@@ -924,7 +924,7 @@ if saved:
         st.session_state.tries += 1
         st.rerun()
 
-st.markdown("###  + _ui("Ask your AI teacher"))
+st.markdown("### " + _ui("Ask your AI teacher"))
 st.caption(
     "Ask about the selected verses, Qur'anic vocabulary or Tajweed terminology. "
     "AI responses can contain mistakes; verify religious rulings and precise recitation with reliable scholars."
