@@ -1258,95 +1258,84 @@ export default function(component) {
         if(!Number.isInteger(word)||word<1||word>Number(counts[verseIndex]))return -1;
         return counts.slice(0,verseIndex).reduce((n,c)=>n+Number(c||0),0)+word-1;
       };
-      // Recognising the beginning of a word does NOT verify its final vowel,
-      // shaddah or consonants. Visually follow the live word immediately,
-      // but only mark it completed on a subsequent consecutive locked word.
-      let pendingWord=-1;
-      let stableHits=0;
-      let lastDisplayed=-1;
-      let lastLockAt=0;
-      let lastLockedIndex=-1;
+      // Fast-recitation tracking is independent of the memorisation cursor:
+      // a recogniser may emit one locked event for several spoken words.
+      // Skipped positions are UNKNOWN, never silently marked correct or wrong.
+      let lastObserved=-1;
+      let lastObservationAt=0;
+      const observedCounts=new Map();
       const suspectWords=new Set();
+      const repaint=()=>{
+        wordNodes.forEach((el,i)=>{
+          const review=flaggedIndices.has(i);
+          const good=confirmedIndices.has(i)&&!review;
+          const active=i===currentWord;
+          el.classList.toggle("am-review",review);
+          el.classList.toggle("am-confirmed",good);
+          el.classList.toggle("am-active",active);
+          el.classList.toggle("am-uncertain",!review&&!good&&
+            (active||(i<currentWord&&i>confirmedWord)));
+          if(currentTab==="cover"&&good&&!el.querySelector(".am-revealed-ar"))
+            el.appendChild(CE("span","am-revealed-ar",words[i].ar||""));
+        });
+        progressFill.style.width=Math.round(100*(Math.max(0,currentWord+1))/Math.max(1,words.length))+"%";
+      };
       session.subscribe(event=>{
         if(!live||disposed||!event)return;
         if(event.type==="position"){
           if(event.state!=="locked")return;
-          const candidates=Array.isArray(event.observed)?event.observed:[];
-          // Prefer the actually observed Quran word. The memorization
-          // session's expected position can get ahead of the reciter and is
-          // not independent evidence of what was pronounced.
-          // Prefer evidence for the next expected word, not an arbitrary
-          // first alternative in the model's candidate array.
-          const nextExpected=confirmedWord+1;
-          const candidate=candidates.find(c=>globalIndex(c?.word)===nextExpected)
-            ||candidates.find(c=>globalIndex(c?.word)===pendingWord+1)
-            ||candidates.find(c=>globalIndex(c?.word)>=0);
-          const target=candidate?.word;
-          const idx=globalIndex(target);
-          if(idx<0){
-            coach("🎙 Listening… begin with the first unrevealed word.","guide");
-            setStatus("Quran listener is listening · waiting for a recognised word in the selected passage","active");
+          const candidates=(Array.isArray(event.observed)?event.observed:[])
+            .map(c=>({idx:globalIndex(c?.word),confidence:Number(c?.confidence),word:c?.word}))
+            .filter(c=>c.idx>=0);
+          if(!candidates.length){
+            setStatus("Listening · no reliably located Qur'an word yet","active");
             return;
           }
-          // The model can move to the next word before repeating the old
-          // position. Finalise the preceding observed word FIRST, then follow.
-          if(idx===pendingWord+1 && pendingWord===confirmedWord+1
-              && stableHits>=1 && !suspectWords.has(pendingWord)){
-            mark(pendingWord,true);
+          // Prefer the furthest plausible forward observation. Do not force
+          // the recogniser to emit each word individually during fast reading.
+          const forward=candidates.filter(c=>c.idx>=Math.max(0,lastObserved-1));
+          const candidate=(forward.length?forward:candidates)
+            .sort((a,b)=>b.idx-a.idx)[0];
+          const idx=candidate.idx,now=Date.now();
+          if(idx<lastObserved-2 && now-lastObservationAt<1400)return;
+          const repeated=idx===lastObserved;
+          observedCounts.set(idx,(observedCounts.get(idx)||0)+1);
+          lastObserved=idx;lastObservationAt=now;
+          currentWord=idx;
+          const strong=Number.isFinite(candidate.confidence)&&candidate.confidence>=0.62;
+          if(strong&&observedCounts.get(idx)>=2&&!suspectWords.has(idx)){
+            confirmedIndices.add(idx);
+            flaggedIndices.delete(idx);
           }
-          if(idx>confirmedWord+1){
-            coach("↶ Please continue from the highlighted word in order.","guide");
-            return;
-          }
-          const confidence=Number(candidate?.confidence);
-          const shortWord=normalized(words[idx].ar||"").length<=3;
-          const now=Date.now();
-          // Position evidence is displayed immediately. Low confidence is
-          // uncertainty, not a reason to freeze the reader.
-          if(idx===pendingWord)stableHits++;
-          else{pendingWord=idx;stableHits=1;}
-          lastLockAt=now;
-          lastLockedIndex=idx;
-          if(idx===confirmedWord+1){
-            mark(idx,false);
-            // Confirmation requires either repeated independent locked
-            // observations or subsequent forward word evidence.
-            const strong=Number.isFinite(confidence)&&confidence>=0.62;
-            if(stableHits>=2 && strong && !suspectWords.has(idx)){
-              mark(idx,true);
-            }else{
-              wordNodes[idx]?.classList.add("am-uncertain");
-              coach("✧ Following your recitation. Keep going; this word is still being checked.","guide");
-            }
-          }
-          if(idx!==lastDisplayed){
-            lastDisplayed=idx;
-            micMessage.textContent=shortWord
-              ?"Short word detected · waiting for enough context to confirm passage progress; exact vowels remain unchecked."
-              :"Quran word position detected · fine articulation and Tajweed remain unchecked.";
-          }
-          setStatus("Following ayah "+target.ayah+", word "+target.word+
-            " · "+(confirmedIndices.has(idx)?"recognised in sequence":"heard · awaiting confirmation"),"active");
+          // Confirm the preceding OBSERVED word when the recogniser moves on.
+          // Never claim unobserved intervening words were verified.
+          if(idx>0&&observedCounts.has(idx-1)&&!suspectWords.has(idx-1))
+            confirmedIndices.add(idx-1);
+          while(confirmedIndices.has(confirmedWord+1))confirmedWord++;
+          repaint();
+          wordNodes[idx]?.scrollIntoView({behavior:"smooth",block:"nearest",inline:"nearest"});
+          const state=flaggedIndices.has(idx)?"possible mismatch":
+            confirmedIndices.has(idx)?"recognised":"heard · not yet verified";
+          micMessage.textContent="Ayah "+candidate.word.ayah+", word "+candidate.word.word+
+            " · "+state+". Subtle vowels and Tajweed are not verified by this model.";
+          setStatus("Live tracking · "+state,"active");
         }else if(event.type==="checker"&&event.state==="confirmed"){
           const idx=globalIndex(event.location);
           if(idx>=0){
             suspectWords.add(idx);
             flaggedIndices.add(idx);
             confirmedIndices.delete(idx);
-            if(idx<=confirmedWord){
-              for(let i=idx;i<words.length;i++)confirmedIndices.delete(i);
-              confirmedWord=idx-1;
-            }
-            renderWords();
-            wordNodes[idx]?.classList.add("am-review");
-            coach("↶ A possible word mismatch was detected. Repeat this word carefully.","guide");
-            micMessage.textContent="Possible memorisation issue at ayah "+
-              words[idx].ayah+", word "+(idx+1)+": "+
-              String(event.errorClass||"word mismatch")+
-              ". The model does not assess exact vowels or Tajweed.";
+            if(idx<=confirmedWord)confirmedWord=idx-1;
+            currentWord=idx;
+            repaint();
+            coach("Possible recitation mismatch at the highlighted word. Please review.","guide");
+            micMessage.textContent="Possible mismatch at ayah "+words[idx].ayah+
+              ", word "+(idx+1)+": "+String(event.errorClass||"recognition mismatch")+
+              ". This is not a verified vowel or Tajweed assessment.";
+            setStatus("Possible word mismatch · review red highlight","active");
           }
         }else if(event.type==="capabilities"){
-          micMessage.textContent="Quran-specific listener · follows word position, omitted/added/wrong words and skipped passages; NOT all vowels, consonant contrasts or Tajweed.";
+          micMessage.textContent="Qur'an-specific tracking enabled. Green means recognised word evidence; red means model-reported possible mismatch; purple means unverified.";
         }
       });
       let lastMeterUpdate=0;
