@@ -33,7 +33,7 @@ _STUDIO_JS = (
 )
 
 _studio = st.components.v2.component(
-    "al_muallim_studio_20261119_r8_noor_hifdh",
+    "al_muallim_studio_20261120_r9_live_tracking",
     html='<div class="am-mount"></div>',
     css=_STUDIO_CSS,
     js=_STUDIO_JS,
@@ -120,7 +120,7 @@ def render_studio(
         cloud_session = None
         st.session_state.pop("_am_live_cloud_session", None)
     data = {
-        "buildVersion": "2026-11-19-r8",
+        "buildVersion": "2026-11-20-r9-live-tracking",
         "hifdhPlan": plan_data,
         "hifdhCalendar": calendar_data,
         "planMessage": st.session_state.get("_am_plan_feedback", ""),
