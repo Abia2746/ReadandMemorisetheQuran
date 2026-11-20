@@ -139,7 +139,7 @@ def render_studio(
         "reciter": reciter,
         "language": language,
         "uiStrings": ui_strings or {},
-        "uiCatalogue": ui_catalogue or {},
+        "uiCatalogue": ui_catalogue if ui_catalogue is not None else (ui_strings or {}),
         "verseTranslations": verse_translations or {},
         "trackWordCounts": word_counts or [],
         "segments": segments or [],
