@@ -1261,8 +1261,14 @@ export default function(component) {
             setStatus("Quran listener is listening · waiting for a recognised word in the selected passage","active");
             return;
           }
+          // The model can move to the next word before repeating the old
+          // position. Finalise the preceding observed word FIRST, then follow.
+          if(idx===pendingWord+1 && pendingWord===confirmedWord+1
+              && stableHits>=1 && !suspectWords.has(pendingWord)){
+            mark(pendingWord,true);
+          }
           if(idx>confirmedWord+1){
-            coach("↶ That sounds ahead of your place. Please repeat the next word in order.","guide");
+            coach("↶ Please continue from the highlighted word in order.","guide");
             return;
           }
           const confidence=Number(candidate?.confidence);
@@ -1279,26 +1285,12 @@ export default function(component) {
             setStatus("Waiting for a stronger match before moving the word highlight...","active");
             return;
           }
-          // Only the NEXT word in the selected passage can advance progress.
-          // A stable repeated lock confirms it immediately; if the next
-          // word begins first, confirm the previous observed word then follow.
-          if(idx===pendingWord){
-            stableHits++;
-          }else if(idx===pendingWord+1 && pendingWord===confirmedWord+1){
-            if(stableHits>=1 && !suspectWords.has(pendingWord)){
-              mark(pendingWord,true);
-            }
-            pendingWord=idx;
-            stableHits=1;
-          }else{
-            pendingWord=idx;
-            stableHits=1;
-          }
+          if(idx===pendingWord)stableHits++;
+          else{pendingWord=idx;stableHits=1;}
           if(idx===confirmedWord+1){
+            // Yellow = currently heard; green = consecutively confirmed.
             mark(idx,false);
-            if(stableHits>=2 && !suspectWords.has(idx)){
-              mark(idx,true);
-            }
+            if(stableHits>=2 && !suspectWords.has(idx))mark(idx,true);
           }
           if(idx!==lastDisplayed){
             lastDisplayed=idx;
