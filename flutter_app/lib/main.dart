@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
@@ -182,7 +183,9 @@ class _ReaderScreenState extends State<ReaderScreen> {
       await reciter.stop();
       await reciter.setUrl(_ayahAudioUrl(chapter, ayah));
       if (!mounted || surah != chapter) return;
-      await reciter.play();
+      unawaited(reciter.play().catchError((Object error) {
+        if (mounted) setState(() => playbackError = 'Playback interrupted. Please try again.');
+      }));
     } catch (_) {
       if (mounted) setState(() => playbackError = 'Recitation could not be played. Check your connection and retry.');
     } finally {
