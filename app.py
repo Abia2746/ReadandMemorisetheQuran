@@ -19,6 +19,7 @@ import streamlit as st
 from timing_data import matched_word_segments
 from audio_embed import inline_passage_clips
 from language_support import available_translations, translated_verses, UI_STRINGS
+from interface_locales import ui_text
 from tajweed_review import rubric_for_prompt, normalize_review
 from prayer_room import earn_recording_review
 
@@ -637,6 +638,8 @@ language = st.selectbox(
     key="quran_language",
 )
 ui_labels = UI_STRINGS.get(language, UI_STRINGS["en"])
+def _ui(text):
+    return ui_text(language, text)
 # Sidebar configuration remains accessible, without dominating the reading page.
 with st.sidebar:
     st.markdown("### ✦ Al-Mu'allim")
@@ -713,7 +716,7 @@ try:
     ]
 except Exception as exc:
     st.error("Unable to load the selected Quran passage. Try reloading or selecting fewer verses.")
-    with st.expander("Technical details"):
+    with st.expander(_ui("Technical details")):
         st.code(str(exc))
     st.stop()
 
@@ -780,10 +783,9 @@ except (TypeError, ValueError, sqlite3.Error, RuntimeError) as studio_exc:
 
 st.markdown(
     "<div class='am-python-section'>"
-    "<div class='eyebrow'>Review your recitation</div>"
-    "<h2>Listen deeply. Improve gently.</h2>"
-    "<p>Record a short passage below for optional AI-supported review. "
-    "A qualified Tajweed teacher should confirm subtle pronunciation and articulation.</p>"
+    "<div class='eyebrow'>" + html_escape.escape(_ui("Review your recitation")) + "</div>"
+    "<h2>" + html_escape.escape(_ui("Listen deeply. Improve gently.")) + "</h2>"
+    "<p>" + html_escape.escape(_ui("Record a short passage below for optional AI-supported review. A qualified Tajweed teacher should confirm subtle pronunciation and articulation.")) + "</p>"
     "</div>",
     unsafe_allow_html=True,
 )
@@ -796,9 +798,10 @@ with left:
         f"Ayah {n}" for n in range(ayah, end_ayah + 1)
     ]
     recording_scope = st.selectbox(
-        "Which ayah or passage did you recite?",
+        _ui("Which ayah or passage did you recite?"),
         choices, index=1 if len(choices) > 2 else 0,
-        help="Choose the ayah you actually recorded, not everything visible in the reader.",
+        format_func=lambda value: _ui(value) if value == "Entire selected passage" else _ui("Ayah ") + value.split()[-1],
+        help=_ui("Choose the ayah you actually recorded, not everything visible in the reader."),
     )
     if recording_scope == "Entire selected passage":
         expected_recording_words = words
@@ -808,13 +811,13 @@ with left:
             word for word in words if int(word["ayah"]) == chosen_ayah
         ]
     recording = st.audio_input(
-        "Record your recitation",
+        _ui("Record your recitation"),
         key=f"academy_rec_{passage_key}_{st.session_state.tries}",
     )
     if recording:
-        if st.button("Analyse this recording", type="primary", use_container_width=True):
+        if st.button(_ui("Analyse this recording"), type="primary", use_container_width=True):
             try:
-                with st.spinner("Reviewing your audio against the selected Quran text..."):
+                with st.spinner(_ui("Reviewing your audio against the selected Quran text...")):
                     states, letter_results, word_feedback, tajweed, feedback, tafsir, teacher_label, review = analyse_recitation(
                         recording.getvalue(),
                         recording.type or "audio/wav",
@@ -838,27 +841,27 @@ with left:
                 )
                 st.rerun()
             except Exception as exc:
-                st.error("The audio review was unsuccessful. Your recitation has not been graded.")
-                with st.expander("Technical details"):
+                st.error(_ui("The audio review was unsuccessful. Your recitation has not been graded."))
+                with st.expander(_ui("Technical details")):
                     st.code(str(exc))
 with right:
-    st.markdown("#### Review guidance")
-    st.write("1. Recite just the chosen passage.")
-    st.write("2. Use a quiet place.")
-    st.write("3. Review uncertain words before attempting the passage again.")
-    st.caption("Speech recognition and language-model feedback cannot certify every vowel, ghunnah or madd duration.")
+    st.markdown("####  + _ui("Review guidance"))
+    st.write(_ui("1. Recite just the chosen passage."))
+    st.write(_ui("2. Use a quiet place."))
+    st.write(_ui("3. Review uncertain words before attempting the passage again."))
+    st.caption(_ui("Speech recognition and language-model feedback cannot certify every vowel, ghunnah or madd duration."))
 
 if saved:
-    st.markdown("### Your last practice review")
+    st.markdown("###  + _ui("Your last practice review"))
     st.caption("Recording: " + saved.get("recording_scope", "Selected passage"))
-    st.info(saved.get("feedback") or "The AI returned no general feedback.")
+    st.info(saved.get("feedback") or _ui("The AI returned no general feedback."))
     review = saved.get("review")
     if isinstance(review, dict) and review.get("rules"):
         st.caption(review.get("disclaimer") or
-                   "AI practice suggestions are not verified Tajweed grades.")
+                   _ui("AI practice suggestions are not verified Tajweed grades."))
         observations = review.get("observations", [])
         if observations:
-            st.markdown("#### Possible points to review")
+            st.markdown("####  + _ui("Possible points to review"))
             for item in observations:
                 with st.expander(
                     f"Ayah {item['ayah']} · {item['arabic']} · "
@@ -875,7 +878,7 @@ if saved:
                 "The AI returned no adequately specific, timestamped findings. "
                 "That does not mean every vowel or Tajweed rule was correct."
             )
-        st.markdown("#### 16-topic Tajweed practice checklist")
+        st.markdown("####  + _ui("16-topic Tajweed practice checklist"))
         st.caption(
             "Sixteen learning categories, not a claim that sixteen rules were "
             "acoustically graded. Uncertain is not a pass or a fail."
@@ -883,9 +886,9 @@ if saved:
         for item in review["rules"]:
             status = item["status"]
             label = (
-                "Possible issue — check audio" if status == "possible_issue"
-                else "Not applicable (AI suggestion)" if status == "not_applicable"
-                else "Uncertain — not verified"
+                _ui("Possible issue — check audio") if status == "possible_issue"
+                else _ui("Not applicable (AI suggestion)") if status == "not_applicable"
+                else _ui("Uncertain — not verified")
             )
             with st.expander(
                 f"{item['rule_id']:02d} · {item['rule_name']} · {label}"
@@ -917,28 +920,28 @@ if saved:
     if saved.get("tafsir_summary"):
         with st.expander("Reflection and context"):
             st.write(saved["tafsir_summary"])
-    if st.button("Start a fresh recording", use_container_width=True):
+    if st.button(_ui("Start a fresh recording"), use_container_width=True):
         st.session_state.tries += 1
         st.rerun()
 
-st.markdown("### Ask your AI teacher")
+st.markdown("###  + _ui("Ask your AI teacher"))
 st.caption(
     "Ask about the selected verses, Qur'anic vocabulary or Tajweed terminology. "
     "AI responses can contain mistakes; verify religious rulings and precise recitation with reliable scholars."
 )
 with st.form("teacher_question", clear_on_submit=True):
     question = st.text_input(
-        "Your question",
-        placeholder="What is the difference between Fathah and Kasrah?",
+        _ui("Your question"),
+        placeholder=_ui("What is the difference between Fathah and Kasrah?"),
     )
-    send = st.form_submit_button("Ask the teacher")
+    send = st.form_submit_button(_ui("Ask the teacher"))
 if send and question.strip():
     try:
-        with st.spinner("Preparing your answer..."):
+        with st.spinner(_ui("Preparing your answer...")):
             answer = ask_teacher_scholar(question.strip(), surah, ayah, end_ayah)
         st.session_state.scholar_chat.append((question.strip(), answer))
     except Exception as exc:
-        st.warning("The AI teacher is temporarily unavailable.")
+        st.warning(_ui("The AI teacher is temporarily unavailable."))
         st.caption(str(exc))
 for user_q, reply in reversed(st.session_state.scholar_chat[-4:]):
     with st.expander(user_q):
