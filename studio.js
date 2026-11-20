@@ -637,11 +637,13 @@ export default function(component) {
       return {segments:null,reason:"Waiting for audio metadata"};
     }
     const lastEnd=segments[segments.length-1].end;
-    const difference=Math.abs(lastEnd/1000-audio.duration)/audio.duration;
-    if(difference>0.30){
-      return {segments:null,reason:"Recording length does not match its word-timing data"};
+    // The last aligned word often ends well before the MP3 does: a reciter
+    // may leave a long trailing pause. Reject only impossible timings extending
+    // materially past the recording, not legitimate trailing silence.
+    if(lastEnd/1000>audio.duration+0.75){
+      return {segments:null,reason:"Word timing extends beyond this audio recording"};
     }
-    return {segments,reason:"Source-matched, automatically generated word timing"};
+    return {segments,reason:"Source-matched automated word timing (approximate)"};
   }
   function showPlaybackPosition(){
     if(live)return;
