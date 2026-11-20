@@ -280,6 +280,11 @@ export default function(component) {
   // all intervening Arabic words after a skip, seek or erroneous match.
   const confirmedIndices=new Set();
   const flaggedIndices=new Set();
+  const practiceReview=new Set();
+  let reviewRound=false;
+  let revealIndex=-1;
+  let revealTimer=null;
+
   let wordNodes=[];
   let live=false,starting=false,cleanupLive=null,recognition=null;
   let meterAnimation=0,micStream=null,micContext=null;
@@ -294,6 +299,70 @@ export default function(component) {
   const sessionKey="amuallim:practice:"+String(meta.s||0)+":"+String(meta.a||0)+":"+String(meta.end||0);
   try{repetitions=Math.max(0,Math.min(1000,Number(localStorage.getItem(sessionKey)||0)||0))}catch(_){}
   // Gentle, accessible live coaching: status remains visible for screen readers.
+  // Gentle rescue controls: the user can reveal and hear the difficult
+  // phrase without treating recognition uncertainty as a recitation error.
+  const rescuePanel=CE("div","am-rescue-panel");
+  rescuePanel.style.cssText="margin-top:12px;padding:12px;border:1px solid #c9d6c5;border-radius:14px;background:rgba(231,239,226,.6)";
+  const rescueHeading=CE("div","am-note","✦ Stuck on a phrase? Practice it, then return to recitation.");
+  const rescueControls=CE("div","am-control-row");
+  const revealButton=btn("✦ Reveal phrase","am-button");
+  const hearButton=btn("▶ Hear recitation","am-button");
+  const correctButton=btn("✓ Recognition was wrong","am-button");
+  const roundButton=btn("↻ Review difficult words","am-button");
+  const rescueText=CE("div","am-note","");
+  rescueText.style.marginTop="8px";
+  append(rescueControls,revealButton,hearButton,correctButton,roundButton);
+  append(rescuePanel,rescueHeading,rescueControls,rescueText);
+  micPanel.appendChild(rescuePanel);
+  function rescueTarget(){
+    if(currentWord>=0&&currentWord<words.length)return currentWord;
+    return Math.min(words.length-1,Math.max(0,confirmedWord+1));
+  }
+  function rescuePhrase(index){
+    const w=words[index];if(!w)return [];
+    const first=Math.max(0,index-1),last=Math.min(words.length-1,index+2);
+    return words.slice(first,last+1).filter(x=>x.ayah===w.ayah);
+  }
+  function showRescue(index){
+    const phrase=rescuePhrase(index);
+    if(!phrase.length)return;
+    revealIndex=index;
+    rescueText.replaceChildren();
+    const ar=CE("div","am-detail-ar",phrase.map(w=>w.ar).join(" "));
+    ar.dir="rtl";ar.style.cssText="font-size:1.55rem;line-height:2.3;margin:8px 0";
+    rescueText.appendChild(ar);
+    rescueText.appendChild(CE("div","", "Repeat this short phrase, then continue. A reveal is a learning aid, not a mistake."));
+    clearTimeout(revealTimer);
+    revealTimer=setTimeout(()=>{revealIndex=-1;rescueText.textContent="✦ Phrase hidden again. Try reciting from memory.";},16000);
+  }
+  revealButton.onclick=()=>{const i=rescueTarget();practiceReview.add(i);showRescue(i)};
+  hearButton.onclick=()=>{
+    const i=rescueTarget(),w=words[i];if(!w)return;
+    practiceReview.add(i);showRescue(i);
+    const verseIndex=Math.max(0,Number(w.ayah)-Number(meta.a));
+    const url=playlist[verseIndex]||playlist[0];
+    if(!url){rescueText.appendChild(CE("div","am-note","No reciter audio available for this verse."));return}
+    audio.pause();audio.src=url;playingIndex=verseIndex;
+    audio.play().catch(()=>{rescueText.appendChild(CE("div","am-note","Tap the audio player to hear this ayah."))});
+    rescueText.appendChild(CE("div","am-note","Playing the selected ayah; repeat the displayed phrase."));
+  };
+  correctButton.onclick=()=>{
+    const i=rescueTarget();if(i<0)return;
+    flaggedIndices.delete(i);practiceReview.delete(i);confirmedIndices.add(i);
+    wordNodes[i]?.classList.remove("am-review","am-uncertain");
+    wordNodes[i]?.classList.add("am-confirmed");
+    rescueText.textContent="✓ Marked as recognised by you. This corrects the practice record; it does not verify Tajweed.";
+  };
+  roundButton.onclick=()=>{
+    const indices=[...new Set([...practiceReview,...flaggedIndices])].sort((a,b)=>a-b);
+    if(!indices.length){rescueText.textContent="No difficult words saved yet. Reveal or flag a phrase to add it.";return}
+    reviewRound=true;
+    const first=indices[0];
+    currentWord=first;
+    showRescue(first);
+    rescueText.appendChild(CE("div","am-note","Review round: "+indices.length+" saved words. Start with this phrase, then use the highlighted words to practise the rest."));
+    wordNodes[first]?.scrollIntoView({behavior:"instant",block:"nearest"});
+  };
   const coaching=CE("div","am-live-coaching");
   coaching.setAttribute("role","status");
   coaching.setAttribute("aria-live","polite");
@@ -1356,6 +1425,7 @@ export default function(component) {
           const idx=globalIndex(event.location);
           if(idx>=0){
             suspectWords.add(idx);
+            practiceReview.add(idx);
             flaggedIndices.add(idx);
             confirmedIndices.delete(idx);
             if(idx<=confirmedWord)confirmedWord=idx-1;
