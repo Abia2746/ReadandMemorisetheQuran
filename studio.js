@@ -285,6 +285,21 @@ export default function(component) {
   let repetitions=0;
   const sessionKey="amuallim:practice:"+String(meta.s||0)+":"+String(meta.a||0)+":"+String(meta.end||0);
   try{repetitions=Math.max(0,Math.min(1000,Number(localStorage.getItem(sessionKey)||0)||0))}catch(_){}
+  // Gentle, accessible live coaching: status remains visible for screen readers.
+  const coaching=CE("div","am-live-coaching");
+  coaching.setAttribute("role","status");
+  coaching.setAttribute("aria-live","polite");
+  coaching.hidden=true;
+  micPanel.appendChild(coaching);
+  let lastCoachingText="",lastCoachingAt=0;
+  function coach(message,tone="neutral"){
+    const now=Date.now();
+    if(message===lastCoachingText&&now-lastCoachingAt<6500)return;
+    lastCoachingText=message;lastCoachingAt=now;
+    coaching.textContent=message;
+    coaching.dataset.tone=tone;
+    coaching.hidden=false;
+  }
   function setStatus(message,state="idle"){
     status.dataset.state=state;
     statusText.textContent=message;
@@ -313,20 +328,29 @@ export default function(component) {
     return row[b.length];
   }
   function match(text,cursor){
+    // Strictly ordered matching: never leap over words because a later phrase
+    // resembles the transcript. Repeated interim transcripts may overlap.
     const heard=normalized(text).split(" ").filter(Boolean);
     let idx=Math.max(0,cursor),found=-1;
     for(const token of heard){
-      for(let i=idx;i<Math.min(expected.length,idx+8);i++){
-        const target=expected[i];
-        if(target && (token===target || (token.length>=5&&target.length>=5&&distance(token,target)<=1))){
-          found=i;idx=i+1;break;
-        }
+      const target=expected[idx];
+      if(!target)break;
+      if(token===target || (token.length>=5&&target.length>=5&&distance(token,target)<=1)){
+        found=idx;idx++;
+      }else if(found>=0){
+        break;
       }
     }
     return found;
   }
   function mark(index,confirm){
     if(index<0||index>=words.length)return;
+    // Never reveal or confirm a word if an earlier word is still missing.
+    const nextRequired=confirmedWord+1;
+    if(index>nextRequired){
+      coach("↶ Let’s continue in order. Repeat the next unrevealed word.","guide");
+      return;
+    }
     const alreadyConfirmed=confirmedIndices.has(index);
     if(currentWord===index && (!confirm || alreadyConfirmed))return;
     currentWord=index;
@@ -338,7 +362,7 @@ export default function(component) {
       el.classList.toggle("am-active",i===index);
       // Recording progress is kept in state; multiple completed words do not
       // receive permanent background highlights, in either Read or Memorise.
-      el.classList.remove("am-confirmed");
+      el.classList.toggle("am-confirmed",live&&confirmedIndices.has(i));
       el.classList.remove("am-ayah-playing");
       // Memorisation begins with English-only clues. Confirmed words reveal
       // their actual Arabic text progressively as the learner recites.
@@ -346,7 +370,8 @@ export default function(component) {
         el.appendChild(CE("span","am-revealed-ar",words[i].ar||""));
       }
     });
-    progressFill.style.width=Math.round(100*(index+1)/Math.max(1,words.length))+"%";
+    progressFill.style.width=Math.round(100*(confirmedWord+1)/Math.max(1,words.length))+"%";
+    if(confirm)coach("✓ Beautiful progress. Keep going, one word at a time.","success");
     wordNodes[index]?.scrollIntoView({behavior:"smooth",block:"nearest",inline:"nearest"});
   }
   const digits="٠١٢٣٤٥٦٧٨٩";
@@ -800,6 +825,7 @@ export default function(component) {
     micButton.classList.remove("am-danger");
     micButton.classList.add("am-primary");
     setStatus("Listening stopped.");
+    coaching.hidden=true;
   }
   async function browserLive(){
     const BrowserSpeech=window.SpeechRecognition||window.webkitSpeechRecognition;
@@ -1212,7 +1238,12 @@ export default function(component) {
           const target=candidate?.word;
           const idx=globalIndex(target);
           if(idx<0){
+            coach("🎙 Listening… begin with the first unrevealed word.","guide");
             setStatus("Quran listener is listening · waiting for a recognised word in the selected passage","active");
+            return;
+          }
+          if(idx>confirmedWord+1){
+            coach("↶ That sounds ahead of your place. Please repeat the next word in order.","guide");
             return;
           }
           const confidence=Number(candidate?.confidence);
@@ -1225,6 +1256,7 @@ export default function(component) {
           if(Number.isFinite(confidence)&&confidence<threshold){
             micMessage.textContent="Short or similar-sounding phrase is uncertain (model confidence "+
               Math.round(confidence*100)+"%). Repeat slowly; this is not a Tajweed verdict.";
+            coach("✧ Almost there. Please repeat that word clearly.","guide");
             setStatus("Waiting for a stronger match before moving the word highlight...","active");
             return;
           }
@@ -1279,6 +1311,7 @@ export default function(component) {
           lastMeterUpdate=now;
           const level=Number.isFinite(db)?Math.min(100,Math.max(0,(db+65)*1.8)):0;
           meterFill.style.width=level+"%";
+          if(level<4 && now-lastCoachingAt>8500)coach("🎙 I can’t hear you clearly. Move a little closer to the microphone.","guide");
         },
         onError:error=>{
           if(disposed)return;
