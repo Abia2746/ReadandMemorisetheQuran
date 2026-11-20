@@ -368,12 +368,13 @@ function attachPrayerRoom(component, D, ui){
     }
     for(const item of shown){
       const row=CE("article","am-room-item");
-      const symbol=CE("div","am-room-item-dot",icon[item.category]||"✧");
+      if(equipped[item.category]===item.id)row.classList.add("am-room-item-equipped");
+      let symbol=CE("div","am-room-item-dot",icon[item.category]||"✧");
       if(item.category==="wallpaper"){
         const swatch=CE("div","am-room-wallpaper-swatch");
         swatch.classList.add("am-room-"+item.id);
         swatch.setAttribute("aria-label",item.name+" decorative material sample");
-        symbol.replaceWith(swatch);
+        symbol=swatch;
         row.classList.add("am-room-wallpaper-card");
       }
       const body=CE("div","am-room-item-detail");
@@ -383,11 +384,11 @@ function attachPrayerRoom(component, D, ui){
       body.appendChild(CE("div","am-room-item-desc",item.description||"Thoughtful interior detailing"));
       if(item.category==="wallpaper")body.appendChild(CE("small","am-room-finish-note","WALL FINISH · changes both 3D walls · preview before buying"));
       const actions=CE("div","am-room-item-actions");
-      const preview=btn("Preview");
+      const preview=btn("Preview in 3D");
       preview.onclick=()=>{
         previewItem=item;
         previewNote.hidden=false;
-        previewNote.textContent="Previewing "+item.name+" · not yet purchased.";
+        previewNote.textContent="Previewing "+item.name+" in your 3D room · this does not spend coins.";
         void buildScene();
       };
       actions.appendChild(preview);
