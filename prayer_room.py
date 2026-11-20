@@ -16,6 +16,9 @@ _DB = pathlib.Path(__file__).resolve().with_name("muallim.db")
 
 # Prices in spendable *coins*, not lifetime XP.
 ITEMS = [
+    {"id":"wallpaper_sage","name":"Sage Silk Wallpaper","category":"wallpaper","price":180,"unlock_xp":0,"description":"A muted sage botanical silk wallcovering with delicate gold stems. Replaces the room's limewash walls."},
+    {"id":"wallpaper_almond","name":"Almond Arabesque Wallpaper","category":"wallpaper","price":420,"unlock_xp":350,"description":"Warm ivory-on-ivory arabesque motifs, fine metallic tracery and boutique-hotel elegance."},
+    {"id":"wallpaper_midnight","name":"Midnight Celestial Wallpaper","category":"wallpaper","price":780,"unlock_xp":950,"description":"Deep midnight blue with understated gold eight-point stars for a tranquil evening sanctuary."},
     {"id":"plant_olive","name":"Olive Tree","category":"plant","price":110,"unlock_xp":0,"description":"Sculptural greenery in a hand-thrown planter"},
     {"id":"lantern_brass","name":"Brass Floor Lantern","category":"lamp","price":160,"unlock_xp":0,"description":"Warm amber light and filigree"},
     {"id":"rug_emerald","name":"Emerald Prayer Rug","category":"rug","price":200,"unlock_xp":100,"description":"An intricate jade-and-gold woven prayer rug"},
@@ -34,7 +37,7 @@ ITEMS = [
 BY_ID = {item["id"]: item for item in ITEMS}
 CATEGORIES = {item["category"] for item in ITEMS}
 STARTER_EQUIPPED = {
-    "rug": None, "plant": None, "lamp": None, "rehal": None,
+    "rug": None, "plant": None, "lamp": None, "rehal": None, "wallpaper": None,
     "art": None, "shelf": None, "cushion": None, "curtain": None,
     "pendant": None, "window": None, "mihrab": None, "floor": None, "ambience": None,
 }
