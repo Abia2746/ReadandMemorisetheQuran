@@ -178,3 +178,13 @@
   background:rgba(225,180,75,.32)!important;
   border-color:rgba(240,196,106,.7)!important;
 }
+
+/* Live word-following states, ordered by specificity. */
+.am-app .am-mushaf .am-word.am-uncertain:not(.am-confirmed):not(.am-review),
+.am-app .am-cover .am-word.am-uncertain:not(.am-confirmed):not(.am-review){
+  background:rgba(188,139,220,.24)!important;
+  outline:2px dashed rgba(206,167,237,.65);
+  outline-offset:2px;
+}
+.am-app .am-mushaf .am-word.am-confirmed.am-uncertain,
+.am-app .am-cover .am-word.am-confirmed.am-uncertain{outline:none}
