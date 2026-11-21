@@ -14,6 +14,7 @@ from redis.asyncio import Redis
 
 from app.routers.billing import router as billing_router
 from app.routers.billing_webhooks import router as webhook_router
+from app.routers.verse import router as verse_router
 
 
 @asynccontextmanager
@@ -46,6 +47,7 @@ app.add_middleware(
 )
 app.include_router(billing_router)
 app.include_router(webhook_router)
+app.include_router(verse_router)
 
 
 @app.get("/health")
