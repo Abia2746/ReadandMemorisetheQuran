@@ -12,6 +12,7 @@ from fastapi import APIRouter, HTTPException, Request
 
 from app.services.quran_metadata import AYAHS, SURAHS, valid_verse
 from app.services.verse_generation import canonical_verse
+from app.services.word_timings import segments as source_matched_timings
 
 router = APIRouter(prefix="/api/quran", tags=["quran-free"])
 
@@ -105,3 +106,25 @@ async def passage(
     verses = await asyncio.gather(*(item(n) for n in range(start,end+1)))
     return {"surah": surah, "from": start, "to": end,
             "verses": verses, "free": True}
+
+
+@router.get("/timings/{surah}/{ayah}")
+async def timings(
+    request: Request, surah: int, ayah: int, reciter: str = "dosari",
+):
+    if not valid_verse(surah, ayah):
+        raise HTTPException(404, "Invalid verse")
+    if reciter not in RECITERS:
+        raise HTTPException(422, "Unsupported reciter")
+    # Cache trusted canonical word counts, not AI-guessed timing positions.
+    item = await verse(request,surah,ayah,"en",reciter)
+    aligned = source_matched_timings(
+        surah,ayah,reciter,len(item["words"])
+    )
+    return {
+        "surah":surah,"ayah":ayah,"reciter":reciter,
+        "segments":aligned,
+        "available":bool(aligned),
+        "source":"QuranLife/EveryAyah automatically generated CC BY 4.0 alignment",
+        "caution":"Machine-generated timings may drift and do not grade Tajweed.",
+    }
