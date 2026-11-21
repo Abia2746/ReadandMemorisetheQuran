@@ -121,9 +121,16 @@ async def teacher_question(
     # Only an exact reviewed FAQ lookup can be safely served at no model cost.
     topic = " ".join(body.question.lower().strip().split())
     reviewed = await conn.fetchrow(
-        """SELECT answer_json FROM approved_faq_cache
-           WHERE canonical_topic=$1 AND language='en'
-             AND prompt_version=$2 AND review_status='reviewed'""",
+        """SELECT faq.answer_json
+             FROM approved_faq_cache faq
+             LEFT JOIN approved_faq_aliases alias
+               ON alias.canonical_topic=faq.canonical_topic
+              AND alias.language=faq.language
+              AND alias.prompt_version=faq.prompt_version
+            WHERE (faq.canonical_topic=$1 OR alias.alias=$1)
+              AND faq.language='en' AND faq.prompt_version=$2
+              AND faq.review_status='reviewed'
+            LIMIT 1""",
         topic, PROMPT_VERSION,
     )
     if reviewed:
