@@ -2,6 +2,8 @@
 import pytest
 from pydantic import ValidationError
 
+from app.services.verse_generation import _verify_verbatim_claims
+
 from app.schemas.verse import (
     QuranVerse, VerseWord, TafsirClaim, TafsirSection,
     VerseTafsirResponse, VerseStudyDrillsResponse, Drill,
@@ -51,3 +53,44 @@ def test_incomplete_drills_cannot_be_marked_complete():
             prompt_version="test", surah=2, ayah=60,
             completion="complete", drills=[drill]
         )
+
+
+def test_fabricated_arabic_quote_is_rejected_before_publication():
+    verse = QuranVerse(
+        surah=2, ayah=60, arabic_uthmani="وَإِذِ ٱسْتَسْقَىٰ مُوسَىٰ",
+        translation="And when Moses sought water",
+        translation_attribution="Test-only short paraphrase",
+    )
+    source = [{
+        "source_id": "ibn_kathir", "text": "وَقَالَ مُوسَىٰ لِقَوْمِهِ",
+    }]
+    raw = {"sections": [{
+        "claims": [{
+            "speaker": "Ibn Kathir",
+            "kind": "scholar_paraphrase",
+            "is_verbatim": True,
+            "quote_arabic": "كَلاَمٌ لاَ يَرِدُ فِي الْمَصْدَرِ",
+            "source_ids": ["ibn_kathir"],
+        }]
+    }]}
+    with pytest.raises(ValueError, match="absent from cited source"):
+        _verify_verbatim_claims(raw, source, verse)
+
+
+def test_prohibited_prophetic_quote_requires_separate_hadith_validation():
+    verse = QuranVerse(
+        surah=2, ayah=60, arabic_uthmani="وَإِذِ ٱسْتَسْقَىٰ مُوسَىٰ",
+        translation="And when Moses sought water",
+        translation_attribution="Test-only short paraphrase",
+    )
+    raw = {"sections": [{
+        "claims": [{
+            "speaker": "Prophet Muhammad ﷺ",
+            "kind": "early_report",
+            "is_verbatim": True,
+            "quote_arabic": "وَقَالَ مُوسَىٰ لِقَوْمِهِ",
+            "source_ids": ["ibn_kathir"],
+        }]
+    }]}
+    with pytest.raises(ValueError, match="hadith certification"):
+        _verify_verbatim_claims(raw, [{"source_id": "ibn_kathir", "text": "وَقَالَ مُوسَىٰ لِقَوْمِهِ"}], verse)
