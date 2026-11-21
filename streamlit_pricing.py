@@ -5,6 +5,7 @@ claims subscriptions are active, or calls a checkout provider.
 """
 import html
 import streamlit as st
+from stripe_checkout import checkout_ready, create_test_checkout
 
 PLANS = (
     ("Free", "£0", "forever", "Read the Qur'an without a subscription.",
@@ -35,4 +36,14 @@ def render_pricing():
                     '<div style="margin-top:20px;color:#C8A96E;font-size:13px">'+('Free access' if name == 'Free' else 'Coming soon — no payment taken')+'</div></div>',
                     unsafe_allow_html=True,
                 )
-    st.caption("Scholarship and sponsored-access options are planned. No payment is collected through this page.")
+    if checkout_ready():
+        st.divider()
+        st.subheader("Stripe sandbox — test payments only")
+        st.warning("Test mode only. No real money is charged and checkout does not activate premium features.")
+        for plan in ("Pro Monthly", "Pro Annual", "Family Annual"):
+            if st.button("Test checkout — " + plan, key="stripe_test_" + plan):
+                try:
+                    st.link_button("Open secure Stripe test checkout", create_test_checkout(plan))
+                except Exception:
+                    st.error("Could not create a Stripe test checkout session. Check your test Price IDs and Stripe configuration.")
+    st.caption("Scholarship and sponsored-access options are planned. Live payments and premium activation are not available.")
