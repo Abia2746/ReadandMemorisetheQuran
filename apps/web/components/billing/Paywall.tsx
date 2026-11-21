@@ -7,6 +7,7 @@
  * This view does not process money, collect cards, or use advertising SDKs.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
+import type { KeyboardEvent } from "react";
 
 export type PlanTier = "pro_monthly" | "pro_annual" | "family_annual";
 export type PaywallReason =
@@ -144,7 +145,7 @@ export function AlMuallimPaywall({
       setError("We couldn't check purchases right now. Please try again later.");
     }
   };
-  const trapFocus = (event: React.KeyboardEvent<HTMLDivElement>) => {
+  const trapFocus = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.key !== "Tab") return;
     const elements = sheetRef.current?.querySelectorAll<HTMLElement>(
       'button:not([disabled]),a[href],input:not([disabled]),[tabindex="0"]'
