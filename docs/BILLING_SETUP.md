@@ -132,10 +132,19 @@ The handler currently processes native `APP_STORE`/`PLAY_STORE` purchases.
 It deliberately ignores RevenueCat `STRIPE`/`RC_BILLING` web purchases
 because direct Stripe is the authoritative web billing channel in this design.
 
-**Open launch blocker:** a RevenueCat transfer needs reconciliation with
-the RevenueCat Subscribers API for both former and new owners. Transfer
-events are placed in `billing_reconciliation_queue`; do not promise instant
-cross-account transfers until that worker and tests are operational.
+**RevenueCat transfer reconciliation:** the verified TRANSFER webhook queues
+both `transferred_from` and `transferred_to` account IDs. A separate
+REST-authenticated worker is implemented at
+`apps/api/app/jobs/reconcile_revenuecat.py`. It reads the actual subscriber
+subscription snapshot, clears stale RevenueCat access for each reconciled
+account and adds valid native-store subscriptions. Run periodically using
+`PYTHONPATH=apps/api python -m app.jobs.reconcile_revenuecat`, and monitor its
+`requires_review_or_retry` count. Unknown aliases or product IDs remain in the
+queue; these require human resolution rather than invented ownership.
+
+**Launch requirement:** exercise actual signed transfer events between two
+sandbox identities, renewal/cancellation races, and paid receipts before
+promising near-real-time cross-account transfers.
 
 ## 6. Regional purchasing power (PPP)
 
