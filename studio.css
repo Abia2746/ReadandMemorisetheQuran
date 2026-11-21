@@ -199,3 +199,8 @@ pointer-events:none;direction:ltr}
 .am-word.am-practice-flag{text-decoration:underline dotted #c28b49;text-underline-offset:5px}
 .am-rescue-panel .am-note{color:#4b4336!important}
 .am-rescue-panel .am-control-row{gap:8px;flex-wrap:wrap}
+
+/* Compact sticky editorial header while the Next.js navigation is prepared. */
+.am-app .am-top { position:sticky; top:0; z-index:50; padding-block:11px; backdrop-filter:blur(18px); -webkit-backdrop-filter:blur(18px); }
+.am-app label,.am-app select,.am-app input { color:#F5EBE0; }
+.am-app select,.am-app input { background:#2A1F18; border:1px solid #4A3828; color:#F5EBE0; }
