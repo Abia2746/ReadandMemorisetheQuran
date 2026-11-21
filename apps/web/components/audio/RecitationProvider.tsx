@@ -7,7 +7,7 @@ export type SpeechObservation = {
   transcript: string;
   final: boolean;
   confidence: number | null;
-  recognizer: "browser";
+  recognizer: "browser" | "whisper";
 };
 type SpeechResult = {
   isFinal: boolean;
@@ -34,7 +34,7 @@ type AudioActions = {
   playRange: (url:string,verseId:string,startMs:number,endMs:number,repeats?:number)=>Promise<void>;
   pause: ()=>void; stop: ()=>void;
   setSpeed: (rate:number)=>void;
-  startMicrophone: (onObservation:(observation:SpeechObservation)=>void)=>Promise<void>;
+  startMicrophone: (onObservation:(observation:SpeechObservation)=>void, engine?:"browser"|"whisper")=>Promise<void>;
   stopMicrophone: ()=>void;
 };
 const Context = createContext<AudioActions | null>(null);
@@ -50,12 +50,19 @@ export function RecitationProvider({children}:{children:ReactNode}) {
   const streamRef = useRef<MediaStream|null>(null);
   const ctxRef = useRef<AudioContext|null>(null);
   const recognitionRef = useRef<BrowserRecognition|null>(null);
+  const workerRef = useRef<Worker|null>(null);
+  const workletRef = useRef<AudioWorkletNode|null>(null);
+  const whisperNodeRef = useRef<GainNode|null>(null);
   const meterTimer = useRef<number|undefined>(undefined);
   const onObservation = useRef<((o:SpeechObservation)=>void)|null>(null);
 
   const stopMicrophone = useCallback(() => {
     const rec=recognitionRef.current; recognitionRef.current=null;
     if(rec){rec.onend=null;rec.onresult=null;rec.onerror=null;try{rec.stop()}catch{}}
+    workletRef.current?.disconnect();
+    workletRef.current=null;
+    whisperNodeRef.current?.disconnect();
+    whisperNodeRef.current=null;
     streamRef.current?.getTracks().forEach(track=>track.stop());
     streamRef.current=null;
     if(meterTimer.current!==undefined)window.cancelAnimationFrame(meterTimer.current);
@@ -94,6 +101,7 @@ export function RecitationProvider({children}:{children:ReactNode}) {
     setState(s=>({...s,speechSupported:Boolean(BrowserAPI)}));
     return ()=>{
       stopMicrophone();
+      workerRef.current?.terminate();workerRef.current=null;
       audio.pause();
       audio.src="";
       audio.removeEventListener("play",onPlay);
@@ -139,7 +147,7 @@ export function RecitationProvider({children}:{children:ReactNode}) {
     if(audioRef.current)audioRef.current.playbackRate=Math.min(1.4,Math.max(0.65,speed));
   },[]);
 
-  const startMicrophone=useCallback(async (observer:(o:SpeechObservation)=>void)=>{
+  const startMicrophone=useCallback(async (observer:(o:SpeechObservation)=>void, engine:"browser"|"whisper"="browser")=>{
     if(!navigator.mediaDevices?.getUserMedia)throw Error("Your browser does not provide microphone access.");
     stop();stopMicrophone();
     const stream=await navigator.mediaDevices.getUserMedia({
@@ -151,6 +159,44 @@ export function RecitationProvider({children}:{children:ReactNode}) {
       const audioCtx=new ContextCtor();
       ctxRef.current=audioCtx;
       const source=audioCtx.createMediaStreamSource(stream);
+      if(engine==="whisper"){
+        if(!audioCtx.audioWorklet)throw Error("AudioWorklet unavailable for on-device recognition.");
+        await audioCtx.audioWorklet.addModule("/worklets/pcm-processor.js");
+        if(!workerRef.current){
+          workerRef.current=new Worker(new URL("../../workers/whisper.worker.ts",import.meta.url),{type:"module"});
+        }
+        const worker=workerRef.current;
+        const blocks:Float32Array[]=[];
+        let samples=0;let ready=false;
+        worker.onmessage=(event:MessageEvent<{type:string;text?:string;message?:string}>)=>{
+          if(event.data.type==="ready"){ready=true;setState(state=>({...state,note:"Whisper is ready. Your Arabic speech stays on this device."}));}
+          if(event.data.type==="transcript" && event.data.text){
+            onObservation.current?.({transcript:event.data.text,final:true,confidence:null,recognizer:"whisper"});
+          }
+          if(event.data.type==="error"){setState(state=>({...state,note:"On-device model: "+(event.data.message||"unavailable")}));}
+        };
+        worker.postMessage({type:"init"});
+        const worklet=new AudioWorkletNode(audioCtx,"almuallim-pcm");
+        workletRef.current=worklet;
+        worklet.port.onmessage=(event:MessageEvent<{pcm:Float32Array;sourceRate:number}>)=>{
+          if(!ready||!streamRef.current)return;
+          const chunk=event.data.pcm;
+          if(!(chunk instanceof Float32Array))return;
+          blocks.push(chunk);samples+=chunk.length;
+          const rate=event.data.sourceRate||audioCtx.sampleRate;
+          if(samples<rate*5)return;
+          const joined=new Float32Array(samples);let offset=0;
+          for(const block of blocks){joined.set(block,offset);offset+=block.length;}
+          blocks.length=0;samples=0;
+          const scale=rate/16000;
+          const resampled=new Float32Array(Math.floor(joined.length/scale));
+          for(let i=0;i<resampled.length;i++)resampled[i]=joined[Math.min(joined.length-1,Math.floor(i*scale))];
+          worker.postMessage({type:"transcribe",audio:resampled,sampleRate:16000},[resampled.buffer]);
+        };
+        const muted=audioCtx.createGain();muted.gain.value=0;
+        whisperNodeRef.current=muted;
+        source.connect(worklet);worklet.connect(muted);muted.connect(audioCtx.destination);
+      }
       const analyser=audioCtx.createAnalyser();
       analyser.fftSize=512;
       source.connect(analyser);
@@ -167,6 +213,10 @@ export function RecitationProvider({children}:{children:ReactNode}) {
         meterTimer.current=window.requestAnimationFrame(tick);
       };
       meterTimer.current=window.requestAnimationFrame(tick);
+    }
+    if(engine==="whisper"){
+      setState(state=>({...state,listening:true,note:"Preparing on-device Arabic Whisper. First use downloads a model; microphone audio remains local."}));
+      return;
     }
     const w=window as unknown as {SpeechRecognition?:RecognizerConstructor;webkitSpeechRecognition?:RecognizerConstructor};
     const Recognition=w.SpeechRecognition||w.webkitSpeechRecognition;
