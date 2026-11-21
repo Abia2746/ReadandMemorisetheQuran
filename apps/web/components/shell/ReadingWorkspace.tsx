@@ -35,11 +35,18 @@ function Workspace(){
   const [queue,setQueue]=useState(()=>[] as ReturnType<typeof loadDifficultWords>);
   const [recitationMessage,setRecitationMessage]=useState("");
   const [speed,setSpeedState]=useState(1);
+  const [micEngine,setMicEngine]=useState<"browser"|"whisper">("browser");
   const lastConfirmed=useRef(-1);
   const recitation=useRecitation();
   const {stop,stopMicrophone}=recitation;
 
   useEffect(()=>{
+    const params=new URLSearchParams(window.location.search);
+    const s=Number(params.get("surah"));
+    const a=Number(params.get("ayah"));
+    if(Number.isInteger(s)&&s>=1&&s<=114&&Number.isInteger(a)&&a>=1&&a<=AYAHS_PER_SURAH[s]){
+      setSurah(s);setAyah(a);
+    }
     setQueue(loadDifficultWords());
     const update=()=>setQueue(loadDifficultWords());
     window.addEventListener("almuallim:difficult-updated",update);
@@ -140,7 +147,7 @@ function Workspace(){
         if(update.matched.length){
           setRecitationMessage(`${update.nextExpected} of ${verse.words.length} words followed. Listen back to check pronunciation.`);
         }
-      });
+      },micEngine);
     }catch(e){
       setRecitationMessage(e instanceof Error?e.message:"Unable to open microphone");
     }
@@ -218,6 +225,15 @@ function Workspace(){
               className="am-gold-action">{recitation.state.listening?<MicOff size={17}/>:<Mic size={17}/>}
               {recitation.state.listening?"Stop listening":"Start listening"}</button>
           </div>
+          <label className="mt-3 flex flex-wrap items-center gap-2 text-xs text-[#E6D5B8]">
+            Speech engine
+            <select className="am-field max-w-[280px]" value={micEngine}
+              disabled={recitation.state.listening}
+              onChange={e=>setMicEngine(e.target.value as "browser"|"whisper")}>
+              <option value="browser">Browser Arabic recognition (may use cloud speech services)</option>
+              <option value="whisper">On-device Whisper Tiny (first download, experimental)</option>
+            </select>
+          </label>
           <div aria-label="Microphone activity" className="mt-3 h-1.5 overflow-hidden rounded-full bg-[#4A3828]">
             <div className="h-full rounded-full bg-[#2E7D32] transition-[width] duration-150"
               style={{width:`${recitation.state.micLevel*100}%`}}/>
@@ -226,7 +242,7 @@ function Workspace(){
             {recitationMessage||recitation.state.note}
           </p>
           <p className="mt-2 text-xs leading-relaxed text-[#C0AB90]">
-            Browser recognition may process speech using your browser provider. Word following
+            Browser recognition may process speech using your browser provider; optional Whisper processes local microphone audio on device. Word following
             checks approximate recall and sequence, not ghunnah, madd, makharij or correct vowels.
             Compare with Qari recitation or a qualified Tajweed teacher.
           </p>
