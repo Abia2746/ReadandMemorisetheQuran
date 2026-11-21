@@ -1,0 +1,129 @@
+{
+  "schema_version": "1.0",
+  "pricing_policy": "No ads; no Quran text, translation, Qari audio or one Noor plan behind payment.",
+  "store_commission_assumptions": {
+    "apple_app_store_small_business": {
+      "estimated_rate": 0.15,
+      "program_enrolled": false,
+      "requires_approval": true,
+      "not_configurable_via_revenuecat": true
+    },
+    "google_play_recurring_subscriptions": {
+      "illustrative_rate": 0.15,
+      "subject_to_current_merchant_terms": true
+    },
+    "stripe_web": {
+      "estimated_rate": null,
+      "reason": "Country, payment method, Stripe Billing and tax fees vary"
+    }
+  },
+  "tiers": {
+    "free": {
+      "price": null,
+      "verse_studio_daily": 3,
+      "teacher_questions_daily": 5,
+      "active_hifdh_plans": 1,
+      "untouched_core_features": [
+        "quran_text",
+        "translations",
+        "qari_audio",
+        "basic_follow_along",
+        "ics_export"
+      ]
+    },
+    "pro_monthly": {
+      "period": "P1M",
+      "features": [
+        "live_precision",
+        "difficult_words",
+        "memorise_with_meaning",
+        "verse_studio",
+        "teacher_qna"
+      ]
+    },
+    "pro_annual": {
+      "period": "P1Y",
+      "trial_days": 7,
+      "features": [
+        "pro_monthly",
+        "premium_sanctuaries",
+        "rain_soundscapes"
+      ]
+    },
+    "family_annual": {
+      "period": "P1Y",
+      "members_including_owner": 5,
+      "features": [
+        "pro_annual",
+        "independent_profiles"
+      ]
+    }
+  },
+  "suggested_display_prices_only": {
+    "GB": {
+      "currency": "GBP",
+      "pro_monthly": 599,
+      "pro_annual": 3999,
+      "family_annual": 6999
+    },
+    "US": {
+      "currency": "USD",
+      "pro_monthly": 699,
+      "pro_annual": 4499,
+      "family_annual": 7999
+    },
+    "EUR": {
+      "currency": "EUR",
+      "pro_monthly": 699,
+      "pro_annual": 4499,
+      "family_annual": 7999
+    }
+  },
+  "regional_ppp": {
+    "standard_markets": [
+      "GB",
+      "US",
+      "CA",
+      "AU",
+      "IE",
+      "FR",
+      "DE",
+      "NL",
+      "BE",
+      "AE",
+      "SA",
+      "QA",
+      "KW"
+    ],
+    "review_for_local_discounts": [
+      "ID",
+      "MY",
+      "PK",
+      "EG",
+      "IN",
+      "NG",
+      "TR"
+    ],
+    "illustrative_target_gbp_equivalent": {
+      "pro_monthly": 249,
+      "pro_annual": 1699
+    },
+    "notes": "These are proposals, NOT live prices, exchange-rate quotes or store configurations. Configure real price points per country in App Store Connect, Google Play Console and Stripe. Do not choose a discount solely from a spoofable client country, IP or currency."
+  },
+  "sponsored_access": {
+    "gift_year_gbp_minor": 3999,
+    "scholarship_month_options": [
+      3,
+      6
+    ],
+    "grant": "pro_annual",
+    "approval": "manual",
+    "never_request_financial_documents": true
+  },
+  "copy_controls": {
+    "annual_default": true,
+    "show_trial_reminder_claim_only_when_worker_verified": true,
+    "show_price_guarantees_from_store_only": true,
+    "no_countdown_timers": true
+  }
+}
