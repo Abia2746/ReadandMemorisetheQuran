@@ -9,7 +9,8 @@ import { MeaningTileGrid } from "@/components/memorise/MeaningTileGrid";
 import { WordActionPopover } from "@/components/mushaf/WordActionPopover";
 import { RecitationProvider, useRecitation } from "@/components/audio/RecitationProvider";
 import { AYAHS_PER_SURAH, type ReciterId } from "@/lib/quranMetadata";
-import { fetchJSON, fetchVerse, type QuranVerse, type QuranWord, type WordStatus } from "@/lib/verseApi";
+import { fetchJSON, fetchVerse, postJSON, apiPath, type QuranVerse, type QuranWord, type WordStatus, type DifficultWord } from "@/lib/verseApi";
+import { useStudyAuth, accessToken } from "@/lib/auth";
 import { alignObservation, statusMapAfter } from "@/lib/arabicAlignment";
 import { flagDifficultWord, loadDifficultWords, removeDifficultWord,
   reviewDifficultWord } from "@/lib/difficultWords";
@@ -35,6 +36,9 @@ function Workspace(){
   const [queue,setQueue]=useState(()=>[] as ReturnType<typeof loadDifficultWords>);
   const [recitationMessage,setRecitationMessage]=useState("");
   const [speed,setSpeedState]=useState(1);
+  const [xp,setXp]=useState(0);
+  const [streak,setStreak]=useState(0);
+  const auth=useStudyAuth();
   const [micEngine,setMicEngine]=useState<"browser"|"whisper">("browser");
   const lastConfirmed=useRef(-1);
   const recitation=useRecitation();
@@ -52,6 +56,43 @@ function Workspace(){
     window.addEventListener("almuallim:difficult-updated",update);
     return ()=>window.removeEventListener("almuallim:difficult-updated",update);
   },[]);
+
+  useEffect(()=>{
+    if(!auth.isSignedIn)return;
+    let mounted=true;
+    void accessToken().then(token=>Promise.all([
+      fetchJSON<{xp:number;streak:number}>("/api/learning/profile",undefined,token),
+      fetchJSON<{words:{surah:number;ayah:number;word_index:number;arabic:string;gloss:string;reason:string;strength:number;due_on:string}[]}>("/api/learning/difficult",undefined,token),
+    ])).then(([profile,remote])=>{
+      if(!mounted)return;
+      setXp(profile.xp);setStreak(profile.streak);
+      const fromRemote:DifficultWord[]=remote.words.map(w=>({
+        word_id:`${w.surah}:${w.ayah}:${w.word_index}`,
+        surah:w.surah,ayah:w.ayah,index:w.word_index,
+        arabic:w.arabic,meaning:w.gloss,reason:w.reason,
+        due:w.due_on,strength:w.strength,
+      }));
+      const local=loadDifficultWords();
+      const seen=new Set(fromRemote.map(w=>w.word_id));
+      setQueue([...fromRemote,...local.filter(w=>!seen.has(w.word_id))]);
+    }).catch(()=>{});
+    return()=>{mounted=false};
+  },[auth.isSignedIn]);
+
+  const syncFlag=useCallback((word:QuranWord,reason:string)=>{
+    if(!auth.isSignedIn)return;
+    void accessToken().then(token=>postJSON("/api/learning/difficult/flag",token,{
+      surah,ayah,index:word.index,arabic:word.arabic,meaning:word.meaning,reason
+    })).catch(()=>{});
+  },[auth.isSignedIn,surah,ayah]);
+
+  const syncRemove=useCallback((word:QuranWord)=>{
+    if(!auth.isSignedIn)return;
+    void accessToken().then(token=>fetch(apiPath(
+      `/api/learning/difficult/${surah}/${ayah}/${word.index}`),{
+      method:"DELETE",headers:{Authorization:`Bearer ${token}`},
+    })).catch(()=>{});
+  },[auth.isSignedIn,surah,ayah]);
 
   useEffect(()=>{
     const ctrl=new AbortController();
@@ -118,12 +159,14 @@ function Workspace(){
   const flagSelected=()=>{
     if(!verse||!selection)return;
     flagDifficultWord(surah,ayah,selection.word,"Manually flagged for focused revision");
+    syncFlag(selection.word,"Manually flagged for focused revision");
     setStatuses(p=>({...p,[selection.word.id]:"review"}));
     quit();
   };
   const correctSelected=()=>{
     if(!selection)return;
     removeDifficultWord(selection.word.id);
+    syncRemove(selection.word);
     setStatuses(p=>({...p,[selection.word.id]:"unknown"}));
     quit();
   };
@@ -142,7 +185,10 @@ function Workspace(){
         // These are review candidates, NEVER definitive Tajweed grades.
         for(const index of update.reviewCandidates){
           const word=verse.words[index];
-          if(word)flagDifficultWord(surah,ayah,word,"Possible recall/sequence mismatch — please verify");
+          if(word){
+            flagDifficultWord(surah,ayah,word,"Possible recall/sequence mismatch — please verify");
+            syncFlag(word,"Possible recall/sequence mismatch — please verify");
+          }
         }
         if(update.matched.length){
           setRecitationMessage(`${update.nextExpected} of ${verse.words.length} words followed. Listen back to check pronunciation.`);
@@ -155,7 +201,7 @@ function Workspace(){
 
   return <div className="min-h-screen">
     <StickyReaderBar surah={surah} ayah={ayah} reciter={reciter} language={lang}
-      xp={0} streak={0} onSurah={navigateSurah} onAyah={navigateAyah}
+      xp={xp} streak={streak} onSurah={navigateSurah} onAyah={navigateAyah}
       onReciter={setReciter} onLanguage={setLang}/>
     <main className="am-page mx-auto">
       <nav className="flex min-h-12 flex-wrap items-center justify-between gap-2 border-b border-[#4A3828]/60 py-1" aria-label="Learning modes">
@@ -254,7 +300,12 @@ function Workspace(){
               <div key={word.word_id} className="rounded-xl border border-[#4A3828] bg-[#2A1F18] px-3 py-2">
                 <div dir="rtl" lang="ar" className="font-quran text-2xl">{word.arabic}</div>
                 <div className="text-xs text-[#E6D5B8]">{word.meaning}</div>
-                <button type="button" onClick={()=>reviewDifficultWord(word.word_id,true)}
+                <button type="button" onClick={()=>{
+                    reviewDifficultWord(word.word_id,true);
+                    if(auth.isSignedIn){void accessToken().then(token=>postJSON(
+                      `/api/learning/difficult/${word.surah}/${word.ayah}/${word.index}/review`,token,{correct:true}
+                    )).catch(()=>{});}
+                  }}
                   className="mt-1 flex items-center gap-1 text-xs text-[#D4AF37]">
                   <CheckCircle2 size={13}/> Practised accurately
                 </button>
