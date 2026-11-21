@@ -1,5 +1,10 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
+import { Amiri, Amiri_Quran, DM_Sans, Playfair_Display } from "next/font/google";
+const fontQuran=Amiri_Quran({subsets:["arabic"],weight:"400",display:"swap",variable:"--loaded-amiri-quran"});
+const fontAmiri=Amiri({subsets:["arabic"],weight:["400","700"],display:"swap",variable:"--loaded-amiri"});
+const fontSans=DM_Sans({subsets:["latin"],display:"swap",variable:"--loaded-dm-sans"});
+const fontEditorial=Playfair_Display({subsets:["latin"],display:"swap",variable:"--loaded-playfair"});
 import { ServiceWorkerRegistration } from "@/components/shell/ServiceWorkerRegistration";
 export const metadata: Metadata = {
   title: "Al-Mu'allim · Your Qur'an companion",
@@ -15,7 +20,7 @@ export const viewport: Viewport = {
 };
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return <html lang="en" suppressHydrationWarning>
-    <body>
+    <body className={[fontQuran.variable,fontAmiri.variable,fontSans.variable,fontEditorial.variable].join(" ")}>
       <ServiceWorkerRegistration />
       {children}
       <footer className="am-global-footer">
