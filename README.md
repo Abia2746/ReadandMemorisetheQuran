@@ -1,5 +1,14 @@
 # Al-Mu'allim · Qur'an learning studio
 
+> **Next.js / FastAPI migration:** A separate PWA client now lives in
+> [`apps/web/`](apps/web/README.md) and the API lives in `apps/api/`.
+> It includes new reader, live-audio, four-tab Verse Studio, Hifz Journey and
+> Three.js sanctuary components. **These do not automatically appear in the
+> existing Streamlit deployment.** Deploy the new Next.js static `out/`
+> and FastAPI backend, configure Quran Foundation credentials, and run
+> device tests before cutover. The legacy Streamlit site remains intact.
+
+
 A responsive original Qur'an learning application built with Streamlit and Streamlit Components v2. Designed for a calm, accessible reading experience on desktop and tablets.
 
 ## What is implemented
