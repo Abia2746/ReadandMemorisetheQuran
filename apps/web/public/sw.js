@@ -3,7 +3,7 @@
 const CACHE = "almuallim-shell-v1";
 const SHELL = ["/", "/verse/", "/journey/", "/sanctuary/", "/icon.svg"];
 self.addEventListener("install", (event) => {
-  event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(SHELL)));
+  event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(SHELL)).catch(()=>undefined));
   self.skipWaiting();
 });
 self.addEventListener("activate", (event) => {
