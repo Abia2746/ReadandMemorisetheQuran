@@ -7,7 +7,6 @@
  * This view does not process money, collect cards, or use advertising SDKs.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { KeyboardEvent } from "react";
 
 export type PlanTier = "pro_monthly" | "pro_annual" | "family_annual";
 export type PaywallReason =
@@ -96,7 +95,7 @@ export function AlMuallimPaywall({
     setSelected("pro_annual");
     setError("");
     requestAnimationFrame(() => closeRef.current?.focus());
-    const escape = (event: KeyboardEvent) => {
+    const escape = (event: globalThis.KeyboardEvent) => {
       if (event.key === "Escape") onClose();
     };
     document.addEventListener("keydown", escape);
