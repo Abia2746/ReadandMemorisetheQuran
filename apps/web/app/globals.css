@@ -16,9 +16,9 @@
   --color-recite-correct: #2E7D32;
   --color-recite-review: #C62828;
   --color-recite-pending: #D0A452;
-  --font-editorial: "Playfair Display", Georgia, serif;
-  --font-quran: "Amiri Quran", "Amiri", serif;
-  --font-body: "DM Sans", system-ui, sans-serif;
+  --font-editorial: var(--loaded-playfair), Georgia, serif;
+  --font-quran: var(--loaded-amiri-quran), var(--loaded-amiri), serif;
+  --font-body: var(--loaded-dm-sans), system-ui, sans-serif;
   --radius-card: 1.25rem;
   --radius-pill: 999px;
   --shadow-warm: 0 16px 48px rgba(0,0,0,.24);
