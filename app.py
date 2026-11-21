@@ -511,7 +511,7 @@ def analyse_recitation(audio_bytes, mime_type, words, strictness, teacher_gender
 
 
 def ask_teacher_scholar(query, surah, start_ayah, end_ayah, language="en"):
-    from tafsir_sources import retrieve_tafsir
+    from tafsir_sources import retrieve_tafsir, audit_tafsir_answer
     sources, research_status = retrieve_tafsir(surah, start_ayah, end_ayah, query)
 
     key = api_key()
@@ -584,6 +584,11 @@ def ask_teacher_scholar(query, surah, start_ayah, end_ayah, language="en"):
             resp = requests.post(url, headers={"x-goog-api-key": key, "Content-Type": "application/json"}, json=body, timeout=20)
             if resp.status_code == 200:
                 answer = "".join(p.get("text", "") for p in resp.json()["candidates"][0]["content"]["parts"])
+                answer, audit_findings = audit_tafsir_answer(answer, sources)
+                if audit_findings:
+                    answer += "\\n\\n### Citation audit\\n" + "\\n".join(
+                        "- " + finding for finding in audit_findings
+                    )
                 if sources:
                     references = "\n\n### Sources retrieved for this answer\n" + "\n".join(
                         f"- [{i+1}] {src['scholar']}, {src['verse']}: {src['url']}"
