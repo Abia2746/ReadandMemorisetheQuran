@@ -128,3 +128,51 @@
 @media (prefers-reduced-motion:reduce) {
   *,*::before,*::after { scroll-behavior:auto!important; animation-duration:.01ms!important; transition-duration:.01ms!important; }
 }
+
+/* Integrated responsive reader, accessible forms and calm learning interactions. */
+@layer components {
+  .am-nav-select {
+    display:inline-flex; align-items:center; flex:none; min-height:42px;
+    max-width:min(45vw,280px); gap:5px; padding:5px 10px;
+    border:1px solid #4A3828; border-radius:999px;
+    background:#2A1F18; color:#F5EBE0;
+  }
+  .am-nav-select select { color:#F5EBE0; background:#2A1F18; color-scheme:dark; }
+  .am-nav-select select option { color:#F5EBE0; background:#2A1F18; }
+  .am-mode-tab {
+    display:inline-flex; align-items:center; justify-content:center;
+    min-height:40px; border-radius:999px; padding:8px clamp(9px,1.4vw,18px);
+    color:#E6D5B8; background:transparent; font-size:12px; font-weight:650;
+  }
+  .am-mode-tab[data-current="true"] {
+    background:linear-gradient(120deg,#E7C983,#C8A96E);
+    color:#1A120D; box-shadow:0 4px 16px #0004;
+  }
+  .am-nav-text-link {display:inline-flex;align-items:center;gap:5px;padding:8px 7px;
+    border-radius:9px;color:#C8A96E;white-space:nowrap;transition:background .15s}
+  .am-nav-text-link:hover {background:#2A1F18}
+  .am-small-action {display:inline-flex;align-items:center;justify-content:center;
+    gap:6px;min-height:42px;padding:8px 14px;border:1px solid #4A3828;
+    border-radius:999px;color:#F5EBE0;background:#2A1F18;font-size:12px;}
+  .am-small-action:hover {border-color:#C8A96E;background:#35261C}
+  .am-gold-action {display:inline-flex;align-items:center;justify-content:center;
+    gap:9px;min-height:44px;padding:9px 18px;border-radius:999px;
+    background:linear-gradient(110deg,#E9CD8A,#C8A96E);
+    color:#1A120D;font-size:13px;font-weight:700;transition:filter .2s}
+  .am-gold-action:hover {filter:brightness(1.06)}
+  .am-meaning-tile {transform-style:preserve-3d;backface-visibility:hidden}
+  .am-meaning-flip {animation:am-word-reveal .38s cubic-bezier(.2,.9,.2,1)}
+  @keyframes am-word-reveal {from{opacity:.2;transform:rotateY(-70deg) scale(.96)}
+    to{opacity:1;transform:rotateY(0) scale(1)}}
+}
+@media (max-width:760px) {
+  .am-sticky-nav {gap:8px;padding-inline:8px}
+  .am-nav-pills {gap:5px}
+  .am-nav-select {max-width:190px;min-height:39px;padding:4px 8px}
+  .am-nav-text-link {font-size:11px;padding:7px 5px}
+  .am-ayah-panel {margin-top:4px}
+  .am-quran {font-size:clamp(1.8rem,7.4vw,2.35rem);line-height:2.35}
+}
+@media (prefers-reduced-motion:reduce) {
+  .am-meaning-flip {animation:none!important}
+}
