@@ -170,3 +170,9 @@
 .am-room-wallpaper_midnight{background-color:#25364c;background-image:radial-gradient(circle at 18px 16px,#d9b876 0 2px,transparent 3px),radial-gradient(circle at 40px 40px,#c6a66a 0 1px,transparent 2px);background-size:47px 49px}
 .am-room-finish-note{display:block;margin:6px 0 9px;color:#e4c899;font-size:10px;letter-spacing:.08em;font-weight:650}
 @media(max-width:600px){.am-room-wallpaper-swatch{flex-basis:56px;width:56px;height:68px}}
+
+/* Prevent long Curated Collection wallpaper titles clipping on small screens. */
+.am-room-item { padding:16px; min-width:0; overflow-wrap:break-word; }
+.am-room-item-body,.am-room-item-title,.am-room-item-desc,
+.am-room-wallpaper-card { min-width:0; overflow-wrap:anywhere; }
+.am-room-item-title { flex-wrap:wrap; }
