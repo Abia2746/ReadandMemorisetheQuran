@@ -159,6 +159,15 @@ async def _sync_stripe_subscription(
         user_id, sub_id, price_id, catalog["tier"], status, start, end, trial_end,
         bool(_get_field(subscription, "cancel_at_period_end", False)), event_at, mode,
     )
+    if mode == "production" and status == "trialing":
+        await conn.execute(
+            """INSERT INTO trial_claims(
+                   user_id,provider,status,reservation_expires_at)
+               VALUES ($1,'stripe','redeemed',NULL)
+               ON CONFLICT(user_id) DO UPDATE
+               SET status='redeemed',reservation_expires_at=NULL
+               WHERE trial_claims.provider='stripe'""", user_id,
+        )
     customer_id = _get_field(subscription, "customer")
     if isinstance(customer_id, str) and customer_id.startswith("cus_"):
         await conn.execute(
@@ -339,6 +348,16 @@ async def revenuecat_webhook(request: Request):
                 canonical_user_id, str(external_sub), product_id,
                 product["tier"], status, start, end, cancel_at_end, event_at,
             )
+            if event.get("period_type") == "TRIAL" and status == "active":
+                await conn.execute(
+                    """INSERT INTO trial_claims(
+                         user_id,provider,status,reservation_expires_at)
+                       VALUES($1,'revenuecat','redeemed',NULL)
+                       ON CONFLICT(user_id) DO UPDATE
+                       SET status='redeemed',reservation_expires_at=NULL
+                       WHERE trial_claims.provider='revenuecat'""",
+                    canonical_user_id,
+                )
             await conn.execute(
                 """UPDATE users SET revenuecat_app_user_id=$2
                    WHERE id=$1 AND revenuecat_app_user_id IS NULL""",
