@@ -21,18 +21,31 @@ from app.routers.learning import router as learning_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # The Qur'an itself must remain readable even when billing is offline.
+    # DB/Redis outages disable only personalised learning and AI billing.
+    app.state.quran_reader_cache = {}
+    app.state.pg = None
+    app.state.redis = None
     dsn = os.environ.get("DATABASE_URL")
     redis_url = os.environ.get("REDIS_URL")
-    if not dsn or not redis_url:
-        raise RuntimeError("DATABASE_URL and REDIS_URL must be configured")
-    app.state.pg = await asyncpg.create_pool(dsn=dsn, min_size=1, max_size=10)
-    app.state.quran_reader_cache = {}
-    app.state.redis = Redis.from_url(redis_url, decode_responses=True)
+    if dsn:
+        try:
+            app.state.pg = await asyncpg.create_pool(dsn=dsn, min_size=1, max_size=10)
+        except (asyncpg.PostgresError, OSError):
+            app.state.pg = None
+    if redis_url:
+        try:
+            app.state.redis = Redis.from_url(redis_url, decode_responses=True)
+            await app.state.redis.ping()
+        except Exception:
+            app.state.redis = None
     try:
         yield
     finally:
-        await app.state.redis.aclose()
-        await app.state.pg.close()
+        if app.state.redis is not None:
+            await app.state.redis.aclose()
+        if app.state.pg is not None:
+            await app.state.pg.close()
 
 
 app = FastAPI(
