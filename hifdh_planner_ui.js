@@ -170,7 +170,7 @@ function attachHifdhJourney(component,D,ui){
   };
   append(actions,exportBtn,notifyBtn);calendar.appendChild(actions);
   calendar.appendChild(CE("p","am-hifdh-note",
-    "This Streamlit app has no background push server. iPad Safari tabs cannot guarantee notifications while closed."));
+    "Web browsers cannot send background alerts while closed—export your 90-day schedule to Apple or Google Calendar for reliable device notifications."));
   const screenTime=CE("div","am-hifdh-device-explain");
   append(screenTime,CE("strong","","Want genuine app limits?"),
     CE("p","","A website cannot block other apps on iPad. If you want limits, configure Settings → Screen Time → App Limits on your own device. Focus Companion only adds a gentle prompt inside Al-Mu'allim."));
