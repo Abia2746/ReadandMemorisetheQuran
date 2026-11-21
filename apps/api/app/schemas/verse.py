@@ -40,7 +40,7 @@ class Reference(StrictModel):
     source_id: str = Field(pattern=r"^[a-z][a-z0-9_-]{1,63}$")
     author: str
     title: str
-    verse: str = Field(pattern=r"^\\d{1,3}:\\d{1,3}$")
+    verse: str = Field(pattern=r"^\d{1,3}:\d{1,3}$")
     url: HttpUrl
     provenance: Literal["third_party_transcription", "curated_edition", "hadith_database", "quran"]
     edition_verified: bool = False
@@ -93,7 +93,7 @@ class TafsirClaim(StrictModel):
     def require_evidence_for_quotes(self):
         if self.is_verbatim and (not self.quote_arabic or not self.source_ids):
             raise ValueError("Exact quotations require source IDs and original text")
-        if re.search(r"\\[SOURCE\\s+\\d+\\]|\\[NOT VERIFIED", self.text):
+        if re.search(r"\[SOURCE\s+\d+\]|\[NOT VERIFIED", self.text):
             raise ValueError("Raw model citation markers must not reach API clients")
         return self
 
