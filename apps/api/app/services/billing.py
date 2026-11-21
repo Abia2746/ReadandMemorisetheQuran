@@ -261,9 +261,15 @@ async def refund_teacher_question(
 
 
 async def create_family_group(conn: asyncpg.Connection, owner: User) -> UUID:
-    entitlement = await resolve_entitlement(conn, owner.id)
-    if entitlement.tier != "family_annual":
-        raise HTTPException(403, "An active Family subscription is required")
+    owner_has_plan = await conn.fetchval(
+        """SELECT 1 FROM subscriptions
+           WHERE user_id=$1 AND tier='family_annual'
+             AND environment='production' AND status IN ('active','trialing')
+             AND coalesce(current_period_end,trial_end)>now()
+           LIMIT 1""", owner.id,
+    )
+    if not owner_has_plan:
+        raise HTTPException(403, "An active owner-paid Family subscription is required")
     async with conn.transaction():
         gid = await conn.fetchval(
             """INSERT INTO family_groups(owner_user_id) VALUES ($1)
