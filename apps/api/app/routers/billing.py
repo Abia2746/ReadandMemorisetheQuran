@@ -10,6 +10,7 @@ import asyncio
 import hashlib
 import os
 import secrets
+import time
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from typing import Annotated, Literal
@@ -252,6 +253,8 @@ async def start_checkout(
         "cancel_url": origin + "/pricing?checkout=canceled",
         "metadata": {"al_muallim_user_id": str(user.id), "tier": params.tier},
         "subscription_data": sub_data,
+        # Match the one-hour pending trial reservation.
+        "expires_at": int(time.time()) + 3600,
         "billing_address_collection": "required",
         "allow_promotion_codes": False,
     }
