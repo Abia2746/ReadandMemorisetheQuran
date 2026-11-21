@@ -1,0 +1,51 @@
+name: Al-Mu'allim Next.js PWA build
+
+on:
+  push:
+    paths:
+      - "apps/web/**"
+      - "apps/api/**"
+      - ".github/workflows/next-pwa.yml"
+  pull_request:
+    paths:
+      - "apps/web/**"
+      - "apps/api/**"
+
+jobs:
+  nextjs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: apps/web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: apps/web/package-lock.json
+      - name: Install Next.js dependencies
+        run: npm install --no-audit --no-fund
+      - name: TypeScript strict check
+        run: npm run typecheck
+      - name: Static PWA build
+        run: npm run build
+      - name: Confirm installable shell
+        run: |
+          test -f out/index.html
+          test -f out/verse.html || test -f out/verse/index.html
+          test -f out/journey.html || test -f out/journey/index.html
+          test -f out/sanctuary.html || test -f out/sanctuary/index.html
+          test -f out/sw.js
+  api:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -r apps/api/requirements.txt
+      - run: python -m compileall -q apps/api/app
+      - run: PYTHONPATH=apps/api python -m pytest -q apps/api/tests
