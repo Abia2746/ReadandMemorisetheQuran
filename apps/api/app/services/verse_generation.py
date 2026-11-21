@@ -7,6 +7,8 @@
 from __future__ import annotations
 
 import html
+import asyncio
+import time
 import json
 import os
 import re
@@ -23,7 +25,10 @@ from app.schemas.verse import (
     QuranVerse, VerseWord, VerseStudyDrillsResponse, VerseTafsirResponse,
 )
 
-QURAN_BASE = "https://apis.quran.foundation/content/api/v4"
+QURAN_BASES = {"production": "https://apis.quran.foundation/content/api/v4", "prelive": "https://apis-prelive.quran.foundation/content/api/v4"}
+QURAN_AUTH_BASES = {"production": "https://oauth2.quran.foundation", "prelive": "https://prelive-oauth2.quran.foundation"}
+_token_cache: dict[str, Any] = {"value": None, "expires": 0.0}
+_token_lock = asyncio.Lock()
 TAFSIR_BASE = "https://cdn.jsdelivr.net/gh/spa5k/tafsir_api@main/tafsir"
 TAFSIR_EDITS = (
     ("ibn_kathir", "Ibn Kathir", "Tafsir al-Qur'an al-'Azim", "ar-tafsir-ibn-kathir"),
@@ -37,14 +42,53 @@ def _plain_text(value: Any) -> str:
     return re.sub(r"\s+", " ", html.unescape(text)).strip()
 
 
+async def _quran_client_token(client: httpx.AsyncClient) -> tuple[str, str]:
+    """Use server-only OAuth client_credentials, renew before expiration."""
+    client_id = os.environ.get("QURAN_FOUNDATION_CLIENT_ID") or os.environ.get("QF_CLIENT_ID")
+    static_token = os.environ.get("QURAN_FOUNDATION_ACCESS_TOKEN")
+    if static_token and client_id:
+        return static_token, client_id
+    secret = os.environ.get("QURAN_FOUNDATION_CLIENT_SECRET") or os.environ.get("QF_CLIENT_SECRET")
+    if not client_id or not secret:
+        raise HTTPException(503, "Qur'an content credentials not configured on this server")
+    if time.monotonic() < _token_cache["expires"] and _token_cache["value"]:
+        return _token_cache["value"], client_id
+    async with _token_lock:
+        if time.monotonic() < _token_cache["expires"] and _token_cache["value"]:
+            return _token_cache["value"], client_id
+        env = os.environ.get("QF_ENV", "production")
+        if env not in QURAN_AUTH_BASES:
+            raise HTTPException(503, "Quran Foundation API environment invalid")
+        scope = os.environ.get("QF_CONTENT_SCOPES", "content.quran.read content.translations.read")
+        try:
+            response = await client.post(
+                QURAN_AUTH_BASES[env] + "/oauth2/token",
+                data={"grant_type": "client_credentials", "scope": scope},
+                auth=httpx.BasicAuth(client_id, secret),
+                headers={"User-Agent": "AlMuallim-QuranStudy/1.0"},
+                timeout=15,
+            )
+            response.raise_for_status()
+            data = response.json()
+            token = str(data["access_token"])
+            ttl = int(data.get("expires_in", 3600))
+            if not token or ttl < 60:
+                raise ValueError("OAuth token was missing or short-lived")
+        except (httpx.HTTPError, ValueError, KeyError, TypeError):
+            raise HTTPException(503, "Qur'an content authentication temporarily unavailable")
+        _token_cache["value"] = token
+        _token_cache["expires"] = time.monotonic() + max(1, ttl - 60)
+        return token, client_id
+
+
 async def canonical_verse(
     client: httpx.AsyncClient, surah: int, ayah: int, lang: str,
 ):
-    token = os.environ.get("QURAN_FOUNDATION_ACCESS_TOKEN")
-    client_id = os.environ.get("QURAN_FOUNDATION_CLIENT_ID")
-    if not token or not client_id:
-        raise HTTPException(503, "Qur'an text service has not been configured")
-    url = f"{QURAN_BASE}/verses/by_key/{surah}:{ayah}"
+    token, client_id = await _quran_client_token(client)
+    env = os.environ.get("QF_ENV", "production")
+    if env not in QURAN_BASES:
+        raise HTTPException(503, "Qur'an content environment unavailable")
+    url = f"{QURAN_BASES[env]}/verses/by_key/{surah}:{ayah}"
     response = await client.get(
         url,
         params={
@@ -62,7 +106,7 @@ async def canonical_verse(
     data = response.json().get("verse") or {}
     words = [
         w for w in data.get("words", [])
-        if w.get("text_uthmani") and w.get("char_type_name") != "end"
+        if w.get("text_uthmani") and w.get("char_type_name") == "word"
     ]
     if not words:
         raise HTTPException(503, "Canonical word list unavailable")
