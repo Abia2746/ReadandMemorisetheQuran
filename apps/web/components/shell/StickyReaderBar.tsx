@@ -56,5 +56,6 @@ export function StickyReaderBar(props:NavProps) {
         <span>{props.xp} XP</span><span className="text-[#C8A96E]">· {props.streak}d</span>
       </span>
     </div>
+    <Link href="/pricing/" className="am-small-action shrink-0 border border-[#D4AF37]/50 text-[#EDD39F]" aria-label="View plans and pricing">Pricing</Link>
   </header>;
 }
