@@ -10,6 +10,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Literal
 import re
+import unicodedata
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, model_validator
 
@@ -71,6 +72,14 @@ class VerseWord(StrictModel):
 
     @model_validator(mode="after")
     def require_root_provenance(self):
+        unvowelled = "".join(
+            c for c in unicodedata.normalize("NFKD", self.arabic_uthmani)
+            if unicodedata.category(c) != "Mn"
+        )
+        if unvowelled in {"وإذ", "واذ"} and (
+            self.root is not None or self.root_state != RootState.not_applicable
+        ):
+            raise ValueError("وَإِذِ is a conjunction plus temporal adverbial noun, without a triliteral root")
         if self.root_state == RootState.not_applicable and self.root:
             raise ValueError("Particles/adverbial no-root entries must not have an invented root")
         if self.root_state == RootState.lexicon_verified and not self.root_reference_id:
@@ -188,6 +197,10 @@ class VerseStudyDrillsResponse(StrictModel):
                 raise ValueError("Original practice text must not be attributed as scripture")
         if self.completion == CompletionState.complete:
             kinds = {item.kind for item in self.drills}
-            if kinds != {"idafah_preposition", "root_construction", "reverse_translation"}:
+            expected = {"idafah_preposition": 3, "root_construction": 4, "reverse_translation": 3}
+            if kinds != set(expected):
                 raise ValueError("Complete study response must include all three exercise types")
+            if any(sum(drill.kind == key for drill in self.drills) < count
+                   for key, count in expected.items()):
+                raise ValueError("Complete study response must include 3 parsing, 4 root and 3 translation drills")
         return self
