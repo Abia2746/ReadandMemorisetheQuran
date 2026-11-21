@@ -519,6 +519,18 @@ def ask_teacher_scholar(query, surah, start_ayah, end_ayah, language="en"):
     sources = sources + web_sources + hadith_sources
     research_status += " " + web_status + " " + hadith_status + " " + edition_status()
 
+    # Reuse reader's source text instead of generating Qur'anic Arabic.
+    verse_words = []
+    for verse_number in range(int(start_ayah), min(int(end_ayah), int(start_ayah) + 4) + 1):
+        try:
+            words = fetch_words(int(surah), verse_number, language=language)
+            if isinstance(words, list):
+                arabic = " ".join(w.get("ar", "") for w in words if w.get("ar"))
+                if arabic:
+                    verse_words.append((verse_number, arabic))
+        except Exception:
+            continue
+
     key = api_key()
     if not key: return "API key missing."
     candidate_models = get_available_models(key)
@@ -552,7 +564,13 @@ def ask_teacher_scholar(query, surah, start_ayah, end_ayah, language="en"):
         "with a modern political or theological label without qualification. "
         "When a question demands word-perfect citations or critical-edition page "
         "numbers unavailable to you, state explicitly that verification is needed. "
-        "Never promise a zero-error answer."
+        "Never promise a zero-error answer. Write polished, readable study material "
+        "with headings: Meaning and Context, Word Insights, Classical Narrations, "
+        "and Fiqh and Reflections, as relevant. Do not include system/debug sections. "
+        "Verify narrator names precisely: the ox-head stone report may be from "
+        "Atiyyah al-Awfi, not Ata ibn Abi Rabah. Distinguish the two. "
+        "Write fa-nbajasat (7:160), fa-nfajarat (2:60), al-inbijas, "
+        "and do not guess transliterations."
     )
     prompt = (
         f"User inquiry: {query}\n"
@@ -580,6 +598,9 @@ def ask_teacher_scholar(query, surah, start_ayah, end_ayah, language="en"):
     if missing_verses:
         research_status += " No retrieved tafsir for: " + ", ".join(missing_verses) + "."
     prompt += (
+        "\n\nQURANIC ARABIC FROM READER API:\n" +
+        ("\n".join(f"{surah}:{v} {ar}" for v, ar in verse_words)
+         if verse_words else "Unavailable: do not invent Arabic.") +
         "\n\nRETRIEVAL STATUS: " + research_status +
         "\nUse ONLY the supplied source transcriptions for scholar-specific "
         "assertions or verbatim Arabic tafsir quotations. Cite [SOURCE n] "
@@ -603,21 +624,24 @@ def ask_teacher_scholar(query, surah, start_ayah, end_ayah, language="en"):
             if resp.status_code == 200:
                 answer = "".join(p.get("text", "") for p in resp.json()["candidates"][0]["content"]["parts"])
                 answer, audit_findings = audit_tafsir_answer(answer, sources)
-                answer += ("\n\n*Claim-level citations are AI-generated and "
-                           "must be checked against linked passages; "
-                           "independent semantic verification is not certified.*")
+
                 if audit_findings:
                     answer += "\\n\\n### Citation audit\\n" + "\\n".join(
                         "- " + finding for finding in audit_findings
                     )
                 if sources:
-                    references = "\n\n### Sources retrieved for this answer\n" + "\n".join(
+                    references = "\n\n**Read the classical sources**\n" + "\n".join(
                         f"- [{i+1}] {src['scholar']}, {src['verse']}: {src['url']}"
                         for i, src in enumerate(sources)
                     )
-                    answer += references + "\n\n*Source transcriptions are not verified critical editions.*"
+                    answer += references
                 else:
                     answer += "\n\n*No tafsir source could be retrieved; quotations and attributions are not source-verified.*"
+                if verse_words:
+                    arabic_header = "\n\n".join(
+                        f"**Qur'an {surah}:{v}**\n\n{ar}" for v, ar in verse_words
+                    )
+                    answer = arabic_header + "\n\n" + answer
                 return answer
         except Exception:
             continue
