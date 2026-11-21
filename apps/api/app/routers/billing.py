@@ -11,6 +11,7 @@ import hashlib
 import os
 import secrets
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from typing import Annotated, Literal
 from uuid import UUID
 from urllib.parse import urlparse
@@ -107,7 +108,57 @@ async def prices(
                              THEN 1 ELSE 2 END""",
         country,
     )
-    return {"country": country, "plans": [dict(item) for item in rows]}
+    paid_before = await conn.fetchval(
+        "SELECT 1 FROM subscriptions WHERE user_id=$1 LIMIT 1", user.id
+    )
+    trial_recorded = await conn.fetchval(
+        """SELECT 1 FROM trial_claims WHERE user_id=$1
+           AND (status='redeemed' OR reservation_expires_at > now())""", user.id,
+    )
+    plans = [
+        {
+            "tier": item["tier"],
+            "currency": item["currency"],
+            "amount_minor": item["amount_minor"],
+            "interval": "month" if item["tier"] == "pro_monthly" else "year",
+            "trial_available": (
+                item["tier"] == "pro_annual" and item["trial_days"] == 7
+                and not paid_before and not trial_recorded
+            ),
+        }
+        for item in rows
+    ]
+    return {"country": country, "plans": plans}
+
+
+class StudyTimezone(BaseModel):
+    iana_timezone: str = Field(min_length=3, max_length=80)
+
+
+@router.post("/timezone")
+async def set_study_timezone(
+    body: StudyTimezone,
+    user: User = Depends(current_user),
+    conn: asyncpg.Connection = Depends(db_conn),
+):
+    try:
+        ZoneInfo(body.iana_timezone)
+    except (ZoneInfoNotFoundError, ValueError):
+        raise HTTPException(422, "Use a valid IANA timezone such as Asia/Kuala_Lumpur")
+    # Quota-clock changes after usage can create an accidental extra allowance.
+    # Permit setting it once before any metered lesson or teacher message.
+    usage_exists = await conn.fetchval(
+        "SELECT 1 FROM daily_ai_quotas WHERE user_id=$1 LIMIT 1", user.id,
+    )
+    if usage_exists:
+        raise HTTPException(
+            409, "Your quota timezone is already set; contact support if you have moved."
+        )
+    await conn.execute(
+        """UPDATE users SET timezone_name=$2,quota_timezone_name=$2,
+           updated_at=now() WHERE id=$1""", user.id, body.iana_timezone,
+    )
+    return {"timezone": body.iana_timezone, "daily_reset": "00:00 local time"}
 
 
 class CheckoutRequest(BaseModel):
