@@ -696,6 +696,20 @@ h1,h2,h3,h4 {color:#ebca88 !important; font-family:'Playfair Display',serif !imp
 .stButton button[kind="secondary"] {background:#453124!important;color:#ecd5a7!important;border:1px solid #b88b4859!important}
 
 [data-testid="stAudioInput"],[data-testid="stTextInput"],[data-testid="stNumberInput"] {color:#f5e7ce!important}
+
+/* High-contrast accessible Streamlit input and selection widgets */
+.stApp label,.stApp [data-testid="stWidgetLabel"],
+.stApp [data-testid="stWidgetLabel"] p,
+.stApp [data-testid="stForm"] label {
+ color:#E6D5B8!important;opacity:1!important;
+}
+.stApp [data-baseweb="select"]>div,
+.stApp [data-baseweb="input"]>div,
+.stApp input,.stApp textarea {
+ background:#2A1F18!important;border:1px solid #4A3828!important;
+ color:#F5EBE0!important;border-radius:12px!important;
+}
+.stApp input::placeholder,.stApp textarea::placeholder {color:#C0AB90!important;opacity:1}
 .stButton button[kind="primary"],[data-testid="stFormSubmitButton"] button {
   background:linear-gradient(110deg,#eed293,#c79540)!important;color:#2b1a10!important;
   border-color:#ddb775!important;border-radius:999px!important;font-weight:700!important;
@@ -779,8 +793,7 @@ def _ui(text):
 # Sidebar configuration remains accessible, without dominating the reading page.
 with st.sidebar:
     st.markdown("### ✦ Al-Mu'allim")
-    st.caption("Noor Hifdh · R8 · 19 November 2026")
-    if st.button(_ui("Refresh R8 interface"), use_container_width=True, help="Clear cached Quran data and reload the current Streamlit build."):
+    if st.button(_ui("Refresh reader"), use_container_width=True, help="Clear cached Quran data and reload the current Streamlit build."):
         st.cache_data.clear()
         st.rerun()
     st.caption(_ui("Choose a passage and customise your practice."))
@@ -807,8 +820,7 @@ with st.sidebar:
 
 # Prominent Qur'an navigation shared by Read, Memorise and Listen.
 # These widgets are intentionally on the main page, not in the collapsed sidebar.
-st.markdown("### 📖 " + ui_labels.get("passage", "Choose your Qur'an passage"))
-st.caption(ui_labels.get("passage_help", "Select a surah, starting and ending ayah, and reciter. Changes load automatically."))
+st.caption(ui_labels.get("passage_help", "Choose your passage and reciter."))
 def _on_surah_change():
     st.session_state.quran_nav_start = 1
     st.session_state.quran_nav_end = 1
@@ -877,7 +889,6 @@ audio_inline = inline_passage_clips(
     surah, ayah, end_ayah, RECITERS[reciter]["folder"]
 )
 
-st.caption("Al-Mu'allim · Noor Hifdh R8 | My Journey and Prayer Room are inside the interactive studio below.")
 
 # The full study environment is provided through a modern non-iframe Streamlit component.
 try:
@@ -1064,4 +1075,4 @@ for user_q, reply in reversed(st.session_state.scholar_chat[-4:]):
     with st.expander(user_q):
         st.write(reply)
 
-st.caption(_ui("Al-Mu'allim · A focused Qur'an learning workspace. Your progress shown here is practice activity, not certified recitation mastery."))
+st.caption("Al-Mu'allim · QuranLife word timings (CC BY 4.0) · Audio: EveryAyah. Recitation feedback supports practice; it is not certified Tajweed assessment.")
