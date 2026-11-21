@@ -744,6 +744,18 @@ DEFAULTS = {
 for key, default in DEFAULTS.items():
     st.session_state.setdefault(key, default)
 
+# Public pricing page is accessible without signing in or loading a Qur'an passage.
+from streamlit_pricing import render_pricing
+if st.session_state.get("am_show_pricing", False):
+    if st.button("← Back to Qur'an reader", key="am_back_to_reader"):
+        st.session_state.am_show_pricing = False
+        st.rerun()
+    render_pricing()
+    st.stop()
+if st.button("✦ Plans & Pricing", key="am_open_pricing", help="View the proposed Free, Pro and Family plans; checkout is not yet available."):
+    st.session_state.am_show_pricing = True
+    st.rerun()
+
 if not st.session_state.name:
     st.markdown(
         "<div class='am-onboarding'><div class='ar'>بِسْمِ اللَّهِ</div>"
@@ -817,18 +829,6 @@ with st.sidebar:
     if st.button(_ui("Switch practice profile"), use_container_width=True):
         st.session_state.name = ""
         st.rerun()
-
-# Public pricing page is accessible without signing in or loading a Qur'an passage.
-from streamlit_pricing import render_pricing
-if st.session_state.get("am_show_pricing", False):
-    if st.button("← Back to Qur'an reader", key="am_back_to_reader"):
-        st.session_state.am_show_pricing = False
-        st.rerun()
-    render_pricing()
-    st.stop()
-if st.button("✦ Plans & Pricing", key="am_open_pricing", help="View the proposed Free, Pro and Family plans; checkout is not yet available."):
-    st.session_state.am_show_pricing = True
-    st.rerun()
 
 # Prominent Qur'an navigation shared by Read, Memorise and Listen.
 # These widgets are intentionally on the main page, not in the collapsed sidebar.
