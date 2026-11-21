@@ -8,7 +8,7 @@ import hmac
 import pytest
 
 from app.services.billing import FEATURES, User, local_day_for_user, require_entitlement
-from app.routers.billing_webhooks import _signature_rc, _stripe_sub_period
+from app.routers.billing_webhooks import _signature_rc, _stripe_sub_period, _transfer_participants
 
 
 def test_quran_is_free_on_every_tier():
@@ -52,3 +52,13 @@ def test_stripe_current_period_on_subscription_item():
     }
     start, end = _stripe_sub_period(sub)
     assert start is not None and end is not None and end > start
+
+
+def test_revenuecat_transfer_has_no_app_user_id_and_tracks_both_accounts():
+    event = {
+        "type": "TRANSFER",
+        "transferred_from": ["former-user"],
+        "transferred_to": ["new-user"],
+    }
+    assert _transfer_participants(event) == {"former-user", "new-user"}
+    assert _transfer_participants({"type": "TRANSFER"}) == set()
