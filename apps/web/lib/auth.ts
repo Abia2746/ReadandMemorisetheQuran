@@ -12,7 +12,7 @@ function getManager():UserManager|null{
   if(!manager){
     manager=new UserManager({
       authority,client_id:clientId,response_type:"code",
-      scope:"openid profile email",
+      scope:"openid profile email "+(process.env.NEXT_PUBLIC_OIDC_API_SCOPE||""),
       redirect_uri:window.location.origin+"/auth/callback/",
       post_logout_redirect_uri:window.location.origin+"/",
       automaticSilentRenew:false,
