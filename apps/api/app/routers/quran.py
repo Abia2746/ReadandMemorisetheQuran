@@ -17,7 +17,7 @@ router = APIRouter(prefix="/api/quran", tags=["quran-free"])
 
 RECITERS = {
     "dosari": {"id": "dosari", "label": "Yasser Al-Dosari", "folder": "Yasser_Ad-Dussary_128kbps"},
-    "alafasy": {"id": "alafasy", "label": "Mishary Alafasy", "folder": "Alafasy_128kbps"},
+    "alafasy": {"id": "alafasy", "label": "Mishary Alafasy", "folder": "Alafasy_64kbps"},
 }
 
 
