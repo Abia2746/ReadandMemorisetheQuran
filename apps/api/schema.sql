@@ -106,7 +106,11 @@ CREATE INDEX IF NOT EXISTS idx_family_invites_group ON family_invites(family_gro
 CREATE TABLE IF NOT EXISTS trial_claims (
   user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
   first_claimed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  provider am_provider NOT NULL CHECK(provider IN ('stripe','revenuecat'))
+  provider am_provider NOT NULL CHECK(provider IN ('stripe','revenuecat')),
+  status TEXT NOT NULL DEFAULT 'reserved' CHECK(status IN ('reserved','redeemed')),
+  checkout_session_id TEXT UNIQUE,
+  reservation_expires_at TIMESTAMPTZ,
+  CHECK (status <> 'reserved' OR reservation_expires_at IS NOT NULL)
 );
 
 -- Store dashboard price IDs; prices are never trusted from client-side currency selection.
