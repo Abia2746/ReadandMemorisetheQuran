@@ -165,6 +165,8 @@ CREATE TABLE IF NOT EXISTS scholarship_gifts (
   currency CHAR(3) NOT NULL,
   amount_minor INTEGER NOT NULL CHECK (amount_minor > 0),
   payment_status TEXT NOT NULL DEFAULT 'pending' CHECK (payment_status IN ('pending','paid','refunded')),
+  months_allocated SMALLINT NOT NULL DEFAULT 0
+    CHECK (months_allocated >= 0 AND months_allocated <= 12),
   received_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
