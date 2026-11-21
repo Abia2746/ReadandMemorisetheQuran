@@ -165,15 +165,15 @@ async def _locked_quota_row(conn: asyncpg.Connection, user: User, day):
 
 async def consume_verse_unlock(
     conn: asyncpg.Connection, user: User, surah: int, ayah: int,
-) -> bool:
-    """Return False only if the 4th distinct free lesson is requested.
+) -> tuple[bool, bool]:
+    """Return (allowed, newly_charged) for a distinct free lesson.
     Re-opening an already-unlocked verse is free for the local day.
     """
     if not (1 <= surah <= 114 and 1 <= ayah <= 286):
         raise HTTPException(422, "Invalid Qur'an verse")
     entitlement = await resolve_entitlement(conn, user.id)
     if entitlement.allows("unlimited_verse_studio"):
-        return True
+        return True, False
     day = local_day_for_user(user)
     async with conn.transaction():
         row = await _locked_quota_row(conn, user, day)
@@ -183,9 +183,9 @@ async def consume_verse_unlock(
             user.id, day, surah, ayah,
         )
         if already:
-            return True
+            return True, False
         if row["verse_unlocks_used"] >= VERSE_LIMIT:
-            return False
+            return False, False
         await conn.execute(
             """INSERT INTO verse_daily_unlocks(user_id,local_day,surah,ayah)
                VALUES ($1,$2,$3,$4)""", user.id, day, surah, ayah,
@@ -195,7 +195,7 @@ async def consume_verse_unlock(
                SET verse_unlocks_used=verse_unlocks_used+1,updated_at=now()
                WHERE user_id=$1 AND local_day=$2""", user.id, day,
         )
-        return True
+        return True, True
 
 
 async def consume_teacher_question(
