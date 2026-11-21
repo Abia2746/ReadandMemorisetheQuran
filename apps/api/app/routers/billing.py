@@ -376,9 +376,15 @@ async def family_accept(
         owner = await conn.fetchval(
             "SELECT owner_user_id FROM family_groups WHERE id=$1", group_id,
         )
-        owner_ent = await resolve_entitlement(conn, owner)
-        if owner_ent.tier != "family_annual":
-            raise HTTPException(409, "The family plan is not active")
+        owner_paid = await conn.fetchval(
+            """SELECT 1 FROM subscriptions
+               WHERE user_id=$1 AND tier='family_annual'
+                 AND environment='production' AND status IN ('active','trialing')
+                 AND coalesce(current_period_end,trial_end) > now()
+               LIMIT 1""", owner,
+        )
+        if not owner_paid:
+            raise HTTPException(409, "The family owner's plan is not active")
         # Capacity check is enforced transactionally by the SQL trigger.
         try:
             await conn.execute(
