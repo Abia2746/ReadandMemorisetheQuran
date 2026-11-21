@@ -89,6 +89,26 @@ CREATE TABLE IF NOT EXISTS subscriptions (
 CREATE INDEX IF NOT EXISTS idx_subs_user_active ON subscriptions(user_id,status,current_period_end);
 CREATE INDEX IF NOT EXISTS idx_subs_owner_tier ON subscriptions(user_id,tier,current_period_end);
 
+-- A one-time, short-lived invitation. Only hashed tokens are stored.
+CREATE TABLE IF NOT EXISTS family_invites (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  family_group_id UUID NOT NULL REFERENCES family_groups(id) ON DELETE CASCADE,
+  token_hash CHAR(64) NOT NULL UNIQUE,
+  invited_email TEXT,
+  expires_at TIMESTAMPTZ NOT NULL,
+  accepted_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  accepted_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_family_invites_group ON family_invites(family_group_id,expires_at);
+
+-- Prevent two simultaneous upgrades from claiming the same free trial.
+CREATE TABLE IF NOT EXISTS trial_claims (
+  user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  first_claimed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  provider am_provider NOT NULL CHECK(provider IN ('stripe','revenuecat'))
+);
+
 -- Store dashboard price IDs; prices are never trusted from client-side currency selection.
 CREATE TABLE IF NOT EXISTS billing_price_catalog (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
