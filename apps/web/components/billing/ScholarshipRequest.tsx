@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import type { FormEvent } from "react";
 
 type ScholarshipRequestProps = {
   submitRequest: (months: 3 | 6, note: string | null) => Promise<void>;
@@ -14,7 +15,7 @@ export function ScholarshipRequest({ submitRequest, onClose }: ScholarshipReques
   const [submitted, setSubmitted] = useState(false);
   const [error, setError] = useState("");
 
-  const send = async (event: React.FormEvent<HTMLFormElement>) => {
+  const send = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (submitting) return;
     setSubmitting(true);
