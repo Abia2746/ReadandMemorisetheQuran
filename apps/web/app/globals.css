@@ -1,0 +1,130 @@
+@import "tailwindcss";
+
+/* Al-Mu'allim design identity — Tailwind v4 CSS-first tokens.
+   Preserve deep espresso, parchment, gold and Uthmani typography. */
+@theme {
+  --color-espresso-950: #1A120D;
+  --color-espresso-900: #241913;
+  --color-espresso-input: #2A1F18;
+  --color-espresso-border: #4A3828;
+  --color-parchment: #F5EBE0;
+  --color-label: #E6D5B8;
+  --color-muted-parchment: #C0AB90;
+  --color-gold: #D4AF37;
+  --color-soft-gold: #C8A96E;
+  --color-emphasis-gold: #EDD39F;
+  --color-recite-correct: #2E7D32;
+  --color-recite-review: #C62828;
+  --color-recite-pending: #D0A452;
+  --font-editorial: "Playfair Display", Georgia, serif;
+  --font-quran: "Amiri Quran", "Amiri", serif;
+  --font-body: "DM Sans", system-ui, sans-serif;
+  --radius-card: 1.25rem;
+  --radius-pill: 999px;
+  --shadow-warm: 0 16px 48px rgba(0,0,0,.24);
+}
+
+/* The Next.js font loader can replace font families with hosted local font vars. */
+:root {
+  color-scheme: dark;
+  --header-height: 68px;
+  --layout-max: 1370px;
+  --tap-target: 44px;
+}
+@layer base {
+  html { scroll-behavior: smooth; scroll-padding-top: calc(var(--header-height) + 1rem); }
+  body {
+    min-height: 100vh;
+    background: radial-gradient(ellipse 85% 40% at 50% 0%,#3B291E 0%,#241913 48%,#1A120D 100%);
+    color: var(--color-parchment);
+    font-family: var(--font-body);
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+  }
+  :is(button,input,textarea,select) { font: inherit; }
+  :is(label,legend,[data-field-label]) { color: #E6D5B8; opacity: 1; }
+  :is(button,input,select,textarea,[role="combobox"]):focus-visible {
+    outline: 2px solid var(--color-soft-gold);
+    outline-offset: 3px;
+  }
+}
+@layer components {
+  .am-page { width:min(100%,var(--layout-max)); margin-inline:auto; padding-inline:clamp(12px,2.5vw,32px); }
+  .am-sticky-nav {
+    position:sticky; top:0; z-index:60;
+    min-height:var(--header-height);
+    display:flex; align-items:center; justify-content:space-between;
+    gap:clamp(8px,1vw,16px); padding:8px clamp(12px,2.5vw,32px);
+    background:rgba(26,18,13,.96);
+    border-bottom:1px solid #4A3828;
+    backdrop-filter:blur(18px); -webkit-backdrop-filter:blur(18px);
+  }
+  .am-nav-pills { display:flex; align-items:center; gap:8px; min-width:0; overflow-x:auto; scrollbar-width:none; }
+  .am-nav-pills::-webkit-scrollbar { display:none; }
+  .am-pill {
+    display:inline-flex; align-items:center; justify-content:center; flex:none;
+    gap:6px; min-height:var(--tap-target); max-width:260px; padding:8px 14px;
+    border:1px solid #4A3828; border-radius:var(--radius-pill);
+    background:#2A1F18; color:#F5EBE0;
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  }
+  .am-field-label { display:block; margin-block-end:6px; color:#E6D5B8; font-weight:600; }
+  .am-field {
+    width:100%; min-width:0; min-height:var(--tap-target);
+    border:1px solid #4A3828; border-radius:12px;
+    padding:10px 14px; background:#2A1F18; color:#F5EBE0;
+    caret-color:#D4AF37; color-scheme:dark;
+  }
+  .am-field::placeholder { color:#C0AB90; opacity:1; }
+  .am-field option { background:#2A1F18; color:#F5EBE0; }
+  .am-ayah-panel {
+    margin-top:clamp(8px,1.5vh,14px); border:1px solid rgba(200,169,110,.25);
+    border-radius:var(--radius-card); background:#241913;
+    box-shadow:var(--shadow-warm);
+  }
+  .am-quran {
+    padding:clamp(16px,3vw,35px);
+    color:#F5EBE0; font-family:var(--font-quran);
+    font-size:clamp(1.9rem,3.4vw,2.7rem);
+    line-height:2.45; direction:rtl; text-align:center;
+    font-feature-settings:"kern" 1;
+  }
+  .am-word { position:relative; border-radius:7px; padding-inline:3px; transition:background .14s ease,box-shadow .14s ease; }
+  .am-word[data-status="confirmed"] {
+    background:rgba(46,125,50,.20); box-shadow:inset 0 -3px #2E7D32;
+  }
+  .am-word[data-status="review"] {
+    background:rgba(198,40,40,.18); box-shadow:inset 0 -3px #C62828;
+  }
+  .am-word[data-status="pending"] {
+    background:rgba(208,164,82,.15); box-shadow:inset 0 -2px #D0A452;
+  }
+  .am-word-actions {
+    position:absolute; inset-block-end:calc(100% + 10px); inset-inline-start:50%;
+    transform:translateX(50%); display:flex; flex-wrap:wrap; gap:4px; padding:8px;
+    max-width:min(95vw,440px); border-radius:14px; border:1px solid #4A3828;
+    background:#2A1F18; color:#F5EBE0; box-shadow:0 10px 32px #0009; z-index:80;
+  }
+  .am-verse-tabs { display:flex; gap:6px; overflow:auto; border-bottom:1px solid #4A3828; }
+  .am-verse-tab { flex:none; min-height:44px; padding:9px 14px; border-radius:12px 12px 0 0; color:#E6D5B8; }
+  .am-verse-tab[aria-selected="true"] { color:#1A120D; background:#C8A96E; }
+  .am-curated-card {
+    min-width:0; padding:16px; display:grid;
+    grid-template-columns:minmax(0,64px) minmax(0,1fr); gap:12px;
+    border-radius:16px; border:1px solid rgba(200,169,110,.25);
+    background:#2A1F18; overflow-wrap:anywhere; word-break:normal;
+  }
+  .am-curated-card :is(h3,p,span,strong) { min-width:0; overflow-wrap:anywhere; }
+  .am-global-footer { margin-top:2rem; padding:24px 16px; border-top:1px solid #4A3828;
+    text-align:center; font-size:.75rem; color:#C0AB90; }
+}
+@media (max-width:640px) {
+  :root { --header-height:60px; }
+  .am-sticky-nav { flex-wrap:nowrap; padding-inline:10px; }
+  .am-mobile-optional { display:none; }
+  .am-pill { padding-inline:10px; }
+  .am-quran { line-height:2.35; padding:14px; }
+}
+@media (prefers-reduced-motion:reduce) {
+  *,*::before,*::after { scroll-behavior:auto!important; animation-duration:.01ms!important; transition-duration:.01ms!important; }
+}
