@@ -10,13 +10,6 @@ export default function(component) {
   const root=component.parentElement.querySelector(".am-mount");
   if(!root)return;
   root.replaceChildren();
-  // Visible build identifier lets users distinguish stale deployments from
-  // browser caching without needing developer tools or console access.
-  const buildStamp=document.createElement("div");
-  buildStamp.className="am-build-stamp";
-  buildStamp.textContent="Live reader · "+String(D.buildVersion||"unversioned");
-  root.appendChild(buildStamp);
-
   if(typeof localizeStudioShell==="function")queueMicrotask(()=>localizeStudioShell(root,String(D.language||"en"),D.uiCatalogue||{}));
   const CE=(tag,cls,text)=>{
     const n=document.createElement(tag);
@@ -33,15 +26,11 @@ export default function(component) {
   append(brandText,CE("strong","", "Al-Mu'allim"),CE("small","", "Your Qur'an companion"));
   append(brand,seal,brandText);
   const headRight=CE("div","am-head-right");
-  const versionChip=CE("span","am-chip","Noor Hifdh · R8");
-  versionChip.setAttribute("title","Build 2026-11-19 R8 · focused word highlighting, Noor Hifdh planner and immersive rain");
   append(headRight,
-    versionChip,
     CE("span","am-chip","✧ "+String(meta.xp||0)+" XP"),
     CE("span","am-chip","✺ "+String(meta.streak||0)+" day streak"));
   append(header,brand,headRight);
   const app=CE("section","am-app");
-  app.dataset.build="quran-listener-r8-hifdh-20261119";
   app.appendChild(header);
   root.appendChild(app);
   const tabs=CE("div","am-tabs");
@@ -155,7 +144,7 @@ export default function(component) {
   const micPanel=CE("div","am-panel");
   micPanel.style.marginTop="14px";
   const micTop=CE("div","am-section-top");
-  append(micTop,CE("h2","", "Live recitation"),CE("span","am-badge","Beta · word following"));
+  append(micTop,CE("h2","", "Live recitation"),CE("span","am-badge","Word-following practice"));
   micPanel.appendChild(micTop);
   const micBody=CE("div","am-scaffold");
   const micDescription=CE("p","am-note",
@@ -269,7 +258,7 @@ export default function(component) {
   });
   const footer=CE("footer","am-footer","");
   footer.appendChild(CE("strong","", "Al-Mu'allim"));
-  footer.appendChild(document.createTextNode(" · QuranLife/EveryAyah word timings (CC BY 4.0) · AI practice observations are not certified Tajweed assessments."));
+  footer.appendChild(document.createTextNode(" · Recitation tracking is practice guidance, not a certified Tajweed assessment."));
   app.appendChild(footer);
 
   let currentTab=["read","cover","room","listen","journey"].includes(D.resumeTab)
