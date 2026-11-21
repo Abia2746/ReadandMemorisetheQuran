@@ -4,6 +4,18 @@ Historical manuscript dimensions and the contents of a purported Mushaf Ali
 cannot be inferred from the standard Qur'an text or tafsir transcriptions.
 """
 import re
+
+
+def clean_tafsir_display(value):
+    """Remove repeated Arabic header and convert internal markers for readers."""
+    if not isinstance(value, str):
+        return ""
+    value = value.replace("\\n", "\n")
+    value = re.sub(r"^\\s*\\*\\*Qur.an \\d+:\\d+\\*\\*\\s*\\n+[^\\n]+\\n*", "", value)
+    value = re.sub(r"\\[SOURCE\\s+(\\d+)\\]", r"〔\\1〕", value)
+    value = re.sub(r"\\[NOT VERIFIED[^\\]]*\\]", "(verification pending)", value)
+    value = re.sub(r"\\bsaqī\\b|\\bsajy\\b", "saqy", value)
+    return value.strip()
 import streamlit as st
 
 def show_verse_tafsir(surah, start, end, language, fetch_words, ask_teacher):
@@ -44,9 +56,13 @@ def show_verse_tafsir(surah, start, end, language, fetch_words, ask_teacher):
             ". First produce Part A: Quranic vocabulary, with Arabic word, "
             "root and literal meaning, using only words actually in the supplied "
             "Quranic word list. Include مَشْرَبَهُمْ in Part A if it is in the list. "
+            "Exclude inflected forms of Qur\u0027anic roots already in Part A from Part B, " 
+            "including العصا, العيون and الحجارة. " 
             "Then Part B: Classical Tafsir vocabulary, using ONLY words present "
             "in the retrieved classical tafsir transcription that are NOT in "
             "the Quranic word list. Never list a Quranic word in Part B. "
+            "Treat وَإِذِ as conjunction plus adverbial noun, with no triliteral root. " 
+            "Never claim consensus on congregational istisqa prayer: Al-Qurtubi records disagreement. " 
             "For ambiguous or non-triliteral roots write uncertain or not applicable. "
             "Then provide three exercises, each with its complete answer key: "
             "(1) three verified idafah/prepositional phrases, "
@@ -68,9 +84,9 @@ def show_verse_tafsir(surah, start, end, language, fetch_words, ask_teacher):
         if isinstance(result, dict):
             tabs = st.tabs(["📖 Tafsir & Reflection", "🧠 Vocabulary & Exercises"])
             with tabs[0]:
-                st.markdown(result.get("tafsir", ""))
+                st.markdown(clean_tafsir_display(result.get("tafsir", "")))
             with tabs[1]:
-                st.markdown(result.get("exercises", ""))
+                st.markdown(clean_tafsir_display(result.get("exercises", "")))
             notes = "# Tafsir " + str(surah) + ":" + str(verse) + "\\n\\n" + result.get("tafsir", "") + "\\n\\n# Arabic Mastery\\n\\n" + result.get("exercises", "")
             st.download_button("Save complete study notes", notes,
                                file_name=f"tafsir_{surah}_{verse}.md",
