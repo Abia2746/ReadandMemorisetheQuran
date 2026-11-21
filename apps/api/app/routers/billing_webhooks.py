@@ -57,6 +57,16 @@ def _signature_rc(body: bytes, header: str | None) -> bool:
         return False
 
 
+def _transfer_participants(event: dict) -> set[str]:
+    """RevenueCat TRANSFER contains two ID arrays, never app_user_id."""
+    old = event.get("transferred_from") or []
+    new = event.get("transferred_to") or []
+    if not isinstance(old, list) or not isinstance(new, list):
+        return set()
+    return {value.strip() for value in (old + new)
+            if isinstance(value, str) and value.strip()}
+
+
 async def _first_event(
     conn: asyncpg.Connection,
     provider: str,
@@ -278,10 +288,7 @@ async def revenuecat_webhook(request: Request):
             if event_type == "TRANSFER":
                 # TRANSFER has no app_user_id. Both sides MUST be reconciled
                 # against the current RevenueCat Subscriber API state.
-                from_ids = event.get("transferred_from") or []
-                to_ids = event.get("transferred_to") or []
-                involved = {str(item) for item in (from_ids + to_ids)
-                            if isinstance(item, str) and item.strip()}
+                involved = _transfer_participants(event)
                 if not involved:
                     raise HTTPException(422, "Transfer event missing subscriber IDs")
                 for affected_id in involved:
