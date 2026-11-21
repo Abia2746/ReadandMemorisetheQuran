@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS users (
   timezone_name TEXT NOT NULL DEFAULT 'Europe/London',
   -- Once a local quota day begins, changing timezone must be separately verified.
   quota_timezone_name TEXT NOT NULL DEFAULT 'Europe/London',
+  trial_reminder_opt_in BOOLEAN NOT NULL DEFAULT FALSE,
   country_code CHAR(2),
   stripe_customer_id TEXT UNIQUE,
   revenuecat_app_user_id TEXT UNIQUE,
@@ -220,6 +221,14 @@ CREATE TABLE IF NOT EXISTS approved_faq_cache (
   review_status TEXT NOT NULL CHECK(review_status IN ('reviewed','pending')),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY(canonical_topic,language,prompt_version)
+);
+
+CREATE TABLE IF NOT EXISTS trial_reminder_deliveries (
+  subscription_id UUID NOT NULL REFERENCES subscriptions(id) ON DELETE CASCADE,
+  trial_end TIMESTAMPTZ NOT NULL,
+  sent_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY(subscription_id,trial_end)
 );
 
 -- Deduplication must be transactionally committed alongside state mutations.
