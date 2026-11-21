@@ -161,6 +161,28 @@ async def set_study_timezone(
     return {"timezone": body.iana_timezone, "daily_reset": "00:00 local time"}
 
 
+class TrialReminderPreference(BaseModel):
+    email_reminders: bool
+
+
+@router.post("/trial-reminders")
+async def trial_reminders_preference(
+    body: TrialReminderPreference,
+    user: User = Depends(current_user),
+    conn: asyncpg.Connection = Depends(db_conn),
+):
+    verified_email = await conn.fetchval(
+        "SELECT email FROM users WHERE id=$1", user.id,
+    )
+    if body.email_reminders and not verified_email:
+        raise HTTPException(409, "A verified email is required for trial reminders")
+    await conn.execute(
+        """UPDATE users SET trial_reminder_opt_in=$2,updated_at=now()
+           WHERE id=$1""", user.id, body.email_reminders,
+    )
+    return {"email_reminders": body.email_reminders}
+
+
 class CheckoutRequest(BaseModel):
     tier: Literal["pro_monthly", "pro_annual", "family_annual"]
     # Idempotency key is bound server-side to user/tier; not a user ID.
