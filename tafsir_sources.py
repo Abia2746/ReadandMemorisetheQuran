@@ -21,7 +21,7 @@ MAX_CHARS = 8500
 
 def _clean(value):
     value = re.sub(r"<[^>]*>", " ", str(value))
-    return re.sub(r"\\s+", " ", html.unescape(value)).strip()
+    return re.sub(r"\s+", " ", html.unescape(value)).strip()
 
 @lru_cache(maxsize=512)
 def _fetch(edition, surah, ayah):
@@ -87,9 +87,9 @@ import unicodedata
 
 def _normalized_arabic(value):
     value = unicodedata.normalize("NFKC", value)
-    value = re.sub(r"[\\u064b-\\u065f\\u0670\\u06d6-\\u06ed]", "", value)
-    value = re.sub(r"[ـ\\u200c\\u200d]", "", value)
-    return re.sub(r"\\s+", " ", value).strip()
+    value = re.sub(r"[\u064b-\u065f\u0670\u06d6-\u06ed]", "", value)
+    value = re.sub(r"[ـ\u200c\u200d]", "", value)
+    return re.sub(r"\s+", " ", value).strip()
 
 def audit_tafsir_answer(answer, sources):
     """Remove unsupported Arabic quotation paragraphs before publication.
@@ -112,7 +112,7 @@ def audit_tafsir_answer(answer, sources):
         quoted = re.findall(r"[«“\"]([^»”\"]{12,})[»”\"]", paragraph)
         unsupported = False
         for quote in quoted:
-            if len(re.findall(r"[\\u0621-\\u064a]", quote)) < 9:
+            if len(re.findall(r"[\u0621-\u064a]", quote)) < 9:
                 continue
             normalized = _normalized_arabic(quote)
             if not any(normalized in item for item in verified):
