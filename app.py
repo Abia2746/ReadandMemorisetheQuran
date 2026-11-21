@@ -1041,6 +1041,9 @@ if saved:
         st.session_state.tries += 1
         st.rerun()
 
+from tafsir_study_ui import show_verse_tafsir
+show_verse_tafsir(surah, ayah, end_ayah, language, fetch_words, ask_teacher_scholar)
+
 st.markdown("### " + _ui("Ask your AI teacher"))
 st.caption(_ui("Ask about the selected verses, Qur'anic vocabulary or Tajweed terminology. AI responses can contain mistakes; verify religious rulings and precise recitation with reliable scholars."))
 with st.form("teacher_question", clear_on_submit=True):
