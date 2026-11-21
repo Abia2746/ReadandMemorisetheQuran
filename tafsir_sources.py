@@ -65,8 +65,9 @@ def retrieve_tafsir(surah, start_ayah, end_ayah, query):
     if not selected:
         selected = ["Ibn Kathir", "Al-Tabari", "Al-Qurtubi"]
     selected = selected[:3]
-    # Cap research to three verses per request; do not imply the rest were checked.
-    verses = list(range(start_ayah, min(end_ayah, start_ayah + 2) + 1))
+    # Retrieve up to 20 requested verses, reporting any unresearched remainder.
+    verses = list(range(start_ayah, min(end_ayah, start_ayah + 19) + 1))
+    truncated = end_ayah > verses[-1]
     sources = []
     for name in selected:
         for ayah in verses:
@@ -75,11 +76,18 @@ def retrieve_tafsir(surah, start_ayah, end_ayah, query):
                 sources.append({"scholar": name, "verse": f"{surah}:{ayah}", **result})
     if not sources:
         return [], "No primary tafsir text could be retrieved. Do not claim any source was checked."
+    retrieved = {(item["scholar"], item["verse"]) for item in sources}
+    missing = [f"{name} {surah}:{v}" for name in selected for v in verses
+               if (name, f"{surah}:{v}") not in retrieved]
+    scope_note = (" Requested range exceeds the 20-verse retrieval limit; "
+                  "remaining verses were NOT researched." if truncated else "")
+    if missing:
+        scope_note += " Missing source entries: " + ", ".join(missing[:30]) + "."
     return sources, (
         f"Retrieved {len(sources)} transcribed tafsir entries for verses "
         f"{', '.join(str(v) for v in verses)}. "
         "These are source transcriptions, not authenticated critical editions. "
-        "Missing entries were not verified."
+        "Missing entries were not verified." + scope_note
     )
 
 # Verification is performed against the retrieved transcription, not a critical edition.
