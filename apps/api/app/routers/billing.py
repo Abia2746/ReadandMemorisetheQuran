@@ -150,11 +150,21 @@ async def start_checkout(
     past = await conn.fetchval(
         "SELECT 1 FROM subscriptions WHERE user_id=$1 LIMIT 1", user.id
     )
-    claimed = await conn.fetchval(
-        "SELECT 1 FROM trial_claims WHERE user_id=$1", user.id
-    )
-    trial = (params.tier == "pro_annual" and
-             int(catalog["trial_days"]) == 7 and not past and not claimed)
+    trial = False
+    if params.tier == "pro_annual" and int(catalog["trial_days"]) == 7 and not past:
+        reserved = await conn.fetchval(
+            """INSERT INTO trial_claims(
+                 user_id,provider,status,reservation_expires_at)
+               VALUES($1,'stripe','reserved',now()+interval '1 hour')
+               ON CONFLICT(user_id)
+               DO UPDATE SET provider='stripe',status='reserved',
+                 reservation_expires_at=now()+interval '1 hour',
+                 checkout_session_id=NULL
+               WHERE trial_claims.status='reserved'
+                 AND trial_claims.reservation_expires_at <= now()
+               RETURNING user_id""", user.id,
+        )
+        trial = reserved is not None
     origin = _web_origin()
     sub_data: dict = {"metadata": {"al_muallim_user_id": str(user.id)}}
     if trial:
@@ -183,11 +193,17 @@ async def start_checkout(
             **checkout, idempotency_key=f"alm:{user.id}:{params.tier}:{params.request_id}",
         )
     except stripe.error.StripeError:
+        if trial:
+            await conn.execute(
+                """DELETE FROM trial_claims
+                   WHERE user_id=$1 AND status='reserved' AND checkout_session_id IS NULL""",
+                user.id,
+            )
         raise HTTPException(503, "Secure checkout is temporarily unavailable")
     if trial:
         await conn.execute(
-            """INSERT INTO trial_claims(user_id,provider)
-               VALUES($1,'stripe') ON CONFLICT (user_id) DO NOTHING""", user.id,
+            """UPDATE trial_claims SET checkout_session_id=$2
+               WHERE user_id=$1 AND status='reserved'""", user.id, session.id,
         )
     return {"checkout_url": session.url, "trial_available": trial}
 
