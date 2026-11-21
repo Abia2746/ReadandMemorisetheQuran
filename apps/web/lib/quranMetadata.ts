@@ -118,7 +118,7 @@ export const SURAH_NAMES = [
 ] as const;
 export const RECITERS = {
   dosari: {label:"Yasser Al-Dosari", folder:"Yasser_Ad-Dussary_128kbps"},
-  alafasy: {label:"Mishary Alafasy", folder:"Alafasy_128kbps"},
+  alafasy: {label:"Mishary Alafasy", folder:"Alafasy_64kbps"},
 } as const;
 export type ReciterId = keyof typeof RECITERS;
 export function validVerse(surah:number,ayah:number) {
