@@ -331,14 +331,17 @@ async def revenuecat_webhook(request: Request):
             await conn.execute(
                 """INSERT INTO subscriptions(
                     user_id,provider,provider_subscription_id,product_id,tier,
-                    status,period_started_at,current_period_end,
+                    status,period_started_at,current_period_end,trial_end,
                     cancel_at_period_end,source_event_at,environment,last_verified_at)
-                   VALUES($1,'revenuecat',$2,$3,$4::am_tier,$5,$6,$7,$8,$9,'production',now())
+                   VALUES($1,'revenuecat',$2,$3,$4::am_tier,$5,$6,$7,
+                          CASE WHEN $10 THEN $7 ELSE NULL END,
+                          $8,$9,'production',now())
                    ON CONFLICT(provider,provider_subscription_id,environment)
                    DO UPDATE SET status=EXCLUDED.status,
                      tier=EXCLUDED.tier,product_id=EXCLUDED.product_id,
                      current_period_end=EXCLUDED.current_period_end,
                      period_started_at=EXCLUDED.period_started_at,
+                     trial_end=EXCLUDED.trial_end,
                      cancel_at_period_end=EXCLUDED.cancel_at_period_end,
                      source_event_at=EXCLUDED.source_event_at,
                      last_verified_at=now(),updated_at=now()
@@ -347,6 +350,7 @@ async def revenuecat_webhook(request: Request):
                           subscriptions.source_event_at <= EXCLUDED.source_event_at)""",
                 canonical_user_id, str(external_sub), product_id,
                 product["tier"], status, start, end, cancel_at_end, event_at,
+                event.get("period_type") == "TRIAL",
             )
             if event.get("period_type") == "TRIAL" and status == "active":
                 await conn.execute(
