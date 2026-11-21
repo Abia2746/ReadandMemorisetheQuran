@@ -10,6 +10,7 @@ import html
 import json
 import os
 import re
+import unicodedata
 from typing import Any
 
 import httpx
@@ -165,6 +166,44 @@ async def _gemini_json(client: httpx.AsyncClient, system: str, user: str):
         raise HTTPException(503, "Study generation did not finish reliably")
 
 
+def _normalized_arabic(value: str) -> str:
+    """Compare quote text after harmless Arabic harakah and spacing variation."""
+    text = unicodedata.normalize("NFKC", str(value))
+    return "".join(
+        c for c in text if not unicodedata.combining(c)
+    ).replace("ـ", "").replace("\u200d", "").replace("\u200c", "").strip()
+
+
+def _verify_verbatim_claims(raw: dict, sources: list[dict], verse: QuranVerse) -> None:
+    source_by_id = {s["source_id"]: s.get("text", "") for s in sources}
+    for section in raw.get("sections", []):
+        for claim in section.get("claims", []):
+            if not claim.get("is_verbatim"):
+                continue
+            quote = claim.get("quote_arabic")
+            if not isinstance(quote, str) or not quote.strip():
+                raise ValueError("Verbatim quotations need actual Arabic source text")
+            speaker = str(claim.get("speaker") or "").lower()
+            if any(name in speaker for name in
+                   ("prophet muhammad", "messenger of allah", "رسول الله", "النبي")):
+                raise ValueError("Prophetic quotations need separate hadith certification")
+            normalized = _normalized_arabic(quote)
+            references = claim.get("source_ids", [])
+            canonical = _normalized_arabic(verse.arabic_uthmani)
+            matches_quran = (
+                claim.get("kind") == "quran_text" and normalized in canonical
+            )
+            matches_tafsir = any(
+                normalized in _normalized_arabic(source_by_id.get(source_id, ""))
+                for source_id in references
+            )
+            if not (matches_quran or matches_tafsir):
+                raise ValueError("Arabic quotation absent from cited source text")
+            # Source transcription evidence does NOT certify chain authenticity.
+            if not matches_quran:
+                claim["evidence_state"] = "needs_review"
+
+
 async def generate_tafsir(
     client: httpx.AsyncClient,
     verse: QuranVerse,
@@ -176,6 +215,7 @@ async def generate_tafsir(
     raw["sources"] = public_sources(sources)
     raw["prompt_version"] = PROMPT_VERSION
     raw["schema_version"] = "1.0"
+    _verify_verbatim_claims(raw, sources, verse)
     # Metadata-only citation checks cannot establish semantic reliability.
     # Never mark a model's unsupervised paraphrases as independently verified.
     for section in raw.get("sections", []):
@@ -199,6 +239,17 @@ async def generate_drills(
     raw = await _gemini_json(client, prompt.system, prompt.user)
     # Part A is canonical and not model-generated. Root metadata remains
     # pending until a vetted Arabic lexicon is attached to the service.
+    # Reject Tafsir vocabulary that does not occur in the attributed retrieval.
+    # Exact transcription matching is deliberately stricter than semantic
+    # similarity: a model must not invent purported classical terms.
+    known_sources = {item["source_id"]: item.get("text", "") for item in sources}
+    for entry in raw.get("tafsir_vocabulary", []):
+        word = _normalized_arabic(entry.get("arabic", ""))
+        if not word or not any(
+            word in _normalized_arabic(known_sources.get(ref, ""))
+            for ref in entry.get("source_ids", [])
+        ):
+            raise ValueError("Tafsir vocabulary is not present in its cited source")
     raw["quran_vocabulary"] = [item.model_dump(mode="json") for item in words]
     raw["surah"] = verse.surah
     raw["ayah"] = verse.ayah
