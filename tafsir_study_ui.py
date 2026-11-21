@@ -26,42 +26,54 @@ def show_verse_tafsir(surah, start, end, language, fetch_words, ask_teacher):
     key = f"tafsir_module_{surah}_{verse}_{language}"
     if st.button("Generate detailed Tafsir & Arabic study", key=f"generate_{key}", type="primary",
                  use_container_width=True):
-        instruction = (
-            f"Create a complete study module ONLY for Surah {surah}, ayah {verse}. "
-            "Begin with an accurate English meaning; the UI already shows verified Arabic, "
-            "so do not invent or repeat Arabic Qur'an text. "
-            "Use exactly these four headings: "
-            "1. نُزُولُ الآيَة — Descent and Context (addressed, objective, clarification); "
-            "2. أَحْكَامُ الشَّرِيعَة — Rulings and Ethics (wording, verdict, jurisprudence); "
-            "3. مَعْنَى اللَّفْظ — Wording and Early Commentary (precisely attributed "
-            "classical reports, distinguishing narrator from compiler); "
-            "4. مَقْصِدُ العَمَل — Purpose and Reflection (action and spiritual meaning). "
-            "Then include two separate Markdown tables: "
-            "Part A: Qur'anic vocabulary (Arabic word, verified root, literal meaning); "
-            "Part B: Tafsir vocabulary (Arabic term present in retrieved source, verified "
-            "root, literal meaning). Do not invent a three-letter root for particles, "
-            "loanwords, or ambiguous forms: write 'not applicable' or 'uncertain'. "
-            "Then include three independent Arabic mastery exercises WITH answer keys: "
-            "three idafah/prepositional phrases from the actual sourced commentary, "
-            "four root-construction examples, and three reverse-translation sentences "
-            "clearly labelled 'original practice sentences, not Qur'an or hadith'. "
-            "If the source does not contain enough examples, include fewer and state why. "
-            "Never invent a Prophetic or Companion quotation. Only quote a hadith "
-            "verbatim with verified exact collection/number and text; otherwise omit it. "
-            "Add a short 'Manuscript context' note: mention reported traditions "
-            "about Mushaf Ali only if supported by retrieved evidence; do not assert "
-            "chronological placement, parchment dimensions, script, marginal notes, "
-            "or physical density as historical facts without identified manuscript "
-            "evidence. If absent, say physical placement cannot be established. "
-            "Keep the tone polished, substantial, pedagogically precise, and concise. "
-            "Cite retrieved classical sources where available."
+        tafsir_instruction = (
+            f"Explain ONLY Quran {surah}:{verse}. Include a faithful meaning, "
+            "revelation context, relevant classical interpretations, legal and "
+            "ethical rulings, and practical reflection. Organise under Meaning "
+            "and Context, Word Insights, Rulings and Ethics, Purpose and Reflection. "
+            "Verify exact narrator names against retrieved Arabic. Avoid made-up "
+            "hadith, invented historical manuscript dimensions, and unverifiable "
+            "claims. Keep this response under 1700 words. Do NOT generate "
+            "flashcards or exercises in this response."
         )
-        with st.spinner("Researching classical commentary and preparing your study module..."):
-            st.session_state[key] = ask_teacher(instruction, surah, verse, verse, language)
+        exercise_instruction = (
+            f"Prepare Arabic learning material for Quran {surah}:{verse}. "
+            "The Quranic word list below is authoritative for deciding which "
+            "words occur in the verse (ignore punctuation and vowel marks): "
+            + ", ".join(w.get("ar", "") for w in words if w.get("ar")) +
+            ". First produce Part A: Quranic vocabulary, with Arabic word, "
+            "root and literal meaning, using only words actually in the supplied "
+            "Quranic word list. Include مَشْرَبَهُمْ in Part A if it is in the list. "
+            "Then Part B: Classical Tafsir vocabulary, using ONLY words present "
+            "in the retrieved classical tafsir transcription that are NOT in "
+            "the Quranic word list. Never list a Quranic word in Part B. "
+            "For ambiguous or non-triliteral roots write uncertain or not applicable. "
+            "Then provide three exercises, each with its complete answer key: "
+            "(1) three verified idafah/prepositional phrases, "
+            "(2) four root-construction examples, "
+            "(3) three original reverse-translation sentences labelled as "
+            "practice sentences, NOT quotations from Quran or hadith. "
+            "Use correct Arabic and precise transliteration: saqy, "
+            "fa-nbajasat, fa-nfajarat, al-inbijas, kullu unasin, "
+            "atha yathu. Do not invent commentary quotations. "
+            "Finish all three exercises; aim for under 1700 words."
+        )
+        with st.spinner("Researching the classical Tafsir..."):
+            tafsir_result = ask_teacher(tafsir_instruction, surah, verse, verse, language)
+        with st.spinner("Building the vocabulary and complete Arabic exercises..."):
+            exercise_result = ask_teacher(exercise_instruction, surah, verse, verse, language)
+        st.session_state[key] = {"tafsir": tafsir_result, "exercises": exercise_result}
     if key in st.session_state:
         result = st.session_state[key]
-        if isinstance(result, str):
-            st.markdown(result)
-            st.download_button("Save study notes", result,
+        if isinstance(result, dict):
+            tabs = st.tabs(["📖 Tafsir & Reflection", "🧠 Vocabulary & Exercises"])
+            with tabs[0]:
+                st.markdown(result.get("tafsir", ""))
+            with tabs[1]:
+                st.markdown(result.get("exercises", ""))
+            notes = "# Tafsir " + str(surah) + ":" + str(verse) + "\\n\\n" + result.get("tafsir", "") + "\\n\\n# Arabic Mastery\\n\\n" + result.get("exercises", "")
+            st.download_button("Save complete study notes", notes,
                                file_name=f"tafsir_{surah}_{verse}.md",
                                mime="text/markdown", key=f"save_{key}")
+        elif isinstance(result, str):
+            st.markdown(result)
