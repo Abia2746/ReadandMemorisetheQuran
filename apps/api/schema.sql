@@ -265,3 +265,85 @@ CREATE TABLE IF NOT EXISTS billing_reconciliation_queue (
 -- If using Supabase direct client access, enable RLS and explicit policies.
 -- This schema assumes DB credentials are held ONLY by the FastAPI backend.
 -- The app role must never permit direct browser SQL access.
+
+
+-- STEP 5: persistent learning data, separated per authenticated person.
+CREATE TABLE IF NOT EXISTS learning_plans (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  title TEXT NOT NULL DEFAULT 'A Plan with Noor' CHECK (length(title)<=100),
+  status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','paused','completed')),
+  goal TEXT NOT NULL CHECK (goal IN ('whole','surah')),
+  surah SMALLINT NOT NULL DEFAULT 2 CHECK(surah BETWEEN 1 AND 114),
+  start_date DATE NOT NULL DEFAULT current_date,
+  target_months SMALLINT NOT NULL CHECK(target_months BETWEEN 1 AND 120),
+  weekdays SMALLINT[] NOT NULL DEFAULT '{0,1,2,3,4,5}'::smallint[],
+  sabq_minutes SMALLINT NOT NULL DEFAULT 35 CHECK(sabq_minutes BETWEEN 10 AND 120),
+  review_minutes SMALLINT NOT NULL DEFAULT 15 CHECK(review_minutes BETWEEN 0 AND 90),
+  study_time TIME NOT NULL DEFAULT '18:30:00',
+  reminder_minutes SMALLINT NOT NULL DEFAULT 10 CHECK(reminder_minutes BETWEEN 0 AND 60),
+  timezone_name TEXT NOT NULL DEFAULT 'Europe/London',
+  modified_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_learning_plans_active ON learning_plans(user_id,status);
+CREATE TABLE IF NOT EXISTS memorised_verses (
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  surah SMALLINT NOT NULL CHECK(surah BETWEEN 1 AND 114),
+  ayah SMALLINT NOT NULL CHECK(ayah BETWEEN 1 AND 286),
+  first_completed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  last_reviewed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  review_count INT NOT NULL DEFAULT 0 CHECK(review_count >= 0),
+  PRIMARY KEY(user_id,surah,ayah)
+);
+CREATE INDEX IF NOT EXISTS idx_memorised_review ON memorised_verses(user_id,last_reviewed_at);
+CREATE TABLE IF NOT EXISTS difficult_words (
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  surah SMALLINT NOT NULL CHECK(surah BETWEEN 1 AND 114),
+  ayah SMALLINT NOT NULL CHECK(ayah BETWEEN 1 AND 286),
+  word_index SMALLINT NOT NULL CHECK(word_index BETWEEN 1 AND 300),
+  arabic TEXT NOT NULL CHECK(length(arabic) BETWEEN 1 AND 250),
+  gloss TEXT NOT NULL DEFAULT '',
+  reason TEXT NOT NULL DEFAULT 'Review suggested',
+  strength SMALLINT NOT NULL DEFAULT 0 CHECK(strength BETWEEN 0 AND 5),
+  due_on DATE NOT NULL DEFAULT current_date,
+  last_reviewed_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY(user_id,surah,ayah,word_index)
+);
+CREATE INDEX IF NOT EXISTS idx_difficult_due ON difficult_words(user_id,due_on);
+CREATE TABLE IF NOT EXISTS study_sessions (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  plan_id UUID REFERENCES learning_plans(id) ON DELETE SET NULL,
+  local_day DATE NOT NULL,
+  scope TEXT NOT NULL CHECK(scope IN ('sabq','sabqi','manzil','drill')),
+  verse_reference TEXT,
+  self_reported BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE(user_id,plan_id,local_day,scope,verse_reference)
+);
+CREATE TABLE IF NOT EXISTS learning_totals (
+  user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  xp INT NOT NULL DEFAULT 0 CHECK(xp>=0),
+  coins INT NOT NULL DEFAULT 0 CHECK(coins>=0),
+  streak INT NOT NULL DEFAULT 0 CHECK(streak>=0),
+  last_study_day DATE,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS reward_ledger (
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  milestone_key TEXT NOT NULL,
+  xp_awarded SMALLINT NOT NULL DEFAULT 0 CHECK(xp_awarded>=0),
+  coins_awarded SMALLINT NOT NULL DEFAULT 0 CHECK(coins_awarded>=0),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY(user_id,milestone_key)
+);
+CREATE TABLE IF NOT EXISTS sanctuary_preferences (
+  user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  lighting TEXT NOT NULL DEFAULT 'auto' CHECK(lighting IN ('auto','fajr','asr','isha')),
+  theme TEXT NOT NULL DEFAULT 'walnut' CHECK(theme IN ('walnut','midnight','fajr_mist','andalusian')),
+  rain_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+  audio_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
