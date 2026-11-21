@@ -286,6 +286,62 @@ async def request_scholarship(
     }
 
 
+class ScholarshipApproval(BaseModel):
+    scholarship_id: UUID
+    paid_gift_id: UUID
+
+
+@router.post("/admin/scholarships/approve")
+async def approve_scholarship(
+    body: ScholarshipApproval,
+    user: User = Depends(current_user),
+    conn: asyncpg.Connection = Depends(db_conn),
+):
+    # A server-side allowlist of authenticated OIDC subjects, not a client
+    # 'isAdmin' flag. Only verified adult administrators should operate billing.
+    allowed_subjects = {
+        x.strip() for x in os.environ.get("BILLING_ADMIN_SUBJECTS", "").split(",")
+        if x.strip()
+    }
+    subject = await conn.fetchval(
+        "SELECT auth_subject FROM users WHERE id=$1", user.id,
+    )
+    if not allowed_subjects or subject not in allowed_subjects:
+        raise HTTPException(403, "Billing administrator authorization required")
+    async with conn.transaction():
+        application = await conn.fetchrow(
+            """SELECT months_requested,user_id FROM scholarships
+               WHERE id=$1 AND request_status='pending' FOR UPDATE""",
+            body.scholarship_id,
+        )
+        if not application:
+            raise HTTPException(409, "Request is no longer pending")
+        months = int(application["months_requested"])
+        remaining = await conn.fetchval(
+            """UPDATE scholarship_gifts
+               SET months_allocated=months_allocated+$2
+               WHERE id=$1 AND payment_status='paid'
+                 AND months_allocated+$2 <= 12
+               RETURNING 12-months_allocated""",
+            body.paid_gift_id, months,
+        )
+        if remaining is None:
+            raise HTTPException(409, "No paid, unallocated sponsorship months remain")
+        await conn.execute(
+            """UPDATE scholarships
+               SET request_status='approved',
+                 sponsor_gift_id=$2,approved_by=$3,granted_at=now(),
+                 valid_until=now()+make_interval(months => $4)
+               WHERE id=$1""",
+            body.scholarship_id, body.paid_gift_id, user.id, months,
+        )
+    return {
+        "status": "approved",
+        "months_granted": months,
+        "sponsor_months_remaining": int(remaining),
+    }
+
+
 @router.post("/scholarships/gift-checkout")
 async def gift_checkout(
     user: User = Depends(current_user),
