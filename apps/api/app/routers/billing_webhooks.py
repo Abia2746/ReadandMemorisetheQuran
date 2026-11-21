@@ -276,16 +276,26 @@ async def revenuecat_webhook(request: Request):
                 return {"received": True, "duplicate": True}
             app_user_id = str(event.get("app_user_id", ""))
             if event_type == "TRANSFER":
-                # Transfer involves former + current owners; NEVER assign a
-                # store receipt to a guessed account. Reconcile via RC REST API.
-                await conn.execute(
-                    """INSERT INTO billing_reconciliation_queue(provider,external_user_id,reason)
-                       VALUES('revenuecat',$1,'Purchase transfer requires subscriber verification')
-                       ON CONFLICT(provider,external_user_id)
-                       DO UPDATE SET reason=EXCLUDED.reason,created_at=now()""",
-                    app_user_id,
-                )
-                return {"received": True, "reconciliation_required": True}
+                # TRANSFER has no app_user_id. Both sides MUST be reconciled
+                # against the current RevenueCat Subscriber API state.
+                from_ids = event.get("transferred_from") or []
+                to_ids = event.get("transferred_to") or []
+                involved = {str(item) for item in (from_ids + to_ids)
+                            if isinstance(item, str) and item.strip()}
+                if not involved:
+                    raise HTTPException(422, "Transfer event missing subscriber IDs")
+                for affected_id in involved:
+                    await conn.execute(
+                        """INSERT INTO billing_reconciliation_queue(
+                             provider,external_user_id,reason)
+                           VALUES('revenuecat',$1,
+                                  'Transfer: verify active subscriptions with RevenueCat')
+                           ON CONFLICT(provider,external_user_id)
+                           DO UPDATE SET reason=EXCLUDED.reason,created_at=now()""",
+                        affected_id,
+                    )
+                return {"received": True, "reconciliation_required": True,
+                        "accounts_queued": len(involved)}
             if not native_store or not prod:
                 return {"received": True, "ignored": True}
             try:
