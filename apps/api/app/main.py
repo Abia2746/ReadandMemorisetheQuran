@@ -15,6 +15,8 @@ from redis.asyncio import Redis
 from app.routers.billing import router as billing_router
 from app.routers.billing_webhooks import router as webhook_router
 from app.routers.verse import router as verse_router
+from app.routers.quran import router as quran_router
+from app.routers.learning import router as learning_router
 
 
 @asynccontextmanager
@@ -24,6 +26,7 @@ async def lifespan(app: FastAPI):
     if not dsn or not redis_url:
         raise RuntimeError("DATABASE_URL and REDIS_URL must be configured")
     app.state.pg = await asyncpg.create_pool(dsn=dsn, min_size=1, max_size=10)
+    app.state.quran_reader_cache = {}
     app.state.redis = Redis.from_url(redis_url, decode_responses=True)
     try:
         yield
@@ -48,6 +51,8 @@ app.add_middleware(
 app.include_router(billing_router)
 app.include_router(webhook_router)
 app.include_router(verse_router)
+app.include_router(quran_router)
+app.include_router(learning_router)
 
 
 @app.get("/health")
