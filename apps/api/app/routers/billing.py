@@ -33,6 +33,8 @@ _jwks_client = None
 
 
 async def db_conn(request: Request):
+    if request.app.state.pg is None:
+        raise HTTPException(503, "Personal learning temporarily unavailable; free Qur'an reading remains accessible")
     async with request.app.state.pg.acquire() as conn:
         yield conn
 
