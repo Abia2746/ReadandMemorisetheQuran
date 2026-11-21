@@ -21,7 +21,8 @@
     "@capacitor/core": "^8.0.0",
     "@revenuecat/purchases-capacitor": "^14.1.1",
     "oidc-client-ts": "^3.3.0",
-    "adhan": "^4.4.6"
+    "adhan": "^4.4.6",
+    "@huggingface/transformers": "^4.3.2"
   },
   "devDependencies": {
     "typescript": "^5.9.0",
