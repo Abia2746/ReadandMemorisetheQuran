@@ -39,3 +39,8 @@ export function reviewDifficultWord(wordId:string, correct:boolean){
   save(items);
   window.dispatchEvent(new CustomEvent("almuallim:difficult-updated"));
 }
+
+export function removeDifficultWord(wordId:string){
+  save(loadDifficultWords().filter(item=>item.word_id!==wordId));
+  if(typeof window!=="undefined")window.dispatchEvent(new CustomEvent("almuallim:difficult-updated"));
+}
