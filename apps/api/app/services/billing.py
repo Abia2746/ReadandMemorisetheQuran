@@ -276,3 +276,27 @@ async def create_family_group(conn: asyncpg.Connection, owner: User) -> UUID:
             gid, owner.id,
         )
         return gid
+
+
+async def refund_verse_unlock(
+    conn: asyncpg.Connection, user: User, surah: int, ayah: int,
+) -> None:
+    """Do not spend a free lesson if the canonical source or AI request failed.
+
+    This is safe only when invoked for a failed lesson within its local day.
+    """
+    day = local_day_for_user(user)
+    async with conn.transaction():
+        await _locked_quota_row(conn, user, day)
+        deleted = await conn.fetchval(
+            """DELETE FROM verse_daily_unlocks
+               WHERE user_id=$1 AND local_day=$2 AND surah=$3 AND ayah=$4
+               RETURNING 1""", user.id, day, surah, ayah,
+        )
+        if deleted:
+            await conn.execute(
+                """UPDATE daily_ai_quotas
+                   SET verse_unlocks_used=greatest(0,verse_unlocks_used-1),
+                       updated_at=now()
+                   WHERE user_id=$1 AND local_day=$2""", user.id, day,
+            )
