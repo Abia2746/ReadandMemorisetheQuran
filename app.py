@@ -512,7 +512,12 @@ def analyse_recitation(audio_bytes, mime_type, words, strictness, teacher_gender
 
 def ask_teacher_scholar(query, surah, start_ayah, end_ayah, language="en"):
     from tafsir_sources import retrieve_tafsir, audit_tafsir_answer
+    from research_agent import research_web, lookup_hadith, edition_status
     sources, research_status = retrieve_tafsir(surah, start_ayah, end_ayah, query)
+    web_sources, web_status = research_web(query, surah, start_ayah)
+    hadith_sources, hadith_status = lookup_hadith(query)
+    sources = sources + web_sources + hadith_sources
+    research_status += " " + web_status + " " + hadith_status + " " + edition_status()
 
     key = api_key()
     if not key: return "API key missing."
@@ -557,7 +562,11 @@ def ask_teacher_scholar(query, surah, start_ayah, end_ayah, language="en"):
         "If the question specifies a narrower ayah, address that ayah precisely. "
         "Do not silently expand a single-ayah request. "
         "Do not use invented verbatim Arabic citations. "
-        "Provide academically useful depth with honest source limitations."
+        "Provide academically useful depth with honest source limitations. "
+        "For every independently checkable historical, linguistic, theological "
+        "or hadith claim, cite its supporting [SOURCE n] or label it "
+        "[NOT VERIFIED]. Search results are not proof. "
+        "Do not infer hadith authenticity from collection names alone."
     )
     source_context = "\n\n".join(
         f"[SOURCE {i+1}] {src['scholar']} on {src['verse']}\n"
@@ -585,6 +594,9 @@ def ask_teacher_scholar(query, surah, start_ayah, end_ayah, language="en"):
             if resp.status_code == 200:
                 answer = "".join(p.get("text", "") for p in resp.json()["candidates"][0]["content"]["parts"])
                 answer, audit_findings = audit_tafsir_answer(answer, sources)
+                answer += ("\n\n*Claim-level citations are AI-generated and "
+                           "must be checked against linked passages; "
+                           "independent semantic verification is not certified.*")
                 if audit_findings:
                     answer += "\\n\\n### Citation audit\\n" + "\\n".join(
                         "- " + finding for finding in audit_findings
