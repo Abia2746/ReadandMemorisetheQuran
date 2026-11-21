@@ -9,7 +9,7 @@ import re
 import requests
 from functools import lru_cache
 
-BASE = "https://cdn.jsdelivr.net/gh/spa5k/tafsir_api@v1.2.3/tafsir"
+BASE = "https://cdn.jsdelivr.net/gh/spa5k/tafsir_api@main/tafsir"
 EDITIONS = {
     "Ibn Kathir": "ar-tafsir-ibn-kathir",
     "Al-Tabari": "ar-tafsir-al-tabari",
@@ -81,3 +81,45 @@ def retrieve_tafsir(surah, start_ayah, end_ayah, query):
         "These are source transcriptions, not authenticated critical editions. "
         "Missing entries were not verified."
     )
+
+# Verification is performed against the retrieved transcription, not a critical edition.
+import unicodedata
+
+def _normalized_arabic(value):
+    value = unicodedata.normalize("NFKC", value)
+    value = re.sub(r"[\\u064b-\\u065f\\u0670\\u06d6-\\u06ed]", "", value)
+    value = re.sub(r"[ـ\\u200c\\u200d]", "", value)
+    return re.sub(r"\\s+", " ", value).strip()
+
+def audit_tafsir_answer(answer, sources):
+    """Remove unsupported Arabic quotation paragraphs before publication.
+
+    Conservative fail-closed audit: an Arabic quotation must occur in at least
+    one retrieved source after diacritic/whitespace normalization. No claim
+    of edition-level authentication is made. Returns text and audit findings.
+    """
+    if not isinstance(answer, str):
+        return "", ["Model returned an invalid response."]
+    verified = [_normalized_arabic(s["text"]) for s in sources]
+    findings = []
+    output = []
+    # Split by paragraphs to avoid publishing a questionable Arabic quotation
+    # with surrounding scholarly attribution.
+    for paragraph in re.split(r"(\\n\\s*\\n)", answer):
+        if not paragraph.strip():
+            output.append(paragraph)
+            continue
+        quoted = re.findall(r"[«“\"]([^»”\"]{12,})[»”\"]", paragraph)
+        unsupported = False
+        for quote in quoted:
+            if len(re.findall(r"[\\u0621-\\u064a]", quote)) < 9:
+                continue
+            normalized = _normalized_arabic(quote)
+            if not any(normalized in item for item in verified):
+                unsupported = True
+                findings.append("An Arabic quotation was withheld because it could not be matched to a retrieved tafsir transcription.")
+        if unsupported:
+            output.append("[Unverified Arabic quotation withheld. Consult the linked source transcription.]")
+        else:
+            output.append(paragraph)
+    return "".join(output), findings
