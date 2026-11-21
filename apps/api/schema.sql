@@ -231,6 +231,20 @@ CREATE TABLE IF NOT EXISTS trial_reminder_deliveries (
   PRIMARY KEY(subscription_id,trial_end)
 );
 
+-- Approved paraphrase aliases provide safe zero-inference FAQ reuse.
+-- Unlike unsupervised vector matching, all aliases require editorial review.
+CREATE TABLE IF NOT EXISTS approved_faq_aliases (
+  alias TEXT NOT NULL,
+  language VARCHAR(12) NOT NULL,
+  prompt_version TEXT NOT NULL,
+  canonical_topic TEXT NOT NULL,
+  approved_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY(alias,language,prompt_version),
+  FOREIGN KEY(canonical_topic,language,prompt_version)
+    REFERENCES approved_faq_cache(canonical_topic,language,prompt_version)
+    ON DELETE CASCADE
+);
+
 -- Deduplication must be transactionally committed alongside state mutations.
 CREATE TABLE IF NOT EXISTS billing_webhook_events (
   provider am_provider NOT NULL CHECK (provider IN ('stripe','revenuecat')),
