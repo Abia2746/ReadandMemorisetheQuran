@@ -4,6 +4,7 @@ This page displays proposed plans only. It never collects payment information,
 claims subscriptions are active, or calls a checkout provider.
 """
 import html
+import re
 import streamlit as st
 from stripe_checkout import checkout_ready, create_test_checkout
 
@@ -55,7 +56,12 @@ def render_pricing():
                         if param == "line_items[0][price]" or code == "resource_missing":
                             st.error("Stripe cannot find this Price ID with the current Sandbox key. Check that the products and API key belong to the same Stripe Sandbox.")
                         else:
-                            st.error("Stripe rejected a checkout setting. Error code: " + str(code or "invalid_request") + "; parameter: " + str(param or "unspecified") + ".")
+                            message = str(getattr(exc, "user_message", None) or "Stripe did not provide a detailed explanation.")
+                            # Stripe error messages are usually safe, but redact credential-like strings.
+                            message = re.sub(r"(?:sk|rk|pk)_(?:test|live)_[A-Za-z0-9]+", "[REDACTED KEY]", message)
+                            message = re.sub(r"(?i)bearer\\s+[A-Za-z0-9._-]+", "Bearer [REDACTED]", message)
+                            st.error("Stripe says: " + message[:400])
+                            st.caption("Error code: " + str(code or "invalid_request") + "; parameter: " + str(param or "unspecified") + ".")
                     elif isinstance(exc, stripe.error.PermissionError):
                         st.error("The Stripe key does not have permission to create checkout sessions.")
                     elif isinstance(exc, stripe.error.StripeError):
