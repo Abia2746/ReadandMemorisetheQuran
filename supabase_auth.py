@@ -13,11 +13,16 @@ DEFAULT_SUPABASE_URL = "https://edkqwqepnlidenxyveoj.supabase.co"
 DEFAULT_SUPABASE_PUBLISHABLE_KEY = "sb_publishable_wpPRWa2YTlZwuukdxOa50g_TznBIqcn"
 
 def _public_config():
+    """Public settings are usable even if Streamlit Secrets is unavailable or empty."""
+    url, key = DEFAULT_SUPABASE_URL, DEFAULT_SUPABASE_PUBLISHABLE_KEY
     try:
-        url = str(st.secrets.get("SUPABASE_URL", DEFAULT_SUPABASE_URL)).rstrip("/")
-        key = str(st.secrets.get("SUPABASE_ANON_KEY", DEFAULT_SUPABASE_PUBLISHABLE_KEY))
+        override_url = str(st.secrets.get("SUPABASE_URL", "") or "").strip().rstrip("/")
+        override_key = str(st.secrets.get("SUPABASE_ANON_KEY", "") or "").strip()
+        # Ignore partial/malformed overrides instead of disabling the app.
+        if override_url.startswith("https://") and override_key:
+            url, key = override_url, override_key
     except Exception:
-        url, key = DEFAULT_SUPABASE_URL, DEFAULT_SUPABASE_PUBLISHABLE_KEY
+        pass
     return url, key
 
 def configured():
