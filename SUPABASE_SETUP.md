@@ -10,10 +10,18 @@ The existing Supabase project **Al Mua’llim** is connected using its **public 
 - Signed-in users can save their cloud profile name. A successful recitation review attempts to save a **reviewing** marker, not a claim that the verse is memorised.
 - No paid entitlement is granted simply by logging in or returning from Stripe checkout.
 
-## Required email setup in Supabase
-Open project **Authentication → Providers → Email**, enable email sign-in. Under **Authentication → Email Templates → Magic Link**, ensure the email displays the confirmation token with `{{ .Token }}` so learners can type the code requested by the app. The default template may send only a link.
+## Testing sign-in with the default Supabase email service
 
-Test using an inbox you control. Default Supabase email sending has restrictions and rate limits; set up approved custom SMTP before a public rollout.
+A custom SMTP provider is **not necessary for this initial test**. The Streamlit preview now supports the default **Magic Link** email. In the app's **Account & sign-in** panel:
+
+1. Enter your email and click **Email me a sign-in link**.
+2. Open your inbox, **copy the link address without opening the link**, and paste it into the app's masked **Paste your private sign-in link** field.
+3. Click **Sign in securely**. The backend validates the link against this exact Supabase project's Auth endpoint and checks the resulting account with Supabase.
+4. If you already clicked the original link, it may have been consumed; request another.
+
+Why this temporary step? Supabase's default magic-link flow redirects with tokens in the browser URL fragment, which the Streamlit Python backend cannot safely read. Pasting an unclicked, single-use link into a masked Streamlit input is a temporary **test-only** workaround. Before releasing the app to the public, implement a conventional client-side magic-link callback or a PKCE flow; do not ask real customers to paste authentication links.
+
+Default Supabase email sending has limits and may restrict recipient addresses. For production, configure an approved email sender, callback URLs, and email templates.
 
 ## Production work still needed
 - Auth session refresh and durable session management.
