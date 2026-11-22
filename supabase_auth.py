@@ -46,7 +46,7 @@ def _post(endpoint, data, params=None):
     if response.status_code >= 400:
         # Never display arbitrary server errors, tokens or personal data.
         if response.status_code == 429:
-            raise ValueError("Too many attempts. Please try again later.")
+            raise ValueError("Supabase has temporarily reached its email sending limit. Please continue as a guest and try again once the allowance resets.")
         raise ValueError("Email sign-in could not be started. Check the Supabase email provider and recipient restrictions.")
     return response.json() if response.content else {}
 
@@ -97,7 +97,26 @@ def save_review_progress(surah_number, ayah_numbers):
     return True
 
 def render_account():
-    st.subheader("Your Al-Mu'allim account")
+    st.markdown("""
+<style>
+div[data-testid="stDialog"] div[data-testid="stForm"] {border:1px solid rgba(214,186,128,.23);border-radius:17px;padding:20px;background:rgba(255,255,255,.025)}
+div[data-testid="stDialog"] input {min-height:48px!important;border-radius:11px!important;background:rgba(255,255,255,.055)!important}
+div[data-testid="stDialog"] button[kind="primaryFormSubmit"] {background:linear-gradient(110deg,#c99c51,#ead29b)!important;color:#211810!important;border:0!important;border-radius:11px!important;min-height:48px;font-weight:700!important}
+.am-auth-hero {text-align:center;padding:5px 0 15px}
+.am-auth-emblem {display:flex;align-items:center;justify-content:center;width:46px;height:46px;border-radius:14px;border:1px solid rgba(229,198,139,.35);margin:0 auto 14px;color:#e4c581;background:rgba(220,188,122,.07);font-size:25px}
+.am-auth-overline {color:#d2b477;font-size:10px;letter-spacing:.18em;font-weight:700}
+.am-auth-title {font-family:Georgia,serif;color:#eed9b2;font-size:clamp(26px,4vw,34px);margin:10px 0 5px;line-height:1.2}
+.am-auth-subtitle {font-size:13px;color:#cfbea5;max-width:350px;margin:0 auto;line-height:1.6}
+.am-auth-note {color:#c0ad90;font-size:12px;text-align:center;line-height:1.6;padding:8px 0}
+@media(max-width:600px){div[data-testid="stDialog"] div[data-testid="stForm"]{padding:14px}.am-auth-hero{padding-top:0}}
+</style>
+<div class="am-auth-hero">
+<div class="am-auth-emblem" aria-hidden="true">✧</div>
+<div class="am-auth-overline">AL-MU’ALLIM · YOUR QUR’AN COMPANION</div>
+<div class="am-auth-title">Your journey, beautifully kept.</div>
+<p class="am-auth-subtitle">Continue your Qur’an learning, memorisation and reflection from wherever you are.</p>
+</div>
+""", unsafe_allow_html=True)
     if not configured():
         st.info("Secure account sign-in is being prepared. Qur'an reading remains free without signing in.")
         return
@@ -174,37 +193,46 @@ def render_account():
     if st.session_state.get("am_auth_error"):
         st.warning(st.session_state.pop("am_auth_error"))
 
-    st.caption("Continue with your email. No password required.")
-    mode = st.radio(
-        "Choose an option",
-        ["Sign in", "Create account"],
-        horizontal=True,
-        key="am_account_mode",
+    mode = st.segmented_control(
+        "Account mode", options=["Sign in", "Create account"],
+        default="Sign in", key="am_account_mode",
+        label_visibility="collapsed", width="stretch",
     )
-    with st.form("am_magic_link_request"):
-        email = st.text_input("Email address", key="am_auth_email",
-                              placeholder="you@example.com")
-        send = st.form_submit_button(
-            "Send secure sign-in link" if mode == "Sign in" else "Create my free account",
-            use_container_width=True, type="primary",
-        )
-    if send:
-        try:
-            st.session_state["am_pending_email"] = request_magic_link(
-                email, create_account=(mode == "Create account")
-            )
-            st.session_state["am_pending_mode"] = mode
-        except ValueError as exc:
-            st.error(str(exc))
-        except (requests.RequestException, RuntimeError):
-            st.error("Could not contact the email service. Please try again.")
-    if st.session_state.get("am_pending_email"):
-        st.success("Check your inbox for a secure email link.")
-        st.caption(
-            "Tap the link in the email to return to Al-Mu’allim automatically. "
-            "The link can only be used once. If you have not received it, "
-            "check Spam or Junk."
-        )
-    st.divider()
-    st.caption("You can read the Qur’an for free without registering. "
-               "An account lets you save your learning progress.")
+    if not mode:
+        mode = "Sign in"
+    st.markdown(
+        "<div class='am-auth-note'>" +
+        ("Welcome back. We'll send a secure sign-in link to your email."
+         if mode == "Sign in" else
+         "Create a free account to keep your Qur’an progress together.") +
+        "</div>", unsafe_allow_html=True,
+    )
+
+    if st.session_state.get("am_pending_email") and st.session_state.get("am_pending_mode") == mode:
+        st.success("A secure email link has been requested.")
+        st.caption("Open your latest Supabase email and tap the link once. "
+                   "It should bring you back to Al-Mu’allim.")
+        if st.button("Use another email address", key="am_switch_email", use_container_width=True):
+            st.session_state.pop("am_pending_email", None)
+            st.session_state.pop("am_pending_mode", None)
+            st.rerun()
+    else:
+        with st.form("am_magic_link_request"):
+            email = st.text_input("Email address", placeholder="name@example.com", key="am_auth_email")
+            send = st.form_submit_button("Continue with email", use_container_width=True, type="primary")
+        if send:
+            try:
+                st.session_state["am_pending_email"] = request_magic_link(
+                    email, create_account=(mode == "Create account"))
+                st.session_state["am_pending_mode"] = mode
+                st.rerun()
+            except ValueError as exc:
+                st.error(str(exc))
+            except (requests.RequestException, RuntimeError):
+                st.error("The email service is temporarily unavailable. Please try again later.")
+
+    st.markdown(
+        "<div class='am-auth-note'>No password required · One-time secure email link"
+        "<br>Qur’an reading remains free without an account.</div>",
+        unsafe_allow_html=True,
+    )
