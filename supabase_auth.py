@@ -1,18 +1,27 @@
 """Supabase email OTP authentication for the Streamlit preview.
 
 No paid entitlement is inferred from an authenticated session.
-Credentials belong in Streamlit Secrets, never in source control.
+Only public Supabase URL/publishable key are embedded; private credentials must stay in Secrets.
 """
 import re
 import requests
 import streamlit as st
 
-BASE = "https://readandmemorisethequran-9uvtv8lpn9ozytdqtk6ceh.streamlit.app"
+# Public project settings, not secret credentials.
+DEFAULT_SUPABASE_URL = "https://edkqwqepnlidenxyveoj.supabase.co"
+DEFAULT_SUPABASE_PUBLISHABLE_KEY = "sb_publishable_wpPRWa2YTlZwuukdxOa50g_TznBIqcn"
+
+def _public_config():
+    try:
+        url = str(st.secrets.get("SUPABASE_URL", DEFAULT_SUPABASE_URL)).rstrip("/")
+        key = str(st.secrets.get("SUPABASE_ANON_KEY", DEFAULT_SUPABASE_PUBLISHABLE_KEY))
+    except Exception:
+        url, key = DEFAULT_SUPABASE_URL, DEFAULT_SUPABASE_PUBLISHABLE_KEY
+    return url, key
 
 def configured():
     try:
-        url = str(st.secrets.get("SUPABASE_URL", "")).rstrip("/")
-        key = str(st.secrets.get("SUPABASE_ANON_KEY", ""))
+        url, key = _public_config()
         return url.startswith("https://") and bool(key)
     except Exception:
         return False
@@ -20,7 +29,7 @@ def configured():
 def _settings():
     if not configured():
         raise RuntimeError("Supabase is not configured")
-    return str(st.secrets["SUPABASE_URL"]).rstrip("/"), str(st.secrets["SUPABASE_ANON_KEY"])
+    return _public_config()
 
 def _post(endpoint, data):
     url, key = _settings()
