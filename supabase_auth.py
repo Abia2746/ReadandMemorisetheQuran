@@ -37,12 +37,12 @@ def _settings():
         raise RuntimeError("Supabase is not configured")
     return _public_config()
 
-def _post(endpoint, data):
+def _post(endpoint, data, params=None):
     url, key = _settings()
     response = requests.post(
         url + "/auth/v1/" + endpoint,
         headers={"apikey": key, "Content-Type": "application/json"},
-        json=data, timeout=15,
+        json=data, params=params, timeout=15,
     )
     if response.status_code >= 400:
         # Never display arbitrary server errors, tokens or personal data.
@@ -58,7 +58,8 @@ def request_magic_link(email):
         raise ValueError("Enter a valid email address.")
     # No redirect is needed for this Streamlit fallback: the link is
     # redeemed securely by the backend when pasted into the login form.
-    _post("otp", {"email": email, "create_user": True})
+    _post("otp", {"email": email, "create_user": True},
+          params={"redirect_to": "https://readandmemorisethequran-9uvtv8lpn9ozytdqtk6ceh.streamlit.app/"})
     return email
 
 
@@ -196,7 +197,9 @@ def render_account():
             st.session_state.pop("am_auth", None)
             st.rerun()
         return
-    st.caption("Sign in by email without a password.")
+    if st.session_state.get("am_auth_error"):
+        st.warning(st.session_state.pop("am_auth_error"))
+    st.caption("Sign in securely using a one-tap email link. No password needed.")
     with st.form("am_magic_link_request"):
         email = st.text_input("Email address", key="am_auth_email")
         send = st.form_submit_button("Email me a sign-in link")
@@ -209,20 +212,4 @@ def render_account():
         except (requests.RequestException, RuntimeError):
             st.error("Could not contact the sign-in service. Please try again.")
     if st.session_state.get("am_pending_email"):
-        st.info(
-            "For this early Streamlit preview: copy the link address from the "
-            "Supabase sign-in email **without opening it**, then paste it below. "
-            "The link works only once. If you already tapped it, request a new one."
-        )
-        with st.form("am_magic_link_redeem", clear_on_submit=True):
-            link = st.text_input("Paste your private sign-in link", type="password")
-            confirm = st.form_submit_button("Sign in securely")
-        if confirm:
-            try:
-                st.session_state["am_auth"] = verify_magic_link(link)
-                st.session_state.pop("am_pending_email", None)
-                st.rerun()
-            except ValueError as exc:
-                st.error(str(exc))
-            except (requests.RequestException, RuntimeError):
-                st.error("Sign-in service unavailable. Please try again.")
+        st.info("Check your inbox and tap the sign-in link. It will return you to Al-Mu'allim automatically. The link works once.")
