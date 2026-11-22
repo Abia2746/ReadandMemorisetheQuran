@@ -11,13 +11,19 @@ import streamlit as st
 MAGIC_LINK_JS = r"""
 export default function({setTriggerValue}) {
   const fragment = window.location.hash;
-  if (!fragment || !fragment.includes("access_token=")) return;
+  if (!fragment) return;
   const values = new URLSearchParams(fragment.slice(1));
   const access = values.get("access_token");
+  const authError = values.get("error");
+  const authCode = values.get("error_code");
   const refresh = values.get("refresh_token");
   const tokenType = values.get("token_type");
   // Clear the browser URL before anything else handles the token.
   window.history.replaceState(null, "", window.location.pathname + window.location.search);
+  if (authError) {
+    setTriggerValue("auth_error", authCode === "otp_expired" ? "expired" : "failed");
+    return;
+  }
   if (access && refresh && tokenType === "bearer") {
     setTriggerValue("tokens", {access_token: access, refresh_token: refresh});
   }
@@ -32,7 +38,10 @@ def accept_magic_link_tokens():
         html="<div aria-hidden='true' style='height:0'></div>",
         js=MAGIC_LINK_JS,
     )
-    result = callback(key="am_magic_link_callback", on_tokens_change=lambda: None)
+    result = callback(key="am_magic_link_callback", on_tokens_change=lambda: None,
+                      on_auth_error_change=lambda: None)
+    if result.auth_error:
+        st.session_state["am_auth_error"] = "That sign-in link expired. Request a new link." if result.auth_error == "expired" else "Sign-in could not be completed. Request a fresh link."
     payload = result.tokens
     if not payload or not isinstance(payload, dict):
         return
@@ -66,5 +75,14 @@ def accept_magic_link_tokens():
         }
         st.session_state.pop("am_pending_email", None)
         st.session_state.pop("am_auth_error", None)
+        st.session_state["am_new_login"] = True
+        if not st.session_state.get("name"):
+            try:
+                from supabase_auth import _table_request
+                rows = _table_request("learner_profiles", params={"select": "display_name", "user_id": "eq." + user["id"], "limit": "1"})
+                if rows and rows[0].get("display_name"):
+                    st.session_state["name"] = rows[0]["display_name"]
+            except (requests.RequestException, RuntimeError, ValueError):
+                pass
     except (requests.RequestException, RuntimeError):
         st.session_state["am_auth_error"] = "The login service is temporarily unavailable. Please try again."
