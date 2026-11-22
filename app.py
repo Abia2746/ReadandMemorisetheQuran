@@ -751,7 +751,7 @@ accept_magic_link_tokens()
 # Premium-feeling, accessible account entry point. Reading stays open to guests.
 from supabase_auth import render_account
 
-@st.dialog("Al-Mu’allim • Your account", width="large")
+@st.dialog("Welcome to Al-Mu’allim", width="large")
 def _account_dialog():
     render_account()
 
@@ -762,7 +762,7 @@ with plan_col:
         st.session_state.am_show_pricing = True
         st.rerun()
 with account_col:
-    account_label = "◉ My account" if st.session_state.get("am_auth") else "♙ Sign in / Create account"
+    account_label = "◉ My account" if st.session_state.get("am_auth") else "Sign in / Join free"
     if st.button(account_label, key="am_open_account", use_container_width=True):
         _account_dialog()
 
@@ -778,16 +778,22 @@ if st.session_state.get("am_show_pricing", False):
     render_pricing()
     st.stop()
 
+# An authenticated learner should not be asked to set up a guest identity
+# immediately after successfully returning from an email sign-in.
+if st.session_state.get("am_auth") and not st.session_state.name:
+    st.session_state.name = "Learner"
+
 if not st.session_state.name:
     st.markdown(
         "<div class='am-onboarding'><div class='ar'>بِسْمِ اللَّهِ</div>"
         "<h1>Al-Mu'allim</h1><p>A quiet space to read, memorise and understand the Qur'an.</p>"
         "</div>", unsafe_allow_html=True
     )
+    st.caption("Continue without an account. You can sign up later to save progress between devices.")
     with st.form("start_al_muallim"):
-        learner_name = st.text_input("How should your practice profile be labelled?",
+        learner_name = st.text_input("Choose a guest nickname",
                                      placeholder="Your name or nickname", max_chars=50)
-        entered = st.form_submit_button("Enter the academy", use_container_width=True)
+        entered = st.form_submit_button("Continue as guest", use_container_width=True)
         if entered:
             if learner_name.strip():
                 st.session_state.name = learner_name.strip()
