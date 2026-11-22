@@ -22,15 +22,24 @@ https://readandmemorisethequran-9uvtv8lpn9ozytdqtk6ceh.streamlit.app/
 Save. Also add that exact URL to **Redirect URLs** if it is not already listed.
 This step is required because Supabase otherwise sends users to the current default Site URL.
 
+## Account experience (November 2026)
+
+Al-Mu'allim now offers a dedicated **Sign in / Create account** button in the top navigation. This opens a branded dialog rather than the old collapsed expander.
+
+The dialog provides **Sign in** for returning learners and **Create account** for first-time learners. Both use one-tap Supabase email links. Returning sign-in uses `create_user=false`, while registration explicitly allows account creation. Supabase may send a **Confirm your email address** message for first-time registrations; that is expected, and the secure confirmation must complete before the account is signed in.
+
 ## Test the proper one-tap magic-link sign-in
 
-1. Open Al-Mu'allim and select **Account & sign-in**.
-2. Enter your email and press **Email me a sign-in link**.
-3. Open the Supabase email and **tap the sign-in link normally**.
-4. Supabase verifies the link and redirects back to the app. A small Streamlit Components v2 callback reads the URL fragment, removes sensitive tokens from the browser URL, and sends them to the backend.
-5. The backend calls Supabase Auth to verify the identity before treating the user as signed in.
+1. Open Al-Mu'allim and press **Sign in / Create account**.
+2. If the account was already created, select **Sign in**. For new emails, select **Create account**.
+3. Enter the address and request a **new** sign-in email.
+4. Tap the emailed link normally **once**. Old or previously consumed links produce `otp_expired` / invalid-token errors and cannot be reused.
+5. When redirected to the app, the Streamlit Components v2 callback reads and immediately removes URL-fragment tokens. Its server code verifies the account with Supabase Auth.
+6. On success, the app shows a welcome confirmation, restores a stored learner profile name if one exists, and offers **My account** in the top navigation.
 
-No copying or pasting of sign-in links is required. The link is one-time use. Older links sent before the redirect configuration was changed may point to the wrong URL; request a fresh one.
+If a link returns to the homepage without a successful welcome message, it does **not** mean the email was confirmed. Check the account status in **Supabase → Authentication → Users**, and request another link if unconfirmed.
+
+Sign-up confirmation email templates and sender branding still use Supabase defaults until custom SMTP is configured.
 
 ### Current preview limitations
 
