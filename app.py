@@ -748,12 +748,28 @@ for key, default in DEFAULTS.items():
 from auth_callback import accept_magic_link_tokens
 accept_magic_link_tokens()
 
-# Account sign-in is optional; the Qur'an reader remains accessible without an account.
+# Premium-feeling, accessible account entry point. Reading stays open to guests.
 from supabase_auth import render_account
-with st.expander("🔐 Account & sign-in", expanded=False):
+
+@st.dialog("Al-Mu’allim • Your account", width="large")
+def _account_dialog():
     render_account()
 
-# Public pricing page is accessible without signing in or loading a Qur'an passage.
+plan_col, account_col = st.columns(2, gap="small")
+with plan_col:
+    if st.button("✦ Plans & Pricing", key="am_open_pricing",
+                 use_container_width=True):
+        st.session_state.am_show_pricing = True
+        st.rerun()
+with account_col:
+    account_label = "◉ My account" if st.session_state.get("am_auth") else "♙ Sign in / Create account"
+    if st.button(account_label, key="am_open_account", use_container_width=True):
+        _account_dialog()
+
+if st.session_state.pop("am_new_login", False):
+    st.success("Welcome to Al-Mu’allim. Your email has been verified and your account is signed in.")
+
+# Pricing remains publicly accessible, without a signed-in user.
 from streamlit_pricing import render_pricing
 if st.session_state.get("am_show_pricing", False):
     if st.button("← Back to Qur'an reader", key="am_back_to_reader"):
@@ -761,9 +777,6 @@ if st.session_state.get("am_show_pricing", False):
         st.rerun()
     render_pricing()
     st.stop()
-if st.button("✦ Plans & Pricing", key="am_open_pricing", help="View the proposed Free, Pro and Family plans; checkout is not yet available."):
-    st.session_state.am_show_pricing = True
-    st.rerun()
 
 if not st.session_state.name:
     st.markdown(
@@ -778,6 +791,17 @@ if not st.session_state.name:
         if entered:
             if learner_name.strip():
                 st.session_state.name = learner_name.strip()
+                if st.session_state.get("am_auth"):
+                    try:
+                        from supabase_auth import _table_request
+                        _table_request(
+                            "learner_profiles", "POST",
+                            [{"user_id": st.session_state["am_auth"]["user_id"],
+                              "display_name": learner_name.strip()}],
+                            params={"on_conflict": "user_id"}, upsert=True,
+                        )
+                    except Exception:
+                        st.session_state["am_cloud_sync_failed"] = True
                 st.rerun()
             else:
                 st.warning("Enter a name to start.")
