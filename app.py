@@ -744,6 +744,11 @@ DEFAULTS = {
 for key, default in DEFAULTS.items():
     st.session_state.setdefault(key, default)
 
+# Account sign-in is optional; the Qur'an reader remains accessible without an account.
+from supabase_auth import render_account
+with st.expander("🔐 Account & sign-in", expanded=False):
+    render_account()
+
 # Public pricing page is accessible without signing in or loading a Qur'an passage.
 from streamlit_pricing import render_pricing
 if st.session_state.get("am_show_pricing", False):
