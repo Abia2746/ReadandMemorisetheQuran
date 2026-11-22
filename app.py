@@ -1003,6 +1003,19 @@ with left:
                 earn_recording_review(
                     st.session_state.name, surah, ayah, end_ayah, review_id
                 )
+                # Signed-in learners can save a revision marker to their own cloud
+                # account. Unverified AI feedback never marks verses memorised.
+                try:
+                    from supabase_auth import save_review_progress
+                    reviewed_ayahs = (
+                        range(ayah, end_ayah + 1)
+                        if recording_scope == "Entire selected passage"
+                        else [int(recording_scope.split()[-1])]
+                    )
+                    save_review_progress(surah, reviewed_ayahs)
+                except Exception:
+                    # Cloud sync must never prevent the local recitation review.
+                    st.session_state["am_cloud_sync_failed"] = True
                 st.rerun()
             except Exception as exc:
                 st.error(_ui("The audio review was unsuccessful. Your recitation has not been graded."))
