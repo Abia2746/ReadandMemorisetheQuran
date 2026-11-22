@@ -1,25 +1,27 @@
-# Al-Mu'allim Supabase Auth — setup
+# Al-Mu'allim Supabase Auth — connected project
 
-The Streamlit reader now includes an optional **Account & sign-in** section. It does **not** unlock paid features. The email-code UI only appears after Supabase credentials are supplied.
+The existing Supabase project **Al Mua’llim** is connected using its **public Project URL and publishable key** in `supabase_auth.py`. These values are intended for client access, unlike private database/Stripe credentials. You do not need to paste the public keys into Streamlit Secrets.
 
-1. Create a Supabase project at https://supabase.com/dashboard.
-2. Open **Project Settings → API** (or the project's Connect/API keys screen). Copy the **Project URL** and the **anon/publishable key**. Never use a service-role or secret key in this client-facing integration.
-3. In Supabase **Authentication → Providers → Email**, enable email OTP/sign-in.
-4. In **Authentication → Email Templates → Magic Link**, configure the email to show the six-digit OTP using `{{ .Token }}` rather than only a confirmation URL. Without this template change, the UI asking for a code will not work.
-5. In **Streamlit Community Cloud → app → Settings → Secrets**, append:
+## What has been implemented
+- An optional **Account & sign-in** section in Streamlit (free Qur'an reading needs no login).
+- Supabase email-code sign-in flow and server-side token revalidation during app renders.
+- Secure `public.learner_profiles` and `public.hifdh_progress` tables with owner-only RLS.
+- Read-only-to-learners `public.billing_subscriptions` table, reserved for future verified Stripe webhook writes.
+- Signed-in users can save their cloud profile name. A successful recitation review attempts to save a **reviewing** marker, not a claim that the verse is memorised.
+- No paid entitlement is granted simply by logging in or returning from Stripe checkout.
 
-```toml
-SUPABASE_URL = "https://YOUR_PROJECT.supabase.co"
-SUPABASE_ANON_KEY = "YOUR_SUPABASE_PUBLISHABLE_OR_ANON_KEY"
-```
+## Required email setup in Supabase
+Open project **Authentication → Providers → Email**, enable email sign-in. Under **Authentication → Email Templates → Magic Link**, ensure the email displays the confirmation token with `{{ .Token }}` so learners can type the code requested by the app. The default template may send only a link.
 
-6. Restart Streamlit and test sign-in using an inbox you control. Configure Supabase email sending limits / custom SMTP before inviting users.
+Test using an inbox you control. Default Supabase email sending has restrictions and rate limits; set up approved custom SMTP before a public rollout.
 
-**Security and limitations**
+## Production work still needed
+- Auth session refresh and durable session management.
+- Google and Apple OAuth providers, configured redirects, and security review.
+- Authenticated Stripe checkout creation with a mapped user ID.
+- Verified webhook and durable payment state, subscription management portal.
+- Server-side subscription entitlements; family-member policies and invitations.
+- Actual full Hifdh history synchronisation (only revision markers currently sync).
+- Mobile app store payment rules before releasing native apps.
 
-- This is an initial Streamlit session-based email OTP preview. A browser refresh or session reset may require signing in again.
-- Do not store the Supabase service-role key in the app. Never commit any credentials.
-- Google and Apple OAuth are not yet implemented; they require provider configuration and secure callback handling.
-- Stripe Checkout is currently test-mode only. Its success redirect is not proof of payment, and no premium entitlements are granted.
-- Production needs a durable backend and database, authenticated checkout creation tied to Supabase user ID, verified Stripe webhooks, customer portal, server-side access checks, subscription cancellation handling, and family membership enforcement.
-- For native iOS and Android digital subscriptions, review App Store and Google Play billing requirements.
+Do not put any database password, Supabase secret/service-role key or Stripe secret key in GitHub.
