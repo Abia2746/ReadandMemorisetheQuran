@@ -744,6 +744,10 @@ DEFAULTS = {
 for key, default in DEFAULTS.items():
     st.session_state.setdefault(key, default)
 
+# Complete emailed sign-in link on page load, regardless of the panel state.
+from auth_callback import accept_magic_link_tokens
+accept_magic_link_tokens()
+
 # Account sign-in is optional; the Qur'an reader remains accessible without an account.
 from supabase_auth import render_account
 with st.expander("🔐 Account & sign-in", expanded=False):
