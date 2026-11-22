@@ -54,7 +54,7 @@ def _post(endpoint, data):
 def request_magic_link(email):
     """Ask Supabase to email its standard one-time sign-in link."""
     email = email.strip().lower()
-    if not re.fullmatch(r"[^\\s@]+@[^\\s@]+\\.[^\\s@]+", email) or len(email) > 254:
+    if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", email) or len(email) > 254:
         raise ValueError("Enter a valid email address.")
     # No redirect is needed for this Streamlit fallback: the link is
     # redeemed securely by the backend when pasted into the login form.
