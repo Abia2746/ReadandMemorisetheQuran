@@ -50,14 +50,13 @@ def _post(endpoint, data, params=None):
         raise ValueError("Email sign-in could not be started. Check the Supabase email provider and recipient restrictions.")
     return response.json() if response.content else {}
 
-def request_magic_link(email):
+def request_magic_link(email, create_account=True):
     """Ask Supabase to email its standard one-time sign-in link."""
     email = email.strip().lower()
     if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", email) or len(email) > 254:
         raise ValueError("Enter a valid email address.")
-    # No redirect is needed for this Streamlit fallback: the link is
-    # redeemed securely by the backend when pasted into the login form.
-    _post("otp", {"email": email, "create_user": True},
+    # The Supabase link redirects to the approved app URL after verification.
+    _post("otp", {"email": email, "create_user": bool(create_account)},
           params={"redirect_to": "https://readandmemorisethequran-9uvtv8lpn9ozytdqtk6ceh.streamlit.app/"})
     return email
 
@@ -134,7 +133,9 @@ def render_account():
         except requests.RequestException:
             st.warning("Could not verify your session. Please try again.")
             return
-        st.success("Signed in securely.")
+        st.success("Your account is verified and signed in.")
+        if session.get("email"):
+            st.caption("Signed in as " + session["email"])
         st.caption("Membership: Free. Premium access is not yet linked to Stripe.")
         with st.form("am_cloud_profile"):
             display_name = st.text_input("Cloud profile name", value=st.session_state.get("name", ""), max_chars=80)
@@ -144,7 +145,8 @@ def render_account():
                 _table_request("learner_profiles", "POST",
                     [{"user_id": session["user_id"], "display_name": display_name}],
                     params={"on_conflict": "user_id"}, upsert=True)
-                st.success("Profile name saved securely.")
+                st.session_state["name"] = display_name
+                st.success("Your profile name has been saved.")
             except (RuntimeError, requests.RequestException):
                 st.error("Could not save profile. Try again.")
         try:
@@ -171,17 +173,38 @@ def render_account():
         return
     if st.session_state.get("am_auth_error"):
         st.warning(st.session_state.pop("am_auth_error"))
-    st.caption("Sign in securely using a one-tap email link. No password needed.")
+
+    st.caption("Continue with your email. No password required.")
+    mode = st.radio(
+        "Choose an option",
+        ["Sign in", "Create account"],
+        horizontal=True,
+        key="am_account_mode",
+    )
     with st.form("am_magic_link_request"):
-        email = st.text_input("Email address", key="am_auth_email")
-        send = st.form_submit_button("Email me a sign-in link")
+        email = st.text_input("Email address", key="am_auth_email",
+                              placeholder="you@example.com")
+        send = st.form_submit_button(
+            "Send secure sign-in link" if mode == "Sign in" else "Create my free account",
+            use_container_width=True, type="primary",
+        )
     if send:
         try:
-            st.session_state["am_pending_email"] = request_magic_link(email)
-            st.success("If your address is eligible to receive email, check your inbox.")
+            st.session_state["am_pending_email"] = request_magic_link(
+                email, create_account=(mode == "Create account")
+            )
+            st.session_state["am_pending_mode"] = mode
         except ValueError as exc:
             st.error(str(exc))
         except (requests.RequestException, RuntimeError):
-            st.error("Could not contact the sign-in service. Please try again.")
+            st.error("Could not contact the email service. Please try again.")
     if st.session_state.get("am_pending_email"):
-        st.info("Check your inbox and tap the sign-in link. It will return you to Al-Mu'allim automatically. The link works once.")
+        st.success("Check your inbox for a secure email link.")
+        st.caption(
+            "Tap the link in the email to return to Al-Mu’allim automatically. "
+            "The link can only be used once. If you have not received it, "
+            "check Spam or Junk."
+        )
+    st.divider()
+    st.caption("You can read the Qur’an for free without registering. "
+               "An account lets you save your learning progress.")
