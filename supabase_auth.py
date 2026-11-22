@@ -4,6 +4,7 @@ No paid entitlement is inferred from an authenticated session.
 Only public Supabase URL/publishable key are embedded; private credentials must stay in Secrets.
 """
 import re
+from urllib.parse import parse_qs, urlsplit
 import requests
 import streamlit as st
 
@@ -45,22 +46,67 @@ def _post(endpoint, data):
         raise ValueError("Authentication was not completed. Check your email code and Supabase settings.")
     return response.json() if response.content else {}
 
-def request_code(email):
+def request_magic_link(email):
+    """Ask Supabase to email its standard one-time sign-in link."""
     email = email.strip().lower()
-    if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", email) or len(email) > 254:
+    if not re.fullmatch(r"[^\\s@]+@[^\\s@]+\\.[^\\s@]+", email) or len(email) > 254:
         raise ValueError("Enter a valid email address.")
+    # No redirect is needed for this Streamlit fallback: the link is
+    # redeemed securely by the backend when pasted into the login form.
     _post("otp", {"email": email, "create_user": True})
     return email
 
-def verify_code(email, code):
-    if not re.fullmatch(r"\d{6,8}", code.strip()):
-        raise ValueError("Enter the code from your email.")
-    result = _post("verify", {"email": email, "token": code.strip(), "type": "email"})
-    token = result.get("access_token")
-    if not token or not result.get("user", {}).get("id"):
-        raise ValueError("Could not verify this code.")
-    return {"access_token": token, "refresh_token": result.get("refresh_token"),
-            "user_id": result["user"]["id"], "email": result["user"].get("email", email)}
+
+def verify_magic_link(link):
+    """Consume a default Supabase email link without exposing its tokens in URLs.
+
+    Streamlit's server cannot read a browser's URL fragment. The temporary
+    fallback is to paste an unclicked magic link into the protected input.
+    """
+    url, key = _settings()
+    link = link.strip()
+    if len(link) > 4096:
+        raise ValueError("That sign-in link is too long.")
+    source = urlsplit(link)
+    expected = urlsplit(url)
+    if (source.scheme != "https" or source.hostname != expected.hostname
+            or source.path != "/auth/v1/verify"
+            or source.username or source.password or source.port not in (None, 443)):
+        raise ValueError("Paste the original sign-in link from your Al-Mu'allim email.")
+    query = parse_qs(source.query, keep_blank_values=False)
+    token = query.get("token", [""])[0]
+    token_type = query.get("type", [""])[0]
+    if (not re.fullmatch(r"[A-Za-z0-9_-]{16,2048}", token)
+            or token_type not in ("magiclink", "signup", "email")):
+        raise ValueError("This is not a valid Supabase sign-in link.")
+    # Never follow the redirect or output its Location header. The fragment
+    # contains bearer tokens and must remain server-side.
+    response = requests.get(
+        url + "/auth/v1/verify", headers={"apikey": key},
+        params={"token": token, "type": token_type},
+        allow_redirects=False, timeout=15,
+    )
+    if response.status_code not in (301, 302, 303, 307, 308):
+        raise ValueError("This sign-in link is invalid, expired or already used. Request a new link.")
+    location = response.headers.get("Location", "")
+    redirect = urlsplit(location)
+    parts = parse_qs(redirect.fragment)
+    access = parts.get("access_token", [""])[0]
+    refresh = parts.get("refresh_token", [""])[0]
+    if not access or not refresh:
+        raise ValueError("The sign-in link could not create a session. Request another link.")
+    validation = requests.get(
+        url + "/auth/v1/user",
+        headers={"apikey": key, "Authorization": "Bearer " + access},
+        timeout=15,
+    )
+    if validation.status_code != 200 or not validation.json().get("id"):
+        raise ValueError("Supabase couldn't confirm this account. Request a new link.")
+    user = validation.json()
+    return {
+        "access_token": access, "refresh_token": refresh,
+        "user_id": user["id"], "email": user.get("email", ""),
+    }
 
 
 def _table_request(table, method="GET", payload=None, params=None, upsert=False):
@@ -145,25 +191,30 @@ def render_account():
             st.session_state.pop("am_auth", None)
             st.rerun()
         return
-    st.caption("Sign in with an email code. No password needed.")
-    with st.form("am_email_code_request"):
+    st.caption("Sign in by email without a password.")
+    with st.form("am_magic_link_request"):
         email = st.text_input("Email address", key="am_auth_email")
-        send = st.form_submit_button("Send sign-in code")
+        send = st.form_submit_button("Email me a sign-in link")
     if send:
         try:
-            st.session_state["am_pending_email"] = request_code(email)
-            st.success("If this address can receive sign-in emails, check your inbox.")
+            st.session_state["am_pending_email"] = request_magic_link(email)
+            st.success("If your address is eligible to receive email, check your inbox.")
         except ValueError as exc:
             st.error(str(exc))
         except (requests.RequestException, RuntimeError):
             st.error("Could not contact the sign-in service. Please try again.")
     if st.session_state.get("am_pending_email"):
-        with st.form("am_email_code_verify"):
-            code = st.text_input("Email code", max_chars=8)
-            confirm = st.form_submit_button("Verify and sign in")
+        st.info(
+            "For this early Streamlit preview: copy the link address from the "
+            "Supabase sign-in email **without opening it**, then paste it below. "
+            "The link works only once. If you already tapped it, request a new one."
+        )
+        with st.form("am_magic_link_redeem", clear_on_submit=True):
+            link = st.text_input("Paste your private sign-in link", type="password")
+            confirm = st.form_submit_button("Sign in securely")
         if confirm:
             try:
-                st.session_state["am_auth"] = verify_code(st.session_state["am_pending_email"], code)
+                st.session_state["am_auth"] = verify_magic_link(link)
                 st.session_state.pop("am_pending_email", None)
                 st.rerun()
             except ValueError as exc:
