@@ -62,6 +62,42 @@ def verify_code(email, code):
     return {"access_token": token, "refresh_token": result.get("refresh_token"),
             "user_id": result["user"]["id"], "email": result["user"].get("email", email)}
 
+
+def _table_request(table, method="GET", payload=None, params=None, upsert=False):
+    url, key = _settings()
+    session = st.session_state.get("am_auth")
+    if not session or not session.get("access_token"):
+        raise RuntimeError("No authenticated learner")
+    headers = {
+        "apikey": key,
+        "Authorization": "Bearer " + session["access_token"],
+        "Content-Type": "application/json",
+    }
+    if upsert:
+        headers["Prefer"] = "resolution=merge-duplicates,return=minimal"
+    response = requests.request(
+        method, url + "/rest/v1/" + table, headers=headers,
+        params=params, json=payload, timeout=12,
+    )
+    if response.status_code >= 400:
+        raise RuntimeError("Cloud save was not completed.")
+    return response.json() if response.content and method == "GET" else None
+
+def save_review_progress(surah_number, ayah_numbers):
+    """Best-effort cloud revision record; never awards memorised status."""
+    session = st.session_state.get("am_auth")
+    if not session:
+        return False
+    rows = [
+        {"user_id": session["user_id"], "surah_number": int(surah_number),
+         "ayah_number": int(ayah), "practice_status": "reviewing"}
+        for ayah in ayah_numbers
+    ]
+    if rows:
+        _table_request("hifdh_progress", "POST", rows,
+                       params={"on_conflict": "user_id,surah_number,ayah_number"}, upsert=True)
+    return True
+
 def render_account():
     st.subheader("Your Al-Mu'allim account")
     if not configured():
@@ -84,6 +120,27 @@ def render_account():
             return
         st.success("Signed in securely.")
         st.caption("Membership: Free. Premium access is not yet linked to Stripe.")
+        with st.form("am_cloud_profile"):
+            display_name = st.text_input("Cloud profile name", value=st.session_state.get("name", ""), max_chars=80)
+            save_profile = st.form_submit_button("Save name to my cloud account")
+        if save_profile:
+            try:
+                _table_request("learner_profiles", "POST",
+                    [{"user_id": session["user_id"], "display_name": display_name}],
+                    params={"on_conflict": "user_id"}, upsert=True)
+                st.success("Profile name saved securely.")
+            except (RuntimeError, requests.RequestException):
+                st.error("Could not save profile. Try again.")
+        try:
+            progress = _table_request("hifdh_progress", params={
+                "select": "surah_number,ayah_number,practice_status",
+                "order": "surah_number.asc,ayah_number.asc",
+                "limit": "250",
+            })
+            st.caption(f"Verses recorded for cloud revision: {len(progress or [])}" +
+                       (" (showing first 250)" if len(progress or []) == 250 else ""))
+        except (RuntimeError, requests.RequestException):
+            st.caption("Cloud revision count is temporarily unavailable.")
         if st.button("Sign out", key="am_signout"):
             st.session_state.pop("am_auth", None)
             st.rerun()
