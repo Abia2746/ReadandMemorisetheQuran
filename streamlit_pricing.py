@@ -44,6 +44,22 @@ def render_pricing():
             if st.button("Test checkout — " + plan, key="stripe_test_" + plan):
                 try:
                     st.link_button("Open secure Stripe test checkout", create_test_checkout(plan))
-                except Exception:
-                    st.error("Could not create a Stripe test checkout session. Check your test Price IDs and Stripe configuration.")
+                except Exception as exc:
+                    # Show actionable diagnostics without exposing credentials or raw exception text.
+                    import stripe
+                    if isinstance(exc, stripe.error.AuthenticationError):
+                        st.error("Stripe rejected the Sandbox secret key. Check that the key starts with sk_test_ and belongs to the same Sandbox as your prices.")
+                    elif isinstance(exc, stripe.error.InvalidRequestError):
+                        code = getattr(exc, "code", None)
+                        param = getattr(exc, "param", None)
+                        if param == "line_items[0][price]" or code == "resource_missing":
+                            st.error("Stripe cannot find this Price ID with the current Sandbox key. Check that the products and API key belong to the same Stripe Sandbox.")
+                        else:
+                            st.error("Stripe rejected a checkout setting. Error code: " + str(code or "invalid_request") + "; parameter: " + str(param or "unspecified") + ".")
+                    elif isinstance(exc, stripe.error.PermissionError):
+                        st.error("The Stripe key does not have permission to create checkout sessions.")
+                    elif isinstance(exc, stripe.error.StripeError):
+                        st.error("Stripe returned an API error: " + type(exc).__name__ + ". Check your Stripe Sandbox API logs for details.")
+                    else:
+                        st.error("Checkout failed before Stripe could complete the request: " + type(exc).__name__ + ". Check the Streamlit app logs.")
     st.caption("Scholarship and sponsored-access options are planned. Live payments and premium activation are not available.")
