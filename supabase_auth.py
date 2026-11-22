@@ -4,7 +4,6 @@ No paid entitlement is inferred from an authenticated session.
 Only public Supabase URL/publishable key are embedded; private credentials must stay in Secrets.
 """
 import re
-from urllib.parse import parse_qs, urlsplit
 import requests
 import streamlit as st
 
@@ -48,7 +47,7 @@ def _post(endpoint, data, params=None):
         # Never display arbitrary server errors, tokens or personal data.
         if response.status_code == 429:
             raise ValueError("Too many attempts. Please try again later.")
-        raise ValueError("Authentication was not completed. Check your email code and Supabase settings.")
+        raise ValueError("Email sign-in could not be started. Check the Supabase email provider and recipient restrictions.")
     return response.json() if response.content else {}
 
 def request_magic_link(email):
@@ -61,58 +60,6 @@ def request_magic_link(email):
     _post("otp", {"email": email, "create_user": True},
           params={"redirect_to": "https://readandmemorisethequran-9uvtv8lpn9ozytdqtk6ceh.streamlit.app/"})
     return email
-
-
-def verify_magic_link(link):
-    """Consume a default Supabase email link without exposing its tokens in URLs.
-
-    Streamlit's server cannot read a browser's URL fragment. The temporary
-    fallback is to paste an unclicked magic link into the protected input.
-    """
-    url, key = _settings()
-    link = link.strip()
-    if len(link) > 4096:
-        raise ValueError("That sign-in link is too long.")
-    source = urlsplit(link)
-    expected = urlsplit(url)
-    if (source.scheme != "https" or source.hostname != expected.hostname
-            or source.path != "/auth/v1/verify"
-            or source.username or source.password or source.port not in (None, 443)):
-        raise ValueError("Paste the original sign-in link from your Al-Mu'allim email.")
-    query = parse_qs(source.query, keep_blank_values=False)
-    token = query.get("token", [""])[0]
-    token_type = query.get("type", [""])[0]
-    if (not re.fullmatch(r"[A-Za-z0-9_-]{16,2048}", token)
-            or token_type not in ("magiclink", "signup", "email")):
-        raise ValueError("This is not a valid Supabase sign-in link.")
-    # Never follow the redirect or output its Location header. The fragment
-    # contains bearer tokens and must remain server-side.
-    response = requests.get(
-        url + "/auth/v1/verify", headers={"apikey": key},
-        params={"token": token, "type": token_type},
-        allow_redirects=False, timeout=15,
-    )
-    if response.status_code not in (301, 302, 303, 307, 308):
-        raise ValueError("This sign-in link is invalid, expired or already used. Request a new link.")
-    location = response.headers.get("Location", "")
-    redirect = urlsplit(location)
-    parts = parse_qs(redirect.fragment)
-    access = parts.get("access_token", [""])[0]
-    refresh = parts.get("refresh_token", [""])[0]
-    if not access or not refresh:
-        raise ValueError("The sign-in link could not create a session. Request another link.")
-    validation = requests.get(
-        url + "/auth/v1/user",
-        headers={"apikey": key, "Authorization": "Bearer " + access},
-        timeout=15,
-    )
-    if validation.status_code != 200 or not validation.json().get("id"):
-        raise ValueError("Supabase couldn't confirm this account. Request a new link.")
-    user = validation.json()
-    return {
-        "access_token": access, "refresh_token": refresh,
-        "user_id": user["id"], "email": user.get("email", ""),
-    }
 
 
 def _table_request(table, method="GET", payload=None, params=None, upsert=False):
@@ -163,6 +110,23 @@ def render_account():
             resp = requests.get(url + "/auth/v1/user",
                 headers={"apikey": key, "Authorization": "Bearer " + session["access_token"]},
                 timeout=12)
+            if resp.status_code == 401 and session.get("refresh_token"):
+                renewed = requests.post(
+                    url + "/auth/v1/token", params={"grant_type": "refresh_token"},
+                    headers={"apikey": key, "Content-Type": "application/json"},
+                    json={"refresh_token": session["refresh_token"]},
+                    timeout=12,
+                )
+                if renewed.status_code == 200:
+                    payload = renewed.json()
+                    if payload.get("access_token") and payload.get("refresh_token"):
+                        session["access_token"] = payload["access_token"]
+                        session["refresh_token"] = payload["refresh_token"]
+                        resp = requests.get(
+                            url + "/auth/v1/user",
+                            headers={"apikey": key, "Authorization": "Bearer " + session["access_token"]},
+                            timeout=12,
+                        )
             if resp.status_code != 200 or resp.json().get("id") != session["user_id"]:
                 st.session_state.pop("am_auth", None)
                 st.warning("Your session expired. Please sign in again.")
@@ -194,6 +158,14 @@ def render_account():
         except (RuntimeError, requests.RequestException):
             st.caption("Cloud revision count is temporarily unavailable.")
         if st.button("Sign out", key="am_signout"):
+            try:
+                requests.post(
+                    url + "/auth/v1/logout",
+                    headers={"apikey": key, "Authorization": "Bearer " + session["access_token"]},
+                    timeout=8,
+                )
+            except requests.RequestException:
+                pass
             st.session_state.pop("am_auth", None)
             st.rerun()
         return
