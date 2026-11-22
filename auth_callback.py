@@ -11,7 +11,7 @@ import streamlit as st
 MAGIC_LINK_JS = r"""
 export default function({setTriggerValue}) {
   const fragment = window.location.hash;
-  if (!fragment) return;
+  if (!fragment || !(fragment.includes("access_token=") || fragment.includes("error="))) return;
   const values = new URLSearchParams(fragment.slice(1));
   const access = values.get("access_token");
   const authError = values.get("error");
