@@ -78,3 +78,28 @@ def create_test_checkout(plan):
                   "supabase_user_id": user["id"], "environment": "test"},
     )
     return session.url
+
+def create_test_billing_portal():
+    """Open Stripe-hosted Sandbox billing controls for the signed-in owner."""
+    if not checkout_ready():
+        raise RuntimeError("Stripe Sandbox is not configured")
+    user = _verified_user()
+    from supabase_auth import _table_request
+    rows = _table_request("billing_subscriptions", params={
+        "select": "stripe_customer_id,status",
+        "user_id": "eq." + user["id"],
+        "order": "updated_at.desc",
+        "limit": "1",
+    }) or []
+    if not rows:
+        raise RuntimeError("No verified Sandbox subscription is linked to your account.")
+    customer = rows[0].get("stripe_customer_id", "")
+    if not customer.startswith("cus_"):
+        raise RuntimeError("No Stripe customer is linked to your account.")
+    import stripe
+    stripe.api_key = st.secrets["STRIPE_SECRET_KEY"]
+    session = stripe.billing_portal.Session.create(
+        customer=customer,
+        return_url="https://readandmemorisethequran-9uvtv8lpn9ozytdqtk6ceh.streamlit.app/",
+    )
+    return session.url
