@@ -2,7 +2,7 @@
 import html
 import re
 import streamlit as st
-from stripe_checkout import checkout_ready, create_test_checkout
+from stripe_checkout import checkout_ready, create_test_checkout, create_test_billing_portal
 from stripe_membership import get_verified_test_membership
 
 PLANS = (
@@ -71,6 +71,19 @@ memberships designed to deepen memorisation, reflection and consistency.</div>
                    ". This is a test membership and does not enable paid features.")
     elif st.session_state.get("am_auth"):
         st.caption("Current membership: Free. No verified Sandbox subscription found.")
+
+    if membership and checkout_ready():
+        with st.expander("Manage Sandbox subscription", expanded=False):
+            st.caption("Use the Stripe-hosted billing portal to review or cancel a test subscription. "
+                       "The portal must first be configured in your Stripe Sandbox dashboard.")
+            if st.button("Open test billing management", use_container_width=True,
+                         key="am_manage_test_billing"):
+                try:
+                    st.link_button("Continue to Stripe billing portal",
+                                   create_test_billing_portal(), use_container_width=True)
+                except Exception:
+                    st.error("The Sandbox billing portal isn't ready. "
+                             "Check Stripe Billing → Customer portal settings.")
 
     for group_start in (0, 2):
         cols = st.columns(2, gap="medium")
