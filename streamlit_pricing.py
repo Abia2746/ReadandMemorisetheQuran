@@ -1,71 +1,115 @@
-"""Public pricing preview for the Streamlit Community Cloud edition of Al-Mu'allim.
-
-This page displays proposed plans only. It never collects payment information,
-claims subscriptions are active, or calls a checkout provider.
-"""
+"""Al-Mu'allim memberships — transparent pricing and Sandbox-only checkout."""
 import html
 import re
 import streamlit as st
 from stripe_checkout import checkout_ready, create_test_checkout
+from stripe_membership import get_verified_test_membership
 
 PLANS = (
-    ("Free", "£0", "forever", "Read the Qur'an without a subscription.",
-     ("Full Qur'an reading", "Reciter audio", "Basic memorisation", "One Hifz study plan")),
-    ("Pro Monthly", "£5.99", "per month", "Optional expanded study features.",
-     ("Everything in Free", "Advanced word review (planned)", "Expanded AI study tools (planned)", "Premium sanctuary themes (planned)")),
-    ("Pro Annual", "£39.99", "per year", "The proposed annual Pro plan.",
-     ("Everything in Pro Monthly", "Annual subscription (not yet available)", "Optional soundscapes (planned)", "Personal learning progress")),
-    ("Family Annual", "£69.99", "per year", "A proposed plan for households.",
-     ("Pro study features", "Up to five profiles (planned)", "Separate Hifz progress (planned)", "Family management (planned)")),
+    ("Free", "£0", "Forever", "A thoughtful beginning for every learner.",
+     ("Qur’an reading", "Reciter audio", "Basic memorisation", "One Hifdh plan")),
+    ("Pro Monthly", "£5.99", "/month", "For learners who want more guided practice.",
+     ("Everything in Free", "Advanced revision tools (planned)",
+      "AI-supported learning (planned)", "Premium sanctuary themes (planned)")),
+    ("Pro Annual", "£39.99", "/year", "A year of consistent Qur’an learning.",
+     ("Everything in Pro Monthly", "Same Pro features, billed annually",
+      "Premium soundscapes (planned)", "Expanded progress insights (planned)")),
+    ("Family Annual", "£69.99", "/year", "A shared space for household learning.",
+     ("Pro features (planned)", "Up to five profiles (planned)",
+      "Separate Hifdh progress (planned)", "Family dashboard (planned)")),
 )
 
+def _checkout_error(exc):
+    import stripe
+    if isinstance(exc, PermissionError):
+        return "Please sign in to a verified Al-Mu’allim account before testing checkout."
+    if isinstance(exc, stripe.error.AuthenticationError):
+        return "Stripe rejected the Sandbox key. Confirm the key matches these test products."
+    if isinstance(exc, stripe.error.InvalidRequestError):
+        code = str(getattr(exc, "code", None) or "invalid_request")
+        message = str(getattr(exc, "user_message", None) or "Stripe rejected a checkout setting.")
+        message = re.sub(r"(?:sk|rk|pk)_(?:test|live)_[A-Za-z0-9]+", "[REDACTED]", message)
+        return "Stripe: " + message[:260] + " (" + code + ")"
+    return "Could not open Stripe Sandbox checkout. Check your test configuration and app logs."
+
 def render_pricing():
-    st.markdown('<div style="text-align:center;padding:16px 0 24px"><div style="color:#C8A96E;letter-spacing:.2em;font-size:12px;font-weight:700">AL-MU\'ALLIM MEMBERSHIP</div><h1 style="font-size:clamp(32px,5vw,54px);margin:10px 0;color:#F5EBE0!important">A place for every learner</h1><p style="color:#E6D5B8">Qur\'an reading stays free. Explore our proposed optional memberships.</p></div>', unsafe_allow_html=True)
-    st.info("Pricing preview only. Subscriptions and checkout are not live. Features and final prices may change before launch.")
-    for start in (0, 2):
+    st.markdown("""
+<style>
+.am-price-hero{text-align:center;max-width:690px;margin:0 auto;padding:28px 10px 28px}
+.am-price-kicker{letter-spacing:.23em;color:#c7a36a;font-size:11px;font-weight:700}
+.am-price-title{font-family:Georgia,serif;color:#f8e8ca;font-size:clamp(32px,5vw,52px);
+line-height:1.12;margin:12px 0 12px}
+.am-price-description{color:#d8c8b4;line-height:1.7;font-size:15px}
+.am-plan{border-radius:22px;background:linear-gradient(145deg,rgba(33,64,52,.78),rgba(27,43,35,.9));
+border:1px solid rgba(207,179,123,.28);padding:23px 20px;min-height:320px;margin-bottom:8px}
+.am-plan--featured{border-color:#d8b573;box-shadow:0 9px 36px rgba(0,0,0,.11)}
+.am-plan-name{color:#edd3a1;font-size:23px;font-family:Georgia,serif;margin:2px 0 13px}
+.am-plan-price{color:#fff6e7;font-weight:700;font-size:34px;letter-spacing:-.04em}
+.am-plan-cadence{color:#cfbca1;font-size:14px;letter-spacing:0;font-weight:400}
+.am-plan-blurb{color:#e2d4c4;font-size:13px;line-height:1.55;min-height:42px;margin-top:10px}
+.am-plan ul{list-style:none;padding:0;margin:15px 0 0}
+.am-plan li{color:#e9e0d1;padding:6px 0;font-size:13px}
+.am-plan li:before{content:'✓';color:#d9b977;margin-right:10px}
+.am-plan-tag{color:#d7b874;font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase}
+</style>
+<div class="am-price-hero">
+<div class="am-price-kicker">AL-MU’ALLIM MEMBERSHIP</div>
+<h1 class="am-price-title">A place for every learner.</h1>
+<div class="am-price-description">Read the Qur’an freely. Explore optional study
+memberships designed to deepen memorisation, reflection and consistency.</div>
+</div>
+""", unsafe_allow_html=True)
+
+    st.info("These memberships are a preview. The paid features are still in development. "
+            "Checkout is available only for test payments; no real charges are being accepted.")
+
+    membership = None
+    if st.session_state.get("am_auth"):
+        membership = get_verified_test_membership()
+    if membership:
+        st.success("Stripe Sandbox verified: " + membership +
+                   ". This is a test membership and does not enable paid features.")
+    elif st.session_state.get("am_auth"):
+        st.caption("Current membership: Free. No verified Sandbox subscription found.")
+
+    for group_start in (0, 2):
         cols = st.columns(2, gap="medium")
-        for col, (name, price, cadence, desc, features) in zip(cols, PLANS[start:start+2]):
+        for col, (name, price, cadence, desc, features) in zip(cols, PLANS[group_start:group_start+2]):
             with col:
                 safe = lambda value: html.escape(str(value), quote=True)
-                items = "".join('<li style="padding:5px 0;color:#F5EBE0">✦ '+safe(feature)+'</li>' for feature in features)
+                items = "".join("<li>" + safe(item) + "</li>" for item in features)
                 st.markdown(
-                    '<div style="background:#241913;border:1px solid '+('#D4AF37' if name == 'Pro Annual' else '#65503D')+';border-radius:20px;padding:24px;min-height:350px;margin-bottom:16px">'
-                    '<h2 style="color:#EDD39F!important;font-size:24px;margin:0">'+safe(name)+'</h2>'
-                    '<p style="margin:16px 0 8px"><strong style="font-size:32px;color:#F5EBE0">'+safe(price)+'</strong> <span style="color:#C8B6A1">'+safe(cadence)+'</span></p>'
-                    '<p style="color:#E6D5B8">'+safe(desc)+'</p>'
-                    '<ul style="list-style:none;padding:0;margin-top:18px">'+items+'</ul>'
-                    '<div style="margin-top:20px;color:#C8A96E;font-size:13px">'+('Free access' if name == 'Free' else 'Coming soon — no payment taken')+'</div></div>',
+                    '<div class="am-plan' + (' am-plan--featured' if name == "Pro Annual" else '') + '">' +
+                    '<div class="am-plan-tag">' + ("Best annual value" if name == "Pro Annual" else
+                                                  "Always accessible" if name == "Free" else
+                                                  "Premium membership preview") + '</div>' +
+                    '<h2 class="am-plan-name">' + safe(name) + '</h2>' +
+                    '<div class="am-plan-price">' + safe(price) +
+                    '<span class="am-plan-cadence"> ' + safe(cadence) + '</span></div>' +
+                    '<p class="am-plan-blurb">' + safe(desc) + '</p>' +
+                    '<ul>' + items + '</ul></div>',
                     unsafe_allow_html=True,
                 )
-    if checkout_ready():
-        st.divider()
-        st.subheader("Stripe sandbox — test payments only")
-        st.warning("Test mode only. No real money is charged and checkout does not activate premium features.")
-        for plan in ("Pro Monthly", "Pro Annual", "Family Annual"):
-            if st.button("Test checkout — " + plan, key="stripe_test_" + plan):
-                try:
-                    st.link_button("Open secure Stripe test checkout", create_test_checkout(plan))
-                except Exception as exc:
-                    # Show actionable diagnostics without exposing credentials or raw exception text.
-                    import stripe
-                    if isinstance(exc, stripe.error.AuthenticationError):
-                        st.error("Stripe rejected the Sandbox secret key. Check that the key starts with sk_test_ and belongs to the same Sandbox as your prices.")
-                    elif isinstance(exc, stripe.error.InvalidRequestError):
-                        code = getattr(exc, "code", None)
-                        param = getattr(exc, "param", None)
-                        if param == "line_items[0][price]" or code == "resource_missing":
-                            st.error("Stripe cannot find this Price ID with the current Sandbox key. Check that the products and API key belong to the same Stripe Sandbox.")
-                        else:
-                            message = str(getattr(exc, "user_message", None) or "Stripe did not provide a detailed explanation.")
-                            # Stripe error messages are usually safe, but redact credential-like strings.
-                            message = re.sub(r"(?:sk|rk|pk)_(?:test|live)_[A-Za-z0-9]+", "[REDACTED KEY]", message)
-                            message = re.sub(r"(?i)bearer\\s+[A-Za-z0-9._-]+", "Bearer [REDACTED]", message)
-                            st.error("Stripe says: " + message[:400])
-                            st.caption("Error code: " + str(code or "invalid_request") + "; parameter: " + str(param or "unspecified") + ".")
-                    elif isinstance(exc, stripe.error.PermissionError):
-                        st.error("The Stripe key does not have permission to create checkout sessions.")
-                    elif isinstance(exc, stripe.error.StripeError):
-                        st.error("Stripe returned an API error: " + type(exc).__name__ + ". Check your Stripe Sandbox API logs for details.")
-                    else:
-                        st.error("Checkout failed before Stripe could complete the request: " + type(exc).__name__ + ". Check the Streamlit app logs.")
-    st.caption("Scholarship and sponsored-access options are planned. Live payments and premium activation are not available.")
+                if name == "Free":
+                    st.caption("Free Qur’an reading is always available without purchasing a plan.")
+                elif checkout_ready():
+                    if not st.session_state.get("am_auth"):
+                        st.caption("Sign in to your account to test this subscription.")
+                    elif st.button("Test " + name + " checkout", key="am_test_checkout_"+name,
+                                   use_container_width=True):
+                        try:
+                            link = create_test_checkout(name)
+                            st.link_button("Continue to Stripe Sandbox", link, use_container_width=True)
+                        except Exception as exc:
+                            st.error(_checkout_error(exc))
+                else:
+                    st.caption("Test checkout is not configured on this deployment.")
+        st.write("")
+
+    st.divider()
+    st.markdown("#### Your Qur’an is not behind a paywall")
+    st.write("Reading, listening and basic memorisation stay free. "
+             "The optional memberships will become purchasable only when their "
+             "promised features, billing safeguards and cancellation tools are ready.")
+    st.caption("All paid prices are in GBP. Annual plans renew yearly; monthly plans renew monthly. "
+               "No live subscription, payment, or automatic premium activation is available yet.")
