@@ -40,16 +40,6 @@ _studio = st.components.v2.component(
     isolate_styles=True,
 )
 
-# Last working reader build. If an R6 Python component API incompatibility
-# occurs, the Quran reader should remain usable while the error is logged.
-_r5_source = (_ROOT / "studio_r5_recovery.js").read_text(encoding="utf-8")
-_recovery = st.components.v2.component(
-    "al_muallim_studio_r5_recovery_20261119",
-    html='<div class="am-mount"></div>',
-    css=(_ROOT / "studio.css").read_text(encoding="utf-8"),
-    js=_r5_source,
-    isolate_styles=True,
-)
 _LOG = logging.getLogger(__name__)
 
 
@@ -123,7 +113,7 @@ def render_studio(
         cloud_session = None
         st.session_state.pop("_am_live_cloud_session", None)
     data = {
-        "buildVersion": "2026-11-20-r9-live-tracking",
+        "buildVersion": "2026-11-24-phrase-following",
         "hifdhPlan": plan_data,
         "hifdhCalendar": calendar_data,
         "planMessage": st.session_state.get("_am_plan_feedback", ""),
@@ -169,42 +159,15 @@ def render_studio(
         }
         data = json.loads(json.dumps(data, ensure_ascii=False, default=str))
 
-    # A component/serialization TypeError is not allowed to take down the
-    # entire Quran classroom. Preserve the exact exception in Streamlit logs.
-    fallback = False
-    try:
-        result = _studio(
-            data=data,
-            key=key,
-            on_request_cloud_change=lambda: None,
-            on_room_action_change=lambda: None,
-            on_plan_action_change=lambda: None,
-        )
-    except (TypeError, ValueError, RuntimeError) as exc:
-        fallback = True
-        _LOG.exception("R6 component could not mount; recovering previous reader")
-        st.warning(
-            "The new Prayer Room component could not start "
-            "(" + type(exc).__name__ + "). "
-            "The earlier Qur'an reader has been restored below while "
-            "the room is repaired."
-        )
-        st.caption(
-            "Technical message (no credentials): "
-            + str(exc).replace("\n", " ")[:200]
-        )
-        recovery_data = {
-            field: value for field, value in data.items()
-            if field not in ("room", "roomMessage")
-        }
-        result = _recovery(
-            data=recovery_data,
-            key="studio_r5_recovery_"
-                + str(meta["s"]) + "_" + str(meta["a"])
-                + "_" + str(meta["end"]),
-            on_request_cloud_change=lambda: None,
-        )
-    plan_action = None if fallback else result.get("plan_action")
+    # app.py provides a basic text and audio reader if the component fails.
+    result = _studio(
+        data=data,
+        key=key,
+        on_request_cloud_change=lambda: None,
+        on_room_action_change=lambda: None,
+        on_plan_action_change=lambda: None,
+    )
+    plan_action = result.get("plan_action")
     if isinstance(plan_action, dict):
         action_id = str(plan_action.get("id", ""))[:90]
         if action_id and action_id != st.session_state.get("_am_last_plan_action"):
@@ -235,7 +198,7 @@ def render_studio(
             except (ValueError, TypeError, sqlite3.Error, OSError) as exc:
                 st.session_state["_am_plan_feedback"] = "Plan could not be saved: " + str(exc)[:160]
             st.rerun()
-    room_action = None if fallback else result.get("room_action")
+    room_action = result.get("room_action")
     if isinstance(room_action, dict):
         action_id = str(room_action.get("id", ""))[:90]
         if action_id and action_id != st.session_state.get("_am_last_room_action"):

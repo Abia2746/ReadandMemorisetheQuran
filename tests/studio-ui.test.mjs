@@ -18,9 +18,9 @@ assert.match(source,/@tilawa\/core@1\.0\.0-rc\.0\/web/);
 assert.match(source,/prepareMicrophone\(\)/);
 assert.doesNotMatch(source,/const micTest=btn/);
 
-const importExpression=/const tilawaSdkModule=import\(\s*"https:\/\/esm\.sh\/@tilawa\/core@1\.0\.0-rc\.0\/web\?bundle&deps=onnxruntime-web@1\.30\.0"\s*\)\.then/;
+const importExpression=/sdkPromise=import\(\s*"https:\/\/esm\.sh\/@tilawa\/core@1\.0\.0-rc\.0\/web\?bundle&deps=onnxruntime-web@1\.30\.0"\s*\)\.then/;
 assert.match(source,importExpression);
-source=source.replace(importExpression,"const tilawaSdkModule=Promise.resolve(mockSdk).then");
+source=source.replace(importExpression,"sdkPromise=Promise.resolve(mockSdk).then");
 
 class Element{
   constructor(tag,text=""){
@@ -114,6 +114,8 @@ async function fixture(mode,overrides={},startListening=true,browserWindow={}){
   assert.equal(select.value,"cloud","full-phrase Cloud Live is preferred when available");
   // Test the local SDK path explicitly: it must remain positioning-only.
   select.value="local";
+  select.onchange();
+  for(let i=0;i<6;i++)await Promise.resolve();
   if(startListening){
     await start.onclick();
     assert.equal(prepared,1,"Safari microphone prepared on the real tap");

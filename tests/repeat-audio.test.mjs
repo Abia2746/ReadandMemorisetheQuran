@@ -11,9 +11,9 @@ import {fileURLToPath} from "node:url";
 let js=readFileSync(resolve(dirname(fileURLToPath(import.meta.url)),"../studio.js"),"utf8");
 const roomUiSource=readFileSync(resolve(dirname(fileURLToPath(import.meta.url)),"../prayer_room_ui.js"),"utf8");
 const hifdhUiSource=readFileSync(resolve(dirname(fileURLToPath(import.meta.url)),"../hifdh_planner_ui.js"),"utf8");
-const sdkImport=/const tilawaSdkModule=import\(\s*"https:\/\/esm\.sh\/@tilawa\/core@1\.0\.0-rc\.0\/web\?bundle&deps=onnxruntime-web@1\.30\.0"\s*\)\.then/;
+const sdkImport=/sdkPromise=import\(\s*"https:\/\/esm\.sh\/@tilawa\/core@1\.0\.0-rc\.0\/web\?bundle&deps=onnxruntime-web@1\.30\.0"\s*\)\.then/;
 assert.match(js,sdkImport);
-js=js.replace(sdkImport,"const tilawaSdkModule=Promise.resolve(mockSdk).then");
+js=js.replace(sdkImport,"sdkPromise=Promise.resolve(mockSdk).then");
 
 class Node{
   constructor(tag,text=""){

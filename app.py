@@ -934,6 +934,10 @@ with st.sidebar:
         _ui("Recording review sensitivity"), ["Lenient", "Balanced", "Strict"],
         value=st.session_state.strictness,
     )
+    analyse_reciter_repeats = st.toggle(
+        _ui("Analyse repeated phrases in reciter audio"), value=False,
+        help="Downloads reciter clips for optional on-device analysis. Standard playback works immediately.",
+    )
     st.session_state.recite_from_memory = st.toggle(
         _ui("Begin in English-clue memorisation mode"),
         value=st.session_state.recite_from_memory,
@@ -1036,9 +1040,8 @@ saved = st.session_state.results.get(result_key)
 
 # Small MP3 clips can be inspected by the on-device Quran model; if a clip is
 # too long or the source is unreachable, ordinary source-matched timings remain.
-audio_inline = inline_passage_clips(
-    surah, ayah, end_ayah, RECITERS[reciter]["folder"]
-)
+audio_inline = (inline_passage_clips(surah, ayah, end_ayah, RECITERS[reciter]["folder"])
+                if analyse_reciter_repeats else [])
 
 
 # The full study environment is provided through a modern non-iframe Streamlit component.
