@@ -29,6 +29,11 @@ class Element{
     this.disabled=false;this.paused=true;this.value="";
   }
   appendChild(node){this.children.push(node);return node}
+  insertBefore(node,reference){
+    const at=this.children.indexOf(reference);
+    this.children.splice(at<0?this.children.length:at,0,node);
+    return node;
+  }
   replaceChildren(...nodes){this.children=nodes}
   setAttribute(name,value){this.attributes[name]=value}
   addEventListener(){}
