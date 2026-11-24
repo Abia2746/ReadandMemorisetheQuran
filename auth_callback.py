@@ -114,7 +114,7 @@ def accept_magic_link_tokens():
     """Accept email callback and saved sessions; fail closed on bad credentials."""
     from supabase_auth import _settings
     callback = st.components.v2.component(
-        "al_muallim_magic_link_callback",
+        "al_muallim_auth_bridge_verified_20261124",
         html="<div aria-hidden='true' style='height:0'></div>",
         js=MAGIC_LINK_JS,
     )
@@ -122,7 +122,7 @@ def accept_magic_link_tokens():
     clear = bool(st.session_state.get("am_auth_signout")
                  or st.session_state.get("am_auth_clear_storage"))
     result = callback(
-        key="am_magic_link_callback",
+        key="am_auth_verified_callback_v2",
         data={
             "session": {
                 "access_token": session.get("access_token"),
