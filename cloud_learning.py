@@ -67,6 +67,7 @@ def save_preferences():
         [{"user_id": session["user_id"], "preferences": values}],
         params={"on_conflict": "user_id"}, upsert=True,
     )
+    st.session_state["am_cloud_preferences_snapshot"] = values
     return True
 
 
@@ -77,6 +78,7 @@ def restore_preferences(user_id):
         },
     ) or []
     preferences = _valid_preferences(rows[0].get("preferences", {})) if rows else {}
+    st.session_state["am_cloud_preferences_snapshot"] = preferences
     for key, value in preferences.items():
         st.session_state[key] = value
         if key == "quran_nav_surah": st.session_state["surah"] = value
