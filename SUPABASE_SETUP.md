@@ -43,7 +43,7 @@ Sign-up confirmation email templates and sender branding still use Supabase defa
 
 ### Current preview limitations
 
-Streamlit keeps the verified session in memory for the current app session, refreshes short-lived tokens during normal app use, and calls Supabase logout on sign-out. **A complete browser reload, opening another browser, or clearing the Streamlit session may require signing in again.** For production add durable secure session management, ideally through an application authentication backend using secure HttpOnly cookies. Before public launch, test Safari, Gmail in-app browsers, and cross-device redirects.
+Streamlit keeps the verified session in memory for the current app session, refreshes short-lived tokens during normal app use, and calls Supabase logout on sign-out. **The preview now attempts restoration across same-browser reloads; a different browser or cleared storage requires a new sign-in.** For production add durable secure session management, ideally through an application authentication backend using secure HttpOnly cookies. Before public launch, test Safari, Gmail in-app browsers, and cross-device redirects.
 
 The built-in Supabase email sender has rate limits and may restrict recipients; configure a custom SMTP service before opening registration publicly.
 
@@ -57,3 +57,21 @@ The built-in Supabase email sender has rate limits and may restrict recipients; 
 - Mobile app store payment rules before releasing native apps.
 
 Do not put any database password, Supabase secret/service-role key or Stripe secret key in GitHub.
+
+## November 2026 account restoration update
+
+The Streamlit preview now attempts to restore its Supabase session on browser refresh using a first-party Streamlit Components v2 browser-storage bridge. Expired access tokens are refreshed against Supabase Auth; identity is verified through /auth/v1/user on the server before access to private rows. Signing out clears the saved browser credentials and learner-specific Streamlit state.
+
+**This is NOT production-grade persistent authentication.** Browser localStorage is accessible to same-origin JavaScript and does not provide HttpOnly/Secure cookie protections. Before public rollout, migrate to a dedicated secure authentication backend with properly configured cookies, CSRF defenses, session rotation and revocation. Shared devices need careful testing. No sign-in promise is absolute: users may need to authenticate again on expired/revoked sessions, incognito browsing or a different device.
+
+For authenticated users, cloud restoration loads the saved nickname and up to 1,000 revision-status rows through the user's Supabase JWT and RLS. Unverified guest history is not silently moved into a different account. Audio recording files and full AI review results are *not* yet cloud synchronised; revision markers are not a teacher-certified memorisation record.
+
+### Verification checklist
+- [ ] Use a new valid email sign-in link and confirm login with real Supabase email.
+- [ ] Reload the tab, close and reopen the browser, and verify the same account reappears.
+- [ ] Verify learner's nickname and revision rows restore from Supabase correctly.
+- [ ] Sign out, refresh, and verify no private account data returns.
+- [ ] Sign into another account and verify the previous user's nickname/progress is absent.
+- [ ] Expire/revoke refresh token and verify the app requires a fresh sign-in.
+- [ ] Verify Safari private mode and mobile in-app email browser behavior.
+- [ ] Replace localStorage with HttpOnly cookie-backed sessions before public release.
