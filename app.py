@@ -539,6 +539,10 @@ def analyse_recitation(audio_bytes, mime_type, words, strictness, teacher_gender
     review = normalize_review(parsed, words, duration_s)
     review["signal_quality"] = signal_quality
     review["vowel_reference"] = vowel_reference
+    review["vowel_targets_in_prompt"] = len(eligible_vowels)
+    review["written_vowel_targets_total"] = sum(
+        bool(unit["vowels"]) for unit in vowel_reference
+    )
     review["vowel_suggestions"] = review_vowel_suggestions(
         parsed.get("vowel_observations", []), vowel_reference, signal_quality
     )
@@ -1195,6 +1199,14 @@ if saved:
             "or incorrect. Stopping and connecting words may change how a "
             "vowel is realised in recitation."
         )
+        if review.get("written_vowel_targets_total") is not None:
+            st.caption(
+                "Written vowel-bearing letters: " +
+                str(review.get("written_vowel_targets_total")) +
+                " · provided as context to AI: " +
+                str(review.get("vowel_targets_in_prompt", 0)) +
+                ". This is NOT a count of acoustically tested vowels."
+            )
         audio_evidence = review.get("signal_quality") or {}
         if audio_evidence.get("available"):
             st.caption(
