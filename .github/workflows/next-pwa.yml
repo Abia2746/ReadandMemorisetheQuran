@@ -28,15 +28,17 @@ jobs:
         run: npm install --no-audit --no-fund
       - name: TypeScript strict check
         run: npm run typecheck
-      - name: Static PWA build
+      - name: Production server build
         run: npm run build
-      - name: Confirm installable shell
+      - name: Confirm server bundle and static assets
         run: |
-          test -f out/index.html
-          test -f out/verse.html || test -f out/verse/index.html
-          test -f out/journey.html || test -f out/journey/index.html
-          test -f out/sanctuary.html || test -f out/sanctuary/index.html
-          test -f out/sw.js
+          test -f .next/BUILD_ID
+          test -f public/manifest.webmanifest
+      - name: Auth route static safety checks
+        run: |
+          test -s app/api/account/route.ts
+          test -s app/auth/confirm/route.ts
+          grep -q 'httpOnly:true' lib/serverSession.ts
   api:
     runs-on: ubuntu-latest
     timeout-minutes: 10
