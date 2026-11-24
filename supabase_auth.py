@@ -107,9 +107,17 @@ def ensure_session_valid():
             return False
         if response.status_code != 200:
             return False
-        if response.json().get("id") != session.get("user_id"):
+        user = response.json()
+        # Protect against a stale/revoked account and any account which has
+        # not completed email verification. Never authorize based on profile.
+        if (user.get("id") != session.get("user_id")
+                or not user.get("email_confirmed_at")):
             st.session_state.pop("am_auth", None)
             st.session_state["am_auth_signout"] = True
+            st.session_state["am_cloud_loaded_for"] = None
+            st.session_state["am_auth_error"] = (
+                "Please verify your email address before signing in."
+            )
             return False
         return True
     except requests.RequestException:
