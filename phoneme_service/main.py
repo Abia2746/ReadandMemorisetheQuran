@@ -10,7 +10,11 @@ the browser. Audio is processed in RAM and not stored.
 """
 from __future__ import annotations
 
+import hashlib
 import io
+import json
+import re
+from pathlib import Path
 import os
 import secrets
 import wave
@@ -20,6 +24,15 @@ import numpy as np
 from fastapi import FastAPI, Header, HTTPException, Request
 
 MODEL_ID = "FatimahEmadEldin/wav2vec2-xls-r-300m-iqraeval"
+PINNED_REVISION = "93d7414b4e5f448a0b755204a4a21e08305e3afd"
+PINNED_HASHES = {
+    "model.safetensors": "66dc764514ed6f97357987df22910ee35253b6e3fa9ef36615d7a90763a781c3",
+    "config.json": "cb6957aebfbe0b891097167d672ea53e5bbd01e4227f64c8850950f217eaa29d",
+    "processor_config.json": "8bc3c8d6d97ea61524d5c15d8554b4baf072d2264c0bda1839bc7a822c200d66",
+    "tokenizer_config.json": "9c462e8b319c04c147b7a79cc2b7762d66821d6ee11af76c2d76cdb7d59d999f",
+    "vocab.json": "144f6bdb698fc8ea06752f3345d46e285c301990203dc17b346f8217e5995f9d",
+    "added_tokens.json": "a4ebe7c45225c03d236841d875a9356e827f46c2f6ff109c9cf5fb1925133bbb",
+}
 MAX_AUDIO_BYTES = 8_000_000
 MAX_SECONDS = 15.0
 MIN_SECONDS = 0.35
@@ -76,17 +89,34 @@ def parse_wav(raw: bytes) -> tuple[np.ndarray, int]:
 @lru_cache(maxsize=1)
 def _model():
     import torch
-    from transformers import Wav2Vec2ForCTC, Wav2Vec2Processor
-    # Production should pin PHONEME_MODEL_REVISION to an audited commit.
-    revision = os.environ.get("PHONEME_MODEL_REVISION", "main")
-    processor = Wav2Vec2Processor.from_pretrained(
-        MODEL_ID, revision=revision, trust_remote_code=False)
+    from huggingface_hub import snapshot_download
+    from transformers import (Wav2Vec2ForCTC, Wav2Vec2Processor,
+                              Wav2Vec2CTCTokenizer, Wav2Vec2FeatureExtractor)
+    revision = os.environ.get("PHONEME_MODEL_REVISION", PINNED_REVISION)
+    if revision == "main":
+        revision = PINNED_REVISION
+    if not re.fullmatch(r"[0-9a-f]{40}", revision):
+        raise ValueError("Use an immutable model revision")
+    folder = Path(snapshot_download(MODEL_ID, revision=revision,
+                                    allow_patterns=["*.json", "model.safetensors"]))
+    if revision == PINNED_REVISION:
+        for filename, expected in PINNED_HASHES.items():
+            with (folder / filename).open("rb") as handle:
+                if hashlib.file_digest(handle, "sha256").hexdigest() != expected:
+                    raise ValueError("Acoustic artifact checksum mismatch")
+        # Upstream saves the extractor inside processor_config.json. The
+        # supported Transformers 4.x loader expects a separate extractor file.
+        config = json.loads((folder / "processor_config.json").read_text())
+        processor = Wav2Vec2Processor(
+            Wav2Vec2FeatureExtractor.from_dict(config["feature_extractor"]),
+            Wav2Vec2CTCTokenizer(str(folder / "vocab.json")))
+    else:
+        processor = Wav2Vec2Processor.from_pretrained(folder, local_files_only=True)
     model = Wav2Vec2ForCTC.from_pretrained(
-        MODEL_ID, revision=revision, use_safetensors=True,
-        trust_remote_code=False).eval()
+        folder, local_files_only=True, use_safetensors=True).eval()
     device = "cuda" if torch.cuda.is_available() else "cpu"
     model.to(device)
-    return model, processor, device
+    return model, processor, device, revision
 
 
 def ctc_spans(ids: list[int], probabilities: list[float], tokenizer,
@@ -159,7 +189,7 @@ async def phonemes(request: Request, authorization: str | None = Header(default=
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     try:
         import torch
-        model, processor, device = _model()
+        model, processor, device, revision = _model()
         inputs = processor(samples, sampling_rate=rate, return_tensors="pt",
                            padding=False)
         with torch.inference_mode():
@@ -171,7 +201,7 @@ async def phonemes(request: Request, authorization: str | None = Header(default=
                              len(samples)/rate, (model.config.pad_token_id if model.config.pad_token_id is not None else processor.tokenizer.pad_token_id))
         return {
             "engine": "wav2vec2-ctc", "model_id": MODEL_ID,
-            "revision": os.environ.get("PHONEME_MODEL_REVISION", "main"),
+            "revision": revision,
             "sample_rate": rate, "audio_duration_s": round(len(samples)/rate, 3),
             "observed_phonemes": observed, "status": "unverified_acoustic_observation",
             "meaning": "Model-predicted sound symbols, not Tajweed grades or verified exact vowel timing",

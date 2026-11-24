@@ -96,6 +96,15 @@ class DecoderTests(unittest.TestCase):
         self.assertIn("NOT",result["guidance"]+" NOT")
         self.assertNotIn("correct",result["observations"][0]["kind"])
 
+    def test_special_phone_symbols_in_checkpoint_survive_learner_view(self):
+        phones=["*", "**", "$", "$$", "^", "^^", "<", "<<"]
+        response={"status":"unverified_acoustic_observation","audio_duration_s":2,
+                  "observed_phonemes":[{"token":token,"start_s":i/10,"end_s":(i+1)/10}
+                                       for i,token in enumerate(phones)]}
+        observed=sanitize_observation(response)["observations"]
+        self.assertEqual([item["token"] for item in observed],phones)
+        self.assertTrue(all(item["status"]=="unverified" for item in observed))
+
     def test_claim_outside_clip_or_fake_status_is_rejected(self):
         response={"status":"unverified_acoustic_observation","audio_duration_s":2,
                   "observed_phonemes":[{"token":"i","start_s":3,"end_s":4}]}

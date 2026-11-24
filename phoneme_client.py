@@ -55,7 +55,8 @@ def sanitize_observation(data: Any) -> dict:
         token = item.get("token")
         start, stop = item.get("start_s"), item.get("end_s")
         if (not isinstance(token, str) or not 1 <= len(token) <= 20
-                or token in SPECIAL or not re.fullmatch(r"[A-Za-z<>'_]+", token)
+                or token in SPECIAL or not (re.fullmatch(r"[A-Za-z<>'_]+", token)
+                        or token in {"*", "**", "$", "$$", "^", "^^"})
                 or type(start) not in (int, float) or type(stop) not in (int, float)
                 or not math.isfinite(start) or not math.isfinite(stop)
                 or not 0 <= start < stop <= duration + 0.15):
@@ -142,7 +143,7 @@ def infer_acoustic_phones(raw: bytes, url: str, token: str) -> dict:
             url.rstrip("/") + "/v1/phonemes",
             headers={"Authorization": "Bearer " + token,
                      "Content-Type": "audio/wav"},
-            data=wav, timeout=90,
+            data=wav, timeout=90, allow_redirects=False,
         )
         if result.status_code != 200:
             if result.status_code == 422:

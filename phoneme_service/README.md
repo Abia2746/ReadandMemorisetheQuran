@@ -10,7 +10,7 @@ Use a dedicated container service such as a trusted GPU host. Keep all audio and
 
 Environment:
 - `PHONEME_SERVICE_TOKEN`: random strong bearer token of at least 32 characters.
-- `PHONEME_MODEL_REVISION`: audited pinned Hugging Face commit (recommended), default main for local exploration.
+- `PHONEME_MODEL_REVISION`: defaults to pinned commit `93d7414b4e5f448a0b755204a4a21e08305e3afd`. The bundled hashes cover the weights, extractor configuration and tokenizer files at that revision.
 - Model cache on persistent storage when possible (`HF_HOME`).
 
 ```bash
@@ -18,7 +18,7 @@ cd phoneme_service
 docker build -t almuallim-phonemes .
 docker run -p 127.0.0.1:8080:8080 \
   -e PHONEME_SERVICE_TOKEN="<SET_LOCALLY>" \
-  -e PHONEME_MODEL_REVISION="<PINNED_REVISION>" \
+  -e PHONEME_MODEL_REVISION="93d7414b4e5f448a0b755204a4a21e08305e3afd" \
   almuallim-phonemes
 ```
 
@@ -32,9 +32,12 @@ Use the separate **Analyse acoustic phonemes (experimental)** button for a given
 
 The endpoint can distinguish *proposed short/long vowels* (a/i/u versus aa/ii/uu where present in the vocabulary), consonant identity tokens and possible gemination. It is **not** trained/validated to certify madd or ghunnah durations or all 16 Tajweed topics.
 
+## Engineering verification
+The pinned checkpoint ran locally through the authenticated FastAPI route on the upstream Muaalem example `assets/002282_15.wav`, converted to 16 kHz mono PCM16. The 15-second recording produced 37 candidate spans. This recording has no independent phone or error annotations in this test. It supplies no precision, recall or boundary-accuracy measurement. The [training dataset](https://huggingface.co/datasets/IqraEval/Iqra_train) carries CC BY-NC 4.0. Commercial deployment clearance remains unresolved.
+
 ## Verification still required
-- [ ] Docker image builds, model weights download with licence reviewed, model pinned and inference runs on real audio.
-- [ ] Check model tokenizer vocabulary and CTC blank ID on this exact revision.
+- [ ] Verify the container image on the intended production host and clear deployment rights.
+- [x] Checked pinned vocabulary and CTC blank ID (0) during local inference.
 - [ ] Run real recitation audio with expected sound/vowel contrasts and log false detections; no artificial pass rates.
 - [ ] Qualified Hafs teachers validate held-out recordings across learner levels/microphones/accents.
 - [ ] Run a service under HTTPS with network rate limits, per-user quotas, private logs, outbound privacy disclosures and retention controls.
