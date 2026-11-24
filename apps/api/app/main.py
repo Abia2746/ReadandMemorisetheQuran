@@ -60,7 +60,7 @@ origins = [x.strip() for x in os.environ.get("CORS_ALLOWED_ORIGINS", "").split("
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins, allow_credentials=False,
-    allow_methods=["GET", "POST"], allow_headers=["Authorization", "Content-Type"],
+    allow_methods=["GET", "POST"], allow_headers=["Authorization", "Content-Type", "X-Quran-Verse"],
 )
 app.include_router(billing_router)
 app.include_router(webhook_router)
