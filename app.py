@@ -962,7 +962,14 @@ if language != "en" and not translation_available:
     st.info(ui_labels["unavailable"])
 elif language != "en" and len(verse_translations) < end_ayah - ayah + 1:
     st.info("Some ayahs have no published translation in this language; English meanings remain available.")
-xp, streak, _ = get_user(st.session_state.name)
+# Use account identifiers, not nonunique display names, for local data.
+import secrets
+if st.session_state.get("am_auth"):
+    storage_profile = "account:" + st.session_state["am_auth"]["user_id"]
+else:
+    st.session_state.setdefault("am_guest_storage_id", secrets.token_hex(16))
+    storage_profile = "guest:" + st.session_state["am_guest_storage_id"]
+xp, streak, _ = get_user(storage_profile)
 meta = {"s": surah, "a": ayah, "end": end_ayah, "xp": xp, "streak": streak}
 surah_arabic, surah_english = SURAH_TITLES.get(surah, ("القرآن الكريم", f"Surah {surah}"))
 teacher_name = "Ustadha Noor" if st.session_state.teacher_gender == "Female" else "Ustadh Omar"
@@ -981,7 +988,7 @@ try:
     render_studio(
         words=words,
         meta=meta,
-        profile=st.session_state.name,
+        profile=storage_profile,
         tracks=tracks,
         inline_audio=audio_inline,
         reciter=reciter,
@@ -1070,7 +1077,7 @@ with left:
                 # not each time its form is submitted or the page reloads.
                 review_id = hashlib.sha256(recording.getvalue()).hexdigest()
                 earn_recording_review(
-                    st.session_state.name, surah, ayah, end_ayah, review_id
+                    storage_profile, surah, ayah, end_ayah, review_id
                 )
                 # Signed-in learners can save a revision marker to their own cloud
                 # account. Unverified AI feedback never marks verses memorised.
