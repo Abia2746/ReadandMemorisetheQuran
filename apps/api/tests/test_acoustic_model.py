@@ -1,5 +1,6 @@
 """No pretrained audio weights required: prove signal checks and honest fallback."""
 import struct
+import math
 import pytest
 
 from app.services.acoustic_model import decode_pcm16, audio_quality, collapse_ctc_frames
@@ -22,7 +23,7 @@ def test_clipped_audio_refused():
 
 
 def test_moderate_audio_is_usable_not_proof_of_pronunciation():
-    quality = audio_quality(decode_pcm16(pcm(4000)))
+    quality = audio_quality([.15 * math.sin(i * .08) for i in range(8000)])
     assert quality["usable"] is True
     assert "tajweed_verified" not in quality
 
@@ -62,3 +63,9 @@ def test_ctc_all_blank_does_not_invent_a_sound():
 def test_ctc_out_of_vocab_is_rejected():
     with pytest.raises(ValueError):
         collapse_ctc_frames([1, 2], ["<blank>", "a"], 40)
+
+
+def test_constant_offset_contains_no_recitation():
+    quality = audio_quality(decode_pcm16(pcm(4000)))
+    assert not quality["usable"]
+    assert quality["ac_rms"] == 0

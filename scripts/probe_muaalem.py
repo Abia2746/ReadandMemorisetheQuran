@@ -44,6 +44,13 @@ def probe(folder, recording):
         if len(pcm) != 2 * count:
             raise ValueError("Incomplete recording")
     waveform = np.frombuffer(pcm, dtype="<i2").astype(np.float32) / 32768
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "apps/api"))
+    from app.services.acoustic_model import audio_quality
+    quality = audio_quality(waveform.tolist())
+    if not quality["usable"]:
+        return {"revision": MODEL_REVISION, "duration_seconds": count / 16000,
+                "emission_frames": 0, "frame_intervals": [], "phone_hypotheses": [],
+                "audio_quality": quality, "tajweed_verified": False}
     extractor = SeamlessM4TFeatureExtractor.from_pretrained(folder, local_files_only=True)
     model = Wav2Vec2BertForMultilevelCTC.from_pretrained(
         folder, local_files_only=True, use_safetensors=True
@@ -67,7 +74,7 @@ def probe(folder, recording):
         cursor = end
     phones = [item["symbol"] for item in intervals]
     return {"revision": MODEL_REVISION, "duration_seconds": count / 16000,
-            "emission_frames": len(path), "frame_intervals": intervals, "phone_hypotheses": phones,
+            "emission_frames": len(path), "frame_intervals": intervals, "audio_quality": quality, "phone_hypotheses": phones,
             "tajweed_verified": False}
 
 
