@@ -40,6 +40,8 @@ def accept_magic_link_tokens():
     )
     result = callback(key="am_magic_link_callback", on_tokens_change=lambda: None,
                       on_auth_error_change=lambda: None)
+    if st.session_state.get("am_auth"):
+        return
     if result.auth_error:
         st.session_state["am_auth_error"] = "That sign-in link expired. Request a new link." if result.auth_error == "expired" else "Sign-in could not be completed. Request a fresh link."
     payload = result.tokens
@@ -76,6 +78,7 @@ def accept_magic_link_tokens():
         st.session_state.pop("am_pending_email", None)
         st.session_state.pop("am_auth_error", None)
         st.session_state["am_new_login"] = True
+        st.session_state["am_cloud_loaded_for"] = None
         if not st.session_state.get("name"):
             try:
                 from supabase_auth import _table_request
