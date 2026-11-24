@@ -353,3 +353,100 @@ def build_calendar(name, *, start:dt.date|None=None, horizon_days=90):
         "X-WR-CALNAME:Al-Mu'allim Hifdh Plan",
         "X-WR-TIMEZONE:Europe/London",*events,"END:VCALENDAR",""
     ])
+
+
+def export_cloud_snapshot(name: str) -> dict:
+    """Export only the learner's own planner data, not recordings or scores."""
+    if not name or len(name) > 128:
+        raise ValueError("Invalid learner profile")
+    with closing(_connection()) as con:
+        row = con.execute("SELECT plan_json FROM hifdh_plans WHERE name=?", (name,)).fetchone()
+        if not row:
+            return {"plan": {}, "completed": [], "sessions": []}
+        completed = con.execute(
+            "SELECT surah,ayah,completed FROM hifdh_completed WHERE name=? ORDER BY surah,ayah",
+            (name,),
+        ).fetchall()
+        sessions = con.execute(
+            "SELECT day,scope,surah,first_ayah,last_ayah,completed_at "
+            "FROM hifdh_sessions WHERE name=? ORDER BY day,scope",
+            (name,),
+        ).fetchall()
+    return {
+        "plan": json.loads(row[0]),
+        "completed": [
+            {"surah": s, "ayah": a, "completed": stamp}
+            for s, a, stamp in completed
+        ],
+        "sessions": [
+            {"day": day, "scope": scope, "surah": surah,
+             "first_ayah": first, "last_ayah": last, "completed_at": stamp}
+            for day, scope, surah, first, last, stamp in sessions
+        ],
+    }
+
+
+def import_cloud_snapshot(name: str, snapshot: dict) -> None:
+    """Restore validated cloud planner state atomically into a user's local cache.
+
+    The owner-only Supabase table is authoritative for signed-in learners.
+    """
+    if not isinstance(name, str) or not name or len(name) > 128:
+        raise ValueError("Invalid profile")
+    if not isinstance(snapshot, dict):
+        raise ValueError("Invalid cloud planner snapshot")
+    raw_plan = snapshot.get("plan", {})
+    completed = snapshot.get("completed", [])
+    sessions = snapshot.get("sessions", [])
+    if not isinstance(raw_plan, dict) or not isinstance(completed, list) or not isinstance(sessions, list):
+        raise ValueError("Invalid cloud planner fields")
+    if len(completed) > 6236 or len(sessions) > 2000:
+        raise ValueError("Cloud planner exceeds supported limits")
+    config = _safe_config(raw_plan) if raw_plan else None
+    clean_completed = []
+    for r in completed:
+        if not isinstance(r, dict):
+            raise ValueError("Invalid completed verse")
+        s, a, stamp = r.get("surah"), r.get("ayah"), r.get("completed")
+        if type(s) is not int or not 1 <= s <= 114 or type(a) is not int or not 1 <= a <= AYAHS[s]:
+            raise ValueError("Invalid verse coordinates")
+        if not isinstance(stamp, str) or len(stamp) > 60:
+            raise ValueError("Invalid completion timestamp")
+        clean_completed.append((name, s, a, stamp))
+    clean_sessions = []
+    for r in sessions:
+        if not isinstance(r, dict):
+            raise ValueError("Invalid completed session")
+        s, first, last = r.get("surah"), r.get("first_ayah"), r.get("last_ayah")
+        if type(s) is not int or not 1 <= s <= 114 or type(first) is not int or type(last) is not int or not 1 <= first <= last <= AYAHS[s]:
+            raise ValueError("Invalid session range")
+        day, scope, stamp = r.get("day"), r.get("scope"), r.get("completed_at")
+        try:
+            dt.date.fromisoformat(day)
+        except (TypeError, ValueError):
+            raise ValueError("Invalid session date")
+        if not isinstance(scope, str) or len(scope) > 40 or not isinstance(stamp, str) or len(stamp) > 60:
+            raise ValueError("Invalid session metadata")
+        clean_sessions.append((name, day, scope, s, first, last, stamp))
+    with closing(_connection()) as con:
+        con.execute("BEGIN IMMEDIATE")
+        try:
+            for table in ("hifdh_plans", "hifdh_completed", "hifdh_sessions"):
+                con.execute(f"DELETE FROM {table} WHERE name=?", (name,))
+            if config is not None:
+                con.execute(
+                    "INSERT INTO hifdh_plans(name,plan_json,updated) VALUES(?,?,?)",
+                    (name, json.dumps(config), dt.datetime.now(dt.timezone.utc).isoformat()),
+                )
+            con.executemany(
+                "INSERT INTO hifdh_completed(name,surah,ayah,completed) VALUES(?,?,?,?)",
+                clean_completed,
+            )
+            con.executemany(
+                "INSERT INTO hifdh_sessions(name,day,scope,surah,first_ayah,last_ayah,completed_at) "
+                "VALUES(?,?,?,?,?,?,?)", clean_sessions,
+            )
+            con.execute("COMMIT")
+        except BaseException:
+            con.execute("ROLLBACK")
+            raise
