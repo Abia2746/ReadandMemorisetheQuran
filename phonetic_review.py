@@ -110,11 +110,31 @@ def wav_signal_evidence(raw: bytes) -> dict:
             if duration < 0.7:
                 notes.append("The recording is too short for reliable phrase analysis.")
             quality = "review_needed" if notes else "usable_signal"
+            # Frame activity is only proof of sound, not of an Arabic phoneme.
+            # It prevents presenting a purported vowel error in silent audio.
+            frame_size = max(1, int(rate * 0.10))
+            active_frames = []
+            activity_threshold = max(0.007, rms * 0.25)
+            for start in range(0, mono.size, frame_size):
+                chunk = mono[start:start + frame_size]
+                frame_rms = float(np.sqrt(np.mean(chunk * chunk)))
+                if frame_rms >= activity_threshold:
+                    active_frames.append((start / rate,
+                                          min((start + frame_size) / rate,frames / rate)))
+            regions = []
+            for start, stop in active_frames:
+                if regions and start - regions[-1][1] < 0.11:
+                    regions[-1][1] = stop
+                else:
+                    regions.append([start, stop])
+            regions = [[round(start, 2),round(stop, 2)]
+                       for start,stop in regions[:400]]
             return {
                 "available": True, "duration_s": duration,
                 "peak": round(peak, 5), "rms": round(rms, 5),
                 "clipped_fraction": round(clipped_fraction, 6),
                 "quality": quality, "notes": notes,
+                "audible_regions": regions,
             }
     except (ValueError, wave.Error, EOFError, OSError):
         return unknown
@@ -146,6 +166,15 @@ def review_vowel_suggestions(model_output: object, reference: list[dict],
             continue
         time_s=item.get("time_s")
         if type(time_s) not in (int,float) or not 0<=time_s<=duration:
+            continue
+        regions = audio_quality.get("audible_regions")
+        if isinstance(regions, list) and not any(
+            isinstance(region, (list, tuple)) and len(region) == 2 and
+            isinstance(region[0], (int,float)) and
+            isinstance(region[1], (int,float)) and
+            region[0] - 0.25 <= time_s <= region[1] + 0.25
+            for region in regions
+        ):
             continue
         evidence = item.get("evidence")
         guidance = item.get("guidance")
