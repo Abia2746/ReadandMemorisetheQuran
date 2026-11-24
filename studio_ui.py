@@ -98,14 +98,17 @@ def render_studio(
             "coins": 0, "streak": int(meta.get("streak", 0) or 0),
             "owned": [], "equipped": {}, "items": [],
         }
+    # Planner files are isolated by Supabase account ID, not learner nickname.
+    account = st.session_state.get("am_auth")
+    plan_profile = ("account:" + account["user_id"]) if account else profile
     last_study_tab = st.session_state.get("_am_studio_active_tab")
     preferred_city = st.session_state.get("_am_room_prayer_city", "London")
     if preferred_city not in CITIES:
         preferred_city = "London"
     prayer_clock = room_prayer_times(preferred_city)
     try:
-        plan_data = hifdh_state(profile)
-        calendar_data = hifdh_calendar(profile) if plan_data["configured"] else ""
+        plan_data = hifdh_state(plan_profile)
+        calendar_data = hifdh_calendar(plan_profile) if plan_data["configured"] else ""
     except (ValueError, TypeError, sqlite3.Error, OSError) as exc:
         _LOG.exception("Noor's Hifdh plan could not be loaded")
         st.warning("Noor's saved Hifdh plan is temporarily unavailable. Qur'an reading remains accessible.")
@@ -213,12 +216,22 @@ def render_studio(
                     settings = plan_action.get("settings")
                     if not isinstance(settings, dict):
                         raise ValueError("Invalid study plan.")
-                    response = hifdh_save(profile, settings)
+                    response = hifdh_save(plan_profile, settings)
                 elif action == "done":
-                    response = hifdh_finish(profile)
+                    response = hifdh_finish(plan_profile)
                 else:
                     response = {"ok": False, "message": "Unknown plan action."}
                 st.session_state["_am_plan_feedback"] = response["message"]
+                if response.get("ok") and account:
+                    try:
+                        from cloud_learning import backup_hifdh_plan
+                        backup_hifdh_plan()
+                        st.session_state["_am_plan_cloud_saved"] = True
+                    except Exception:
+                        st.session_state["_am_plan_cloud_saved"] = False
+                        st.session_state["_am_plan_feedback"] += (
+                            " Saved here, but cloud backup failed. Please retry after reconnecting."
+                        )
             except (ValueError, TypeError, sqlite3.Error, OSError) as exc:
                 st.session_state["_am_plan_feedback"] = "Plan could not be saved: " + str(exc)[:160]
             st.rerun()
