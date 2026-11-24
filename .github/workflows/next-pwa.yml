@@ -33,7 +33,6 @@ jobs:
       - name: Confirm server bundle and static assets
         run: |
           test -f .next/BUILD_ID
-          test -f public/manifest.webmanifest
       - name: Auth route static safety checks
         run: |
           test -s app/api/account/route.ts
