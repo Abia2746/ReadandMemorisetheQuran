@@ -1,0 +1,43 @@
+"""No pretrained audio weights required: prove signal checks and honest fallback."""
+import struct
+import pytest
+
+from app.services.acoustic_model import decode_pcm16, audio_quality
+
+
+def pcm(value: int, frames: int = 16000):
+    return struct.pack("<" + "h" * frames, *([value] * frames))
+
+
+def test_silence_refused():
+    quality = audio_quality(decode_pcm16(pcm(0)))
+    assert quality["usable"] is False
+    assert "quiet_audio" in quality["reasons"]
+
+
+def test_clipped_audio_refused():
+    quality = audio_quality(decode_pcm16(pcm(32767)))
+    assert quality["usable"] is False
+    assert "clipping" in quality["reasons"]
+
+
+def test_moderate_audio_is_usable_not_proof_of_pronunciation():
+    quality = audio_quality(decode_pcm16(pcm(4000)))
+    assert quality["usable"] is True
+    assert "tajweed_verified" not in quality
+
+
+@pytest.mark.parametrize("payload", [
+    b"", b"odd", pcm(300, 1000), pcm(300, 16000 * 9),
+])
+def test_invalid_duration_or_pcm(payload):
+    with pytest.raises(ValueError):
+        decode_pcm16(payload)
+
+
+def test_no_registry_never_fakes_model(monkeypatch):
+    monkeypatch.delenv("ALMUALLIM_ACOUSTIC_REGISTRY", raising=False)
+    from app.services.acoustic_model import load_approved_model
+    load_approved_model.cache_clear()
+    with pytest.raises((RuntimeError, ImportError)):
+        load_approved_model()
