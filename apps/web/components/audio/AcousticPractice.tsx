@@ -76,7 +76,7 @@ export function AcousticPractice({verseRef}:{verseRef:string}){
     try{
       const response=await fetch(apiPath("/api/acoustic/analyse"),{
         method:"POST",headers:{"Content-Type":"application/octet-stream"},
-        body:pcm16(segment),signal:controller.signal,cache:"no-store",
+        body:new Blob([pcm16(segment).buffer as ArrayBuffer],{type:"application/octet-stream"}),signal:controller.signal,cache:"no-store",
       });
       const result=await response.json().catch(()=>null);
       if(!alive.current||epoch.current!==currentEpoch)return;
