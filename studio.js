@@ -148,7 +148,7 @@ export default function(component) {
   micPanel.appendChild(micTop);
   const micBody=CE("div","am-scaffold");
   const micDescription=CE("p","am-note",
-     "Follow the word as you recite. In Memorise mode, a word is revealed only after the listener moves to the next word; this confirms progress, not correct vowels or Tajweed. Detailed phoneme verification requires a different model.");
+     "The teacher checks full phrases in order, not just their first sound. Cloud Live or browser final transcripts can confirm complete text phrases; the on-device model only estimates your position. Vowels, makharij and Tajweed still require deeper audio assessment.");
   const micControls=CE("div","am-control-row");
   const micButton=btn("🎙 Start listening","am-button am-primary");
 
@@ -172,16 +172,18 @@ export default function(component) {
   ].forEach(([value,label])=>{
     const op=CE("option","",label);op.value=value;engineSelect.appendChild(op);
   });
-  // iPad Safari often blocks built-in SpeechRecognition.
-  // Prefer the Quran-specific model, which identifies the passage itself.
+  // Full phrase verification requires final Arabic transcripts, not only
+  // position estimates. Prefer Cloud Live if configured; otherwise a capable
+  // browser recogniser, with the on-device model as position-only fallback.
   const isAppleWebKit=/iPad|iPhone|iPod/.test(navigator.userAgent||"")||
     (navigator.platform==="MacIntel"&&navigator.maxTouchPoints>1);
-  engineSelect.value="local";
+  const browserCanTranscribe=Boolean(window.SpeechRecognition||window.webkitSpeechRecognition);
+  engineSelect.value=D.cloudAvailable?"cloud":browserCanTranscribe?"browser":"local";
   append(micControls,micButton,engineSelect,sensitivitySelect);
   const meter=CE("div","am-meter"),meterFill=CE("div","");
   meter.appendChild(meterFill);
   const micText=CE("div","am-note","Preparing Qur’an recognition SDK…");
-  const micMessage=CE("div","am-note","Quran-specific local tracking selected. Audio stays on your device; the mobile recognition model downloads on first use. Cloud Live remains available in the menu.");
+  const micMessage=CE("div","am-note",D.cloudAvailable?"Cloud phrase verification selected. Only fully recognised phrases advance.":"On-device positioning cannot validate complete pronunciation. Use browser Arabic transcription when supported, or enable Cloud Live.");
   append(micBody,micDescription,micControls,meter,micText,micMessage);
   micPanel.appendChild(micBody);
   main.appendChild(micPanel);
