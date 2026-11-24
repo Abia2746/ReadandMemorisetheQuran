@@ -127,15 +127,19 @@ async function fixture(mode,overrides={},startListening=true){
   x.callback({type:"position",state:"locked",observed:[{word:{surah:2,ayah:60,word:1}}]});
   reveal=nodes(x.mount).filter(n=>n.className.split(" ").includes("am-revealed-ar"));
   assert.equal(reveal.length,0,"first locked word only highlights current position");
-  x.callback({type:"position",state:"locked",observed:[{word:{surah:2,ayah:60,word:2}}]});
+  // Position-lock means the SDK estimates where audio is, not that the
+  // full word/phrase was spoken. Neither movement nor repeated confidence
+  // may reveal the Arabic answer during blind memorisation.
+  x.callback({type:"position",state:"locked",observed:[{word:{surah:2,ayah:60,word:2},confidence:.99}]});
+  x.callback({type:"position",state:"locked",observed:[{word:{surah:2,ayah:60,word:3},confidence:.99}]});
+  x.callback({type:"position",state:"locked",observed:[{word:{surah:2,ayah:60,word:3},confidence:.99}]});
   reveal=nodes(x.mount).filter(n=>n.className.split(" ").includes("am-revealed-ar"));
-  assert.deepEqual(reveal.map(n=>n.textContent),["فَقُلْنَا"],"first word only reveals after moving to the second");
-  x.callback({type:"position",state:"locked",observed:[{word:{surah:2,ayah:60,word:3}}]});
-  reveal=nodes(x.mount).filter(n=>n.className.split(" ").includes("am-revealed-ar"));
-  assert.deepEqual(reveal.map(n=>n.textContent),["فَقُلْنَا","اضْرِبْ"]);
+  assert.equal(reveal.length,0,"even high-confidence position movement cannot reveal unverified phrases");
+  const confirmed=nodes(x.mount).filter(n=>n.className.split(/\s+/).includes("am-confirmed"));
+  assert.equal(confirmed.length,0,"position predictions must never mark Quran words green");
   x.callback({type:"position",state:"locked",observed:[{word:{surah:99,ayah:60,word:3}}]});
   reveal=nodes(x.mount).filter(n=>n.className.split(" ").includes("am-revealed-ar"));
-  assert.equal(reveal.length,2,"unrelated Surah does not advance memorisation");
+  assert.equal(reveal.length,0,"unrelated Surah cannot reveal anything");
   x.dispose();
 }
 {
@@ -177,4 +181,4 @@ async function fixture(mode,overrides={},startListening=true){
     "without word timing, never highlight all ayah words");
   x.dispose();
 }
-console.log("PASS: R8 SDK events, delayed memorisation reveal, and source-matched reciter timing without guesswork.");
+console.log("PASS: SDK position estimates never validate phrases; reader timings remain source-matched.");
