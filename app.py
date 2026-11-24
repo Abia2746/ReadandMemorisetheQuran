@@ -22,6 +22,7 @@ from language_support import available_translations, translated_verses, UI_STRIN
 from interface_locales import ui_text
 from dynamic_localization import get_ui_translations
 from tajweed_review import rubric_for_prompt, normalize_review
+from phonetic_review import phonetic_reference, wav_signal_evidence, review_vowel_suggestions
 from prayer_room import earn_recording_review
 
 
@@ -353,6 +354,21 @@ def tajweed_response_schema():
             "teacher_label": {"type": "string"},
             "feedback": {"type": "string"},
             "tafsir_summary": {"type": "string"},
+            "vowel_observations": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "word_i": {"type": "integer"},
+                        "letter_i": {"type": "integer"},
+                        "status": {"type": "string", "enum": ["possible_issue", "uncertain"]},
+                        "time_s": {"type": "number"},
+                        "evidence": {"type": "string"},
+                        "guidance": {"type": "string"},
+                    },
+                    "required": ["word_i","letter_i","status","time_s","evidence","guidance"],
+                },
+            },
             "rule_reviews": {
                 "type": "array",
                 "items": {
@@ -375,7 +391,7 @@ def tajweed_response_schema():
             },
         },
         "required": ["teacher_label", "feedback", "tafsir_summary",
-                     "rule_reviews"],
+                     "rule_reviews", "vowel_observations"],
     }
 
 
@@ -420,6 +436,13 @@ def analyse_recitation(audio_bytes, mime_type, words, strictness, teacher_gender
     if not audio_bytes:
         raise RuntimeError("Audio recording is empty.")
     original_mime = normalize_audio_mime_type(mime_type)
+    # Inspect unmodified PCM: amplification/compression can obscure clipping.
+    signal_quality = wav_signal_evidence(audio_bytes)
+    if signal_quality["available"] and signal_quality["quality"] == "review_needed":
+        # The learner needs a better recording before an AI model guesses at
+        # tiny vowel distinctions from silence or distorted sound.
+        raise RuntimeError("Recording quality needs attention: " +
+                           " ".join(signal_quality["notes"]))
     audio_bytes = compress_audio(audio_bytes)
     if original_mime == "audio/wav":
         normalized_mime = "audio/wav"
@@ -437,6 +460,15 @@ def analyse_recitation(audio_bytes, mime_type, words, strictness, teacher_gender
         for i, w in enumerate(words)
     ]
     rubrics = rubric_for_prompt()
+    vowel_reference = phonetic_reference(words)
+    # Send bounded reference units to avoid oversized prompts. The reference
+    # map remains complete for display, but the model cannot speculate about
+    # words outside the explicitly supplied assessment segment.
+    eligible_vowels = [
+        {"word_i": u["word_i"], "letter_i": u["letter_i"],
+         "letter": u["letter"], "expected": u["vowels"]}
+        for u in vowel_reference if u["vowels"]
+    ][:160]
     system_instruction = (
         "You are an AI audio learning aid reviewing Hafs Quran recitation. "
         "You are NOT a certified Tajweed teacher, not a phoneme-alignment model, "
@@ -458,6 +490,13 @@ def analyse_recitation(audio_bytes, mime_type, words, strictness, teacher_gender
         "and one clear practical correction. For all other statuses use "
         "word_i=-1, time_s=-1, evidence='', correction=''. "
         "Use concise, accessible English and correct Arabic terminology. "
+        "VOWEL OUTPUT: The provided vowel map is a TEXT-ONLY REFERENCE. "
+        "It is never evidence the sound was pronounced. For vowel_observations, "
+        "report only clearly audible, localised, potentially different short "
+        "vowels with the EXACT provided word_i and letter_i and a defensible "
+        "time_s. If any uncertainty exists, omit the observation. Do not "
+        "claim to measure formants, frequency, vocal tract position or "
+        "phoneme correctness. No blanket all-vowels-correct judgement. "
         "Do not manufacture vowel-by-vowel findings when only an approximate "
         "recitation match is audible. Return JSON only."
     )
@@ -465,6 +504,11 @@ def analyse_recitation(audio_bytes, mime_type, words, strictness, teacher_gender
         f"Study this actual recorded recitation. Style sensitivity: {strictness}. "
         f"Selected text: {json.dumps(expected_text, ensure_ascii=False)}. "
         f"Sixteen practice topics: {json.dumps(rubrics, ensure_ascii=False)}. "
+        f"Written short-vowel targets, NOT observed audio: "
+        f"{json.dumps(eligible_vowels, ensure_ascii=False)}. "
+        f"Waveform quality evidence: {json.dumps(signal_quality, ensure_ascii=False)}. "
+        "Output vowel_observations only for a suspected audible mismatch "
+        "in one of these specific written targets; do not infer correctness. "
         f"Recording duration (if known): {duration_s}. "
         "Report observations from ONLY the audible part, not all selected ayahs. "
         "Give 16 rule_reviews with those topic IDs. "
@@ -493,6 +537,15 @@ def analyse_recitation(audio_bytes, mime_type, words, strictness, teacher_gender
         raise RuntimeError("Gemini returned an invalid recording review.")
     parsed = parse_tajweed_json(raw_text)
     review = normalize_review(parsed, words, duration_s)
+    review["signal_quality"] = signal_quality
+    review["vowel_reference"] = vowel_reference
+    review["vowel_suggestions"] = review_vowel_suggestions(
+        parsed.get("vowel_observations", []), vowel_reference, signal_quality
+    )
+    review["vowel_verification"] = (
+        "Expected marks mapped from the Uthmani text; audio vowels are NOT "
+        "phoneme-verified. Suggestions are unverified hypotheses, not grades."
+    )
     states = ["uncertain"] * len(words)
     for observation in review["observations"]:
         states[observation["word_i"]] = "review"
