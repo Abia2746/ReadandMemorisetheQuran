@@ -54,9 +54,20 @@ def probe(folder, recording):
     with torch.inference_mode():
         logits = model(**features, return_dict=False)[0]["phonemes"][0]
         path = logits.argmax(dim=-1).tolist()
-    phones = [symbols[i] for i, _ in itertools.groupby(path) if i != vocabulary["[PAD]"]]
+    # Pinned extractor stacks two 10 ms feature frames. One stride-2
+    # adapter then gives 40 ms per emission. These are model frame bins.
+    hop_ms = 10 * extractor.stride * model.config.adapter_stride ** model.config.num_adapter_layers
+    cursor = 0
+    intervals = []
+    for token, repeated in itertools.groupby(path):
+        end = cursor + sum(1 for _ in repeated)
+        if token != vocabulary["[PAD]"]:
+            intervals.append({"symbol": symbols[token], "frame_start_ms": cursor * hop_ms,
+                              "frame_end_ms": min(round(count / 16), end * hop_ms)})
+        cursor = end
+    phones = [item["symbol"] for item in intervals]
     return {"revision": MODEL_REVISION, "duration_seconds": count / 16000,
-            "emission_frames": len(path), "phone_hypotheses": phones,
+            "emission_frames": len(path), "frame_intervals": intervals, "phone_hypotheses": phones,
             "tajweed_verified": False}
 
 
