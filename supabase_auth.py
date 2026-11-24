@@ -4,6 +4,7 @@ No paid entitlement is inferred from an authenticated session.
 Only public Supabase URL/publishable key are embedded; private credentials must stay in Secrets.
 """
 import re
+import time
 import requests
 import streamlit as st
 
@@ -44,10 +45,13 @@ def _post(endpoint, data, params=None):
         json=data, params=params, timeout=15,
     )
     if response.status_code >= 400:
-        # Never display arbitrary server errors, tokens or personal data.
+        # Do not expose raw API errors, account existence, tokens or request data.
         if response.status_code == 429:
-            raise ValueError("Supabase has temporarily reached its email sending limit. Please continue as a guest and try again once the allowance resets.")
-        raise ValueError("Email sign-in could not be started. Check the Supabase email provider and recipient restrictions.")
+            st.session_state["am_auth_retry_after"] = time.time() + 600
+            raise ValueError("Email requests are temporarily limited. Please continue as a guest and try later.")
+        if response.status_code in (400, 422):
+            raise ValueError("The email sign-in service needs configuration. Please try again later.")
+        raise ValueError("Email sign-in is unavailable. Please try again later.")
     return response.json() if response.content else {}
 
 def request_magic_link(email, create_account=True):
@@ -55,9 +59,14 @@ def request_magic_link(email, create_account=True):
     email = email.strip().lower()
     if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", email) or len(email) > 254:
         raise ValueError("Enter a valid email address.")
-    # The Supabase link redirects to the approved app URL after verification.
+    # One request per learner per cooldown; prevents repeated accidental taps.
+    now = time.time()
+    if now < float(st.session_state.get("am_auth_retry_after", 0)):
+        raise ValueError("Please allow the email request limit to reset before asking for another link.")
+    # The Supabase link redirects only to the configured app origin.
     _post("otp", {"email": email, "create_user": bool(create_account)},
           params={"redirect_to": "https://readandmemorisethequran-9uvtv8lpn9ozytdqtk6ceh.streamlit.app/"})
+    st.session_state["am_auth_retry_after"] = now + 90
     return email
 
 
