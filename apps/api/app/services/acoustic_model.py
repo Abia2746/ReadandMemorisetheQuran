@@ -39,7 +39,7 @@ def audio_quality(samples: list[float]) -> dict:
 
 
 def log_spectrogram(waveform):
-    """26? No: 201-bin 25ms / 10ms log STFT from 16k mono audio."""
+    """201-bin log STFT, 25 ms window / 10 ms hop for mono 16 kHz PCM."""
     import torch
     window = torch.hann_window(400, device=waveform.device)
     spec = torch.stft(waveform, n_fft=400, hop_length=160,
@@ -110,17 +110,30 @@ def analyse(samples: list[float]) -> dict:
         signal = torch.tensor(samples, dtype=torch.float32)
         emissions = model(log_spectrogram(signal)).softmax(-1)
         indices = emissions.argmax(-1).tolist()
+        # A CTC token occupies a *run* of acoustic frames. Previously, each
+        # token was assigned the first frame only, creating misleading 22 ms
+        # spans regardless of how long the phone was heard.
         phones = []
         previous = 0
+        onset = 0
+        def emit(index: int, start: int, stop: int) -> None:
+            if index == 0:
+                return  # CTC blank, not a spoken phone
+            phones.append({
+                "phone": registry["vocabulary"][index],
+                "approx_start_ms": max(0, start * 10 - 12),
+                "approx_end_ms": min(round(len(samples) / 16), stop * 10 + 12),
+                "uncertainty": (
+                    "Uncalibrated CTC best-path interval; neither an "
+                    "articulation grade nor a forced-aligned phoneme boundary"
+                ),
+            })
         for frame, index in enumerate(indices):
-            if index != 0 and index != previous:
-                phones.append({
-                    "phone": registry["vocabulary"][index],
-                    "approx_start_ms": max(0, frame * 10 - 12),
-                    "approx_end_ms": (frame + 1) * 10 + 12,
-                    "uncertainty": "Uncalibrated phone hypothesis; teacher validation required",
-                })
-            previous = index
+            if index != previous:
+                emit(previous, onset, frame)
+                previous = index
+                onset = frame
+        emit(previous, onset, len(indices))
     return {
         "status": "acoustic_hypotheses_only",
         "model_id": registry["model_id"],
