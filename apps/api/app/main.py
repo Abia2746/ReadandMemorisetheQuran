@@ -17,6 +17,7 @@ from app.routers.billing_webhooks import router as webhook_router
 from app.routers.verse import router as verse_router
 from app.routers.quran import router as quran_router
 from app.routers.learning import router as learning_router
+from app.routers.acoustic import router as acoustic_router
 
 
 @asynccontextmanager
@@ -66,6 +67,7 @@ app.include_router(webhook_router)
 app.include_router(verse_router)
 app.include_router(quran_router)
 app.include_router(learning_router)
+app.include_router(acoustic_router)
 
 
 @app.get("/health")
