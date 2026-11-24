@@ -140,6 +140,8 @@ def save_review_progress(surah_number, ayah_numbers):
     if rows:
         _table_request("hifdh_progress", "POST", rows,
                        params={"on_conflict": "user_id,surah_number,ayah_number"}, upsert=True)
+        # Next render reloads the authoritative cloud history and updated count.
+        st.session_state["am_cloud_loaded_for"] = None
     return True
 
 def render_account():
