@@ -1,6 +1,7 @@
 """Opt-in acoustic analysis: 16 kHz mono PCM16, capped and never stored."""
 from __future__ import annotations
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Depends
+from app.routers.billing import current_user
 from app.services.acoustic_model import decode_pcm16, audio_quality, analyse, load_approved_model
 from app.services.phoneme_alignment import align_approved_verse
 
@@ -21,7 +22,7 @@ async def capabilities():
 
 
 @router.post("/analyse")
-async def analyse_audio(request: Request):
+async def analyse_audio(request: Request, _user=Depends(current_user)):
     # Require octet-stream: prevents accidental text-transcript substitution.
     if request.headers.get("content-type", "").split(";")[0].strip() != "application/octet-stream":
         raise HTTPException(415, "16 kHz mono PCM16 microphone audio required")
