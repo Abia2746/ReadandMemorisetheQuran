@@ -22,7 +22,7 @@ from language_support import available_translations, translated_verses, UI_STRIN
 from interface_locales import ui_text
 from dynamic_localization import get_ui_translations
 from tajweed_review import rubric_for_prompt, normalize_review
-from phonetic_review import phonetic_reference, wav_signal_evidence, review_vowel_suggestions
+from phonetic_review import phonetic_reference, wav_signal_evidence, review_vowel_suggestions, wav_excerpt
 from prayer_room import earn_recording_review
 
 
@@ -1133,6 +1133,7 @@ with left:
                 # Reward a *completed* AI review once per unique audio file,
                 # not each time its form is submitted or the page reloads.
                 review_id = hashlib.sha256(recording.getvalue()).hexdigest()
+                st.session_state.results[result_key]["audio_sha256"] = review_id
                 review_reward = earn_recording_review(
                     storage_profile, surah, ayah, end_ayah, review_id
                 )
@@ -1191,6 +1192,18 @@ if saved:
                 reference_words = []
         review = dict(review)
         review["vowel_reference"] = phonetic_reference(reference_words)
+    # A playback snippet is generated from the CURRENT unsaved microphone
+    # recording only when its digest matches this review. Cross-device review
+    # never pretends that private audio was backed up to Supabase.
+    active_recording_audio = None
+    if (recording is not None and isinstance(saved, dict) and
+            saved.get("audio_sha256")):
+        try:
+            raw_recording = recording.getvalue()
+            if hashlib.sha256(raw_recording).hexdigest() == saved["audio_sha256"]:
+                active_recording_audio = raw_recording
+        except (ValueError, OSError, AttributeError):
+            pass
     if isinstance(review, dict) and review.get("vowel_reference"):
         st.markdown("#### Harakah-by-harakah learning map")
         st.caption(
@@ -1228,6 +1241,15 @@ if saved:
                     st.write("**What the AI suggests checking:** " +
                              clue["evidence"])
                     st.write("**How to practise:** " + clue["guidance"])
+                    if active_recording_audio is not None:
+                        snippet = wav_excerpt(active_recording_audio, clue["time_s"])
+                        if snippet:
+                            st.caption("Listen to your own audio near the AI's suggested time:")
+                            st.audio(snippet, format="audio/wav")
+                    else:
+                        st.caption("Audio excerpt unavailable here. The original microphone recording is not stored in cloud history.")
+                    st.caption("Compare with the selected Hafs reciter, then repeat this phrase slowly:")
+                    st.audio(audio_url(surah, int(clue["ayah"]), RECITERS[reciter]["folder"]))
                     st.caption(
                         "This is not validated vowel recognition. Listen "
                         "back to the recording and compare with a qualified "
@@ -1273,6 +1295,13 @@ if saved:
                 ):
                     st.write("**AI's possible observation:** " + item["evidence"])
                     st.write("**" + _ui("Practice suggestion:") + "** " + item["correction"])
+                    if active_recording_audio is not None:
+                        snippet = wav_excerpt(active_recording_audio, item["time_s"])
+                        if snippet:
+                            st.caption("Your recording, around the suggested moment:")
+                            st.audio(snippet, format="audio/wav")
+                    st.caption("Listen to the Hafs reference and repeat the selected passage:")
+                    st.audio(audio_url(surah, int(item["ayah"]), RECITERS[reciter]["folder"]))
                     st.caption(_ui("This is an unverified AI observation. Replay that part and confirm subtle pronunciation with a qualified teacher."))
         else:
             st.info(_ui("The AI returned no adequately specific, timestamped findings. That does not mean every vowel or Tajweed rule was correct."))
