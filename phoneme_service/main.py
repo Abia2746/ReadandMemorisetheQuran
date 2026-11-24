@@ -138,11 +138,21 @@ async def phonemes(request: Request, authorization: str | None = Header(default=
         raise HTTPException(status_code=401, detail="Unauthorised")
     if request.headers.get("content-type", "").split(";")[0] != "audio/wav":
         raise HTTPException(status_code=415, detail="Upload a PCM WAV")
-    if int(request.headers.get("content-length", "0") or 0) > MAX_AUDIO_BYTES:
-        raise HTTPException(status_code=413, detail="Audio too large")
-    raw = await request.body()
+    # Stream a bounded request body. Never read arbitrary audio uploads into
+    # memory simply because Content-Length is missing or forged.
     try:
-        samples, rate = parse_wav(raw)
+        length = int(request.headers.get("content-length", "0") or 0)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid body size")
+    if length > MAX_AUDIO_BYTES:
+        raise HTTPException(status_code=413, detail="Audio too large")
+    body = bytearray()
+    async for chunk in request.stream():
+        if len(body) + len(chunk) > MAX_AUDIO_BYTES:
+            raise HTTPException(status_code=413, detail="Audio too large")
+        body.extend(chunk)
+    try:
+        samples, rate = parse_wav(bytes(body))
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     try:
@@ -156,7 +166,7 @@ async def phonemes(request: Request, authorization: str | None = Header(default=
         frame_ids = ids.cpu().tolist()
         frame_probs = probs.cpu().tolist()
         observed = ctc_spans(frame_ids, frame_probs, processor.tokenizer,
-                             len(samples)/rate, model.config.pad_token_id)
+                             len(samples)/rate, (model.config.pad_token_id if model.config.pad_token_id is not None else processor.tokenizer.pad_token_id))
         return {
             "engine": "wav2vec2-ctc", "model_id": MODEL_ID,
             "revision": os.environ.get("PHONEME_MODEL_REVISION", "main"),
