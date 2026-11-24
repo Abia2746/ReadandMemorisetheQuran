@@ -5,7 +5,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { apiPath } from "@/lib/verseApi";
 
 type Phone = {phone:string;approx_start_ms:number;approx_end_ms:number;uncertainty:string};
+type AlignmentEvent = {kind:string;expected:string|null;observed:string|null;outcome:string;explanation:string};
 type Result = {status:string;phones:Phone[];message:string;tajweed_verified:false;
+  alignment?:{status:string;events:AlignmentEvent[];reference:string;verified_tajweed:false};
   audio_quality?:{usable:boolean;reasons:string[]}};
 type Capabilities = {available:boolean;reason:string;model_id?:string};
 const HZ=16000;
@@ -75,7 +77,7 @@ export function AcousticPractice({verseRef}:{verseRef:string}){
     const controller=new AbortController();abort.current=controller;
     try{
       const response=await fetch(apiPath("/api/acoustic/analyse"),{
-        method:"POST",headers:{"Content-Type":"application/octet-stream"},
+        method:"POST",headers:{"Content-Type":"application/octet-stream","X-Quran-Verse":verseRef},
         body:new Blob([pcm16(segment).buffer as ArrayBuffer],{type:"application/octet-stream"}),signal:controller.signal,cache:"no-store",
       });
       const result=await response.json().catch(()=>null);
@@ -158,6 +160,17 @@ export function AcousticPractice({verseRef}:{verseRef:string}){
           {report.audio_quality?.reasons.join(", ")||
             "Uncertain until validated with teacher-labelled examples"}
         </p>
+        <p className="mt-1 text-[#EDD39F]">
+          {report.alignment?.status==="candidate_alignment"
+            ? "Phone-to-reference alignment (all differences unverified)"
+            : "Expert-reviewed phoneme reference unavailable"}
+        </p>
+        {report.alignment?.events?.filter(e=>e.kind!=="match").slice(0,6).map((e,j)=>
+          <p key={j} className="mt-1 text-[#C0AB90]">
+            Expected {e.expected||"—"} · model suggested {e.observed||"—"}.
+            Possible alignment difference; repeat this sound and compare with a qualified teacher.
+          </p>
+        )}
       </div>)}
     </div>}
   </section>;
