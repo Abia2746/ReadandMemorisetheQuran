@@ -70,6 +70,55 @@ def request_magic_link(email, create_account=True):
     return email
 
 
+def verify_email_code(email, token):
+    """Verify a Supabase email OTP and accept only a confirmed identity.
+
+    The Magic Link email template must include the {{ .Token }} variable to
+    deliver an OTP. The code is never logged or persisted in browser storage.
+    """
+    email = str(email or "").strip().lower()
+    token = str(token or "").strip()
+    if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", email) or len(email) > 254:
+        raise ValueError("Enter a valid email address.")
+    if not re.fullmatch(r"[0-9]{6,8}", token):
+        raise ValueError("Enter the numeric code from your latest email.")
+    now = time.time()
+    if now < float(st.session_state.get("am_verify_backoff_until", 0)):
+        raise ValueError("Too many incorrect codes. Please try again later.")
+    # A few local attempts are allowed; Supabase also enforces server-side
+    # one-time code validity and rate limiting.
+    attempts = int(st.session_state.get("am_verify_attempts", 0))
+    if attempts >= 5:
+        st.session_state["am_verify_backoff_until"] = now + 600
+        raise ValueError("Too many incorrect codes. Please try again later.")
+    st.session_state["am_verify_attempts"] = attempts + 1
+    try:
+        reply = _post("verify", {"email": email, "token": token, "type": "email"})
+    except ValueError:
+        if st.session_state["am_verify_attempts"] >= 5:
+            st.session_state["am_verify_backoff_until"] = now + 600
+        raise ValueError("The code is incorrect, expired or already used.")
+    access = reply.get("access_token")
+    refresh = reply.get("refresh_token")
+    # Independently revalidate the returned session with Supabase before
+    # populating account data, rather than trusting the email field.
+    from auth_callback import _verify_credentials
+    verified = _verify_credentials(access, refresh)
+    if not verified:
+        raise ValueError("Email verification could not be confirmed.")
+    if verified.get("email", "").lower() != email:
+        raise ValueError("The verified account does not match this email.")
+    st.session_state["am_auth"] = verified
+    st.session_state["am_auth_signout"] = False
+    st.session_state["am_auth_clear_storage"] = False
+    st.session_state["am_cloud_loaded_for"] = None
+    st.session_state["am_new_login"] = True
+    st.session_state["am_verify_attempts"] = 0
+    st.session_state.pop("am_pending_email", None)
+    st.session_state.pop("am_pending_mode", None)
+    return True
+
+
 def ensure_session_valid():
     """Validate or renew an existing Supabase session before private data is used."""
     session = st.session_state.get("am_auth")
@@ -266,6 +315,27 @@ div[data-testid="stDialog"] button[kind="primaryFormSubmit"] {background:linear-
             st.rerun()
         st.caption("If no email arrives, check Spam/Junk. Sending is rate-limited; "
                    "please do not repeatedly tap the request button.")
+        st.markdown("**Enter the verification code**")
+        st.caption("If your email includes a six-digit code, enter it here instead "
+                   "of opening the confirmation link. If the email only has a link, "
+                   "use that link; code login needs the Supabase email template "
+                   "to include its OTP token.")
+        with st.form("am_verify_otp"):
+            otp = st.text_input(
+                "Email verification code", max_chars=8,
+                placeholder="6-digit code", autocomplete="one-time-code",
+                key="am_email_otp_input",
+            )
+            verify = st.form_submit_button(
+                "Verify and sign in", use_container_width=True, type="primary")
+        if verify:
+            try:
+                verify_email_code(st.session_state["am_pending_email"], otp)
+                st.rerun()
+            except ValueError as exc:
+                st.error(str(exc))
+            except (requests.RequestException, RuntimeError):
+                st.error("Verification is temporarily unavailable. Please try again later.")
     else:
         with st.form("am_magic_link_request"):
             email = st.text_input("Email address", placeholder="name@example.com", key="am_auth_email")
