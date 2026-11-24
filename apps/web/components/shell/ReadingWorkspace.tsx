@@ -215,6 +215,7 @@ function Workspace(){
           <Link href={`/verse/?surah=${surah}&ayah=${ayah}`} className="am-nav-text-link"><BookOpen size={14}/> Verse Studio</Link>
           <Link href="/journey/" className="am-nav-text-link"><Brain size={14}/> Journey</Link>
           <Link href="/sanctuary/" className="am-nav-text-link"><CloudRain size={14}/> Sanctuary</Link>
+          <Link href="/account/" className="am-nav-text-link">Account</Link>
         </div>
       </nav>
 
