@@ -24,7 +24,9 @@ jobs:
       - name: Check browser frontend syntax
         run: node --check studio.js
       - name: Verify Quran listener and memorisation highlighting
-        run: node tests/studio-ui.test.mjs
+        run: |
+          node tests/studio-ui.test.mjs
+          node tests/phrase-verification.test.mjs
       - name: Verify repeat-aware reciter audio and model reuse
         run: node tests/repeat-audio.test.mjs
       - name: Validate 3D Prayer Room and Hifdh UI source
