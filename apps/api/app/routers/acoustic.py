@@ -24,9 +24,20 @@ async def analyse_audio(request: Request):
     # Require octet-stream: prevents accidental text-transcript substitution.
     if request.headers.get("content-type", "").split(";")[0].strip() != "application/octet-stream":
         raise HTTPException(415, "16 kHz mono PCM16 microphone audio required")
-    if request.headers.get("content-length") and int(request.headers["content-length"]) > 256_000:
+    try:
+        declared_length = int(request.headers.get("content-length", "0"))
+    except ValueError:
+        raise HTTPException(400, "Invalid audio length header")
+    if declared_length > 256_000:
         raise HTTPException(413, "Audio window exceeds 8 seconds")
-    audio = await request.body()
+    chunks = []
+    total = 0
+    async for chunk in request.stream():
+        total += len(chunk)
+        if total > 256_000:
+            raise HTTPException(413, "Audio window exceeds 8 seconds")
+        chunks.append(chunk)
+    audio = b"".join(chunks)
     try:
         samples = decode_pcm16(audio)
     except (ValueError, OverflowError) as exc:
