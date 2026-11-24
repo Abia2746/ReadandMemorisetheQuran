@@ -5,6 +5,8 @@ Only purpose-specific JSON settings are stored, not authentication tokens,
 microphone recordings, private messages, or AI-generated judgement.
 """
 import requests
+import json
+import re
 import streamlit as st
 from supabase_auth import _table_request
 
@@ -117,3 +119,51 @@ def backup_hifdh_plan():
         params={"on_conflict": "user_id"}, upsert=True,
     )
     return True
+
+
+def save_recitation_review(passage_key, review_data):
+    """Save text-only AI review results; never store raw audio."""
+    session = st.session_state.get("am_auth")
+    if not session:
+        return False
+    if (not isinstance(passage_key, str)
+            or not re.fullmatch(r"[0-9]{1,3}:[0-9]{1,3}-[0-9]{1,3}\|recitation", passage_key)):
+        raise ValueError("Invalid passage key")
+    if not isinstance(review_data, dict):
+        raise ValueError("Invalid review")
+    # Explicit allowlist; don't serialize microphone data or arbitrary app state.
+    allowed_fields = (
+        "states", "letter_results", "word_feedback", "tajweed_assessments",
+        "feedback", "tafsir_summary", "review", "recording_scope",
+    )
+    saved = {k: review_data[k] for k in allowed_fields if k in review_data}
+    serialized = json.dumps(saved, ensure_ascii=False, default=str)
+    if len(serialized.encode("utf-8")) > 60000:
+        raise ValueError("Review too large for cloud backup")
+    _table_request(
+        "learner_recitation_reviews", "POST",
+        [{"user_id": session["user_id"], "passage_key": passage_key,
+          "review_data": json.loads(serialized)}],
+        params={"on_conflict": "user_id,passage_key"}, upsert=True,
+    )
+    return True
+
+
+def restore_recitation_reviews(user_id):
+    """Restore recent saved review summaries for the signed-in learner."""
+    rows = _table_request(
+        "learner_recitation_reviews",
+        params={
+            "select": "passage_key,review_data",
+            "user_id": "eq." + user_id,
+            "order": "reviewed_at.desc",
+            "limit": "50",
+        },
+    ) or []
+    return {
+        item["passage_key"]: item["review_data"]
+        for item in rows
+        if isinstance(item.get("passage_key"), str)
+        and isinstance(item.get("review_data"), dict)
+        and len(item["passage_key"]) <= 64
+    }
