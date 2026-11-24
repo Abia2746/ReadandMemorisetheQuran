@@ -9,6 +9,7 @@ import { MeaningTileGrid } from "@/components/memorise/MeaningTileGrid";
 import { WordActionPopover } from "@/components/mushaf/WordActionPopover";
 import { RecitationProvider, useRecitation } from "@/components/audio/RecitationProvider";
 import { AcousticPractice } from "@/components/audio/AcousticPractice";
+import { GuidedRecitationCoach } from "@/components/audio/GuidedRecitationCoach";
 import { AYAHS_PER_SURAH, type ReciterId } from "@/lib/quranMetadata";
 import { fetchJSON, fetchVerse, postJSON, apiPath, type QuranVerse, type QuranWord, type WordStatus, type DifficultWord } from "@/lib/verseApi";
 import { useStudyAuth, accessToken } from "@/lib/auth";
@@ -295,6 +296,9 @@ function Workspace(){
             Compare with Qari recitation or a qualified Tajweed teacher.
           </p>
         </div>
+        <GuidedRecitationCoach key={`coach:${surah}:${ayah}`} verseRef={`${surah}:${ayah}`}
+          onListen={()=>{void recitation.playVerse(verse.audio_url,`${surah}:${ayah}`).catch(()=>setRecitationMessage("Qari audio unavailable right now."))}}
+          onStartReciting={()=>{setMode("live");void startListening()}}/>
         <AcousticPractice key={`${surah}:${ayah}`} verseRef={`${surah}:${ayah}`}/>
         {queue.length>0&&<section className="mb-8 mt-4 rounded-2xl border border-[#4A3828] bg-[#241913] p-4">
           <h2 className="font-editorial text-lg text-[#EDD39F]">Difficult Words · gentle revision</h2>
