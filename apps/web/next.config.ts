@@ -4,6 +4,7 @@ const nextConfig: NextConfig = {
   // Static export cannot handle dynamic sign-in/refresh/logout route handlers.
   // Capacitor packaging must use a separate, dedicated static/mobile build
   // once its authentication and payment architecture is ready.
+  outputFileTracingIncludes: {"/api/quran/verse/**":["./data/tanzil-uthmani.txt.gz"]},
   reactStrictMode: true,
   images: { unoptimized: true },
   poweredByHeader: false,

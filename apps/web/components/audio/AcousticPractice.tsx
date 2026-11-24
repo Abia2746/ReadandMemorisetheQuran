@@ -2,6 +2,7 @@
 /** Opt-in rolling microphone-to-acoustic-model analysis.
  * Deliberately separate from text ASR and word verification. */
 import { useCallback, useEffect, useRef, useState } from "react";
+import { practiceAudioEvent, takeAudioTurn } from "@/lib/practiceAudio";
 import { apiPath } from "@/lib/verseApi";
 import { accessToken, useStudyAuth } from "@/lib/auth";
 
@@ -60,7 +61,15 @@ export function AcousticPractice({verseRef}:{verseRef:string}){
     void ctx.current?.close().catch(()=>{});ctx.current=null;
     data.current=[];busy.current=false;setRunning(false);
   },[]);
-  useEffect(()=>()=>stop(),[stop]);
+  useEffect(()=>{
+    window.addEventListener(practiceAudioEvent,stop);
+    window.addEventListener("pagehide",stop);
+    return ()=>{
+      window.removeEventListener(practiceAudioEvent,stop);
+      window.removeEventListener("pagehide",stop);
+      stop();
+    };
+  },[stop]);
   useEffect(()=>{
     let active=true;
     fetch(apiPath(`/api/acoustic/capabilities?verse=${encodeURIComponent(verseRef)}`),{cache:"no-store"})
@@ -135,7 +144,7 @@ export function AcousticPractice({verseRef}:{verseRef:string}){
       setStatus(caps?.reason||"Checking whether a trained model is available.");
       return;
     }
-    stop();setReports([]);setStatus("Requesting microphone permission…");
+    takeAudioTurn();setReports([]);setStatus("Requesting microphone permission…");
     const startingEpoch=epoch.current;
     setRunning(true);
     try{

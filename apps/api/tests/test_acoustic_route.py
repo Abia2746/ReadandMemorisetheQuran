@@ -1,3 +1,5 @@
+import math
+import struct
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -22,7 +24,7 @@ def acoustic_api(monkeypatch):
 
 
 def send(client, verse):
-    return client.post("/api/acoustic/analyse", content=b"\x00\x10" * 5000,
+    return client.post("/api/acoustic/analyse", content=struct.pack("<5000h", *(int(4000*math.sin(i*.08)) for i in range(5000))),
                        headers={"Content-Type": "application/octet-stream", "X-Quran-Verse": verse})
 
 

@@ -44,6 +44,13 @@ def probe(folder, recording):
         if len(pcm) != 2 * count:
             raise ValueError("Incomplete recording")
     waveform = np.frombuffer(pcm, dtype="<i2").astype(np.float32) / 32768
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "apps/api"))
+    from app.services.acoustic_model import audio_quality
+    quality = audio_quality(waveform.tolist())
+    if not quality["usable"]:
+        return {"revision": MODEL_REVISION, "duration_seconds": count / 16000,
+                "emission_frames": 0, "frame_intervals": [], "phone_hypotheses": [],
+                "audio_quality": quality, "tajweed_verified": False}
     extractor = SeamlessM4TFeatureExtractor.from_pretrained(folder, local_files_only=True)
     model = Wav2Vec2BertForMultilevelCTC.from_pretrained(
         folder, local_files_only=True, use_safetensors=True
@@ -54,9 +61,20 @@ def probe(folder, recording):
     with torch.inference_mode():
         logits = model(**features, return_dict=False)[0]["phonemes"][0]
         path = logits.argmax(dim=-1).tolist()
-    phones = [symbols[i] for i, _ in itertools.groupby(path) if i != vocabulary["[PAD]"]]
+    # Pinned extractor stacks two 10 ms feature frames. One stride-2
+    # adapter then gives 40 ms per emission. These are model frame bins.
+    hop_ms = 10 * extractor.stride * model.config.adapter_stride ** model.config.num_adapter_layers
+    cursor = 0
+    intervals = []
+    for token, repeated in itertools.groupby(path):
+        end = cursor + sum(1 for _ in repeated)
+        if token != vocabulary["[PAD]"]:
+            intervals.append({"symbol": symbols[token], "frame_start_ms": cursor * hop_ms,
+                              "frame_end_ms": min(round(count / 16), end * hop_ms)})
+        cursor = end
+    phones = [item["symbol"] for item in intervals]
     return {"revision": MODEL_REVISION, "duration_seconds": count / 16000,
-            "emission_frames": len(path), "phone_hypotheses": phones,
+            "emission_frames": len(path), "frame_intervals": intervals, "audio_quality": quality, "phone_hypotheses": phones,
             "tajweed_verified": False}
 
 

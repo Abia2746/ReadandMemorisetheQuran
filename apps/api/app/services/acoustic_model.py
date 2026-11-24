@@ -29,12 +29,13 @@ def decode_pcm16(data: bytes) -> list[float]:
 def audio_quality(samples: list[float]) -> dict:
     n = len(samples)
     rms = math.sqrt(sum(x * x for x in samples) / n)
-    peak = max(abs(x) for x in samples)
+    mean = sum(samples) / n
+    ac_rms = math.sqrt(sum((x - mean) ** 2 for x in samples) / n)
     clipped = sum(abs(x) >= .998 for x in samples) / n
     reasons = []
-    if rms < .008: reasons.append("quiet_audio")
+    if ac_rms < .008: reasons.append("quiet_audio")
     if clipped > .01: reasons.append("clipping")
-    return {"usable": not reasons, "rms": round(rms, 4),
+    return {"usable": not reasons, "rms": round(rms, 4), "ac_rms": round(ac_rms, 4),
             "clipped_fraction": round(clipped, 4), "reasons": reasons}
 
 
