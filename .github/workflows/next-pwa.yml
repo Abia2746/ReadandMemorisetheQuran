@@ -49,3 +49,13 @@ jobs:
       - run: python -m pip install -r apps/api/requirements.txt
       - run: python -m compileall -q apps/api/app
       - run: PYTHONPATH=apps/api python -m pytest -q apps/api/tests
+      - name: Root-level acoustic evidence regression tests
+        run: python -m unittest tests.test_acoustic_evidence
+      - name: Compile acoustic training script without training data
+        run: python -m py_compile scripts/train_quran_phones.py
+      - name: Confirm no publicly committed approved model registry
+        run: |
+          if test -e apps/api/approved_acoustic_registry.json; then
+            echo 'An approved model registry must not be committed' >&2
+            exit 1
+          fi
