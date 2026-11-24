@@ -2,6 +2,7 @@ import base64
 import hashlib
 import logging
 import datetime
+from concurrent.futures import ThreadPoolExecutor
 import json
 import os
 import pathlib
@@ -154,14 +155,19 @@ def award_xp(name, xp=10):
 # ----------------------------- Qur'an API & Exact Timings -----------------------------
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def fetch_words(surah, ayah, language="en"):
+def fetch_verse_material(surah, ayah, language="en", translation_id=None):
+    params={"words":"true","word_fields":"text_uthmani","language":language}
+    if translation_id:
+        params["translations"]=int(translation_id)
     response = requests.get(
         f"{QURAN_API}/verses/by_key/{surah}:{ayah}",
-        params={"words": "true", "word_fields": "text_uthmani", "language": language},
+        params=params,
         timeout=20,
     )
     response.raise_for_status()
     verse = response.json().get("verse", {})
+    if verse.get("verse_key") != f"{surah}:{ayah}":
+        raise ValueError("The reader received a different ayah.")
     output = []
     for item in verse.get("words", []):
         if item.get("char_type_name") != "word":
@@ -186,7 +192,17 @@ def fetch_words(surah, ayah, language="en"):
             for translated, english in zip(output, english_words):
                 if not translated["en"]:
                     translated["en"] = english["en"]
-    return output
+    translation=next((row.get("text") for row in verse.get("translations",[])
+                      if translation_id and str(row.get("resource_id"))==str(translation_id)),None)
+    if translation:
+        translation = re.sub(r"<[^>]*>", "", translation).strip()
+    elif translation_id:
+        translation = translated_verses(surah, ayah, ayah, translation_id).get(ayah, "")
+    return output, translation
+
+
+def fetch_words(surah, ayah, language="en"):
+    return fetch_verse_material(surah, ayah, language)[0]
 
 
 def split_arabic_graphemes(text):
@@ -204,7 +220,7 @@ def harakah_labels(grapheme):
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def fetch_passage(surah, start_ayah, end_ayah, reciter_folder, language="en"):
+def fetch_passage(surah, start_ayah, end_ayah, reciter_folder, language="en", translation_id=None):
     """Load the selected words with word timings from the SAME EveryAyah audio.
 
     Quran.com's by_ayah audio IDs are not interchangeable with a different
@@ -213,8 +229,15 @@ def fetch_passage(surah, start_ayah, end_ayah, reciter_folder, language="en"):
     passage_words = []
     track_word_counts = []
     all_segments = []
-    for current_ayah in range(start_ayah, end_ayah + 1):
-        verse_words = fetch_words(surah, current_ayah, language)
+    translations = {}
+    ayahs = range(start_ayah, end_ayah + 1)
+    def load_ayah(ayah):
+        return fetch_verse_material(surah, ayah, language, translation_id)
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        materials = list(pool.map(load_ayah, ayahs))
+    for current_ayah, (verse_words, translation) in zip(ayahs, materials):
+        if translation:
+            translations[current_ayah]=translation
         start_index = len(passage_words)
         track_word_counts.append(len(verse_words))
         all_segments.extend(
@@ -233,7 +256,7 @@ def fetch_passage(surah, start_ayah, end_ayah, reciter_folder, language="en"):
             passage_words.append(item)
     if not passage_words:
         raise RuntimeError("No words returned for this passage.")
-    return passage_words, track_word_counts, all_segments
+    return passage_words, track_word_counts, all_segments, translations
 
 
 def audio_url(surah, ayah, reciter_folder):
@@ -1003,8 +1026,8 @@ passage_key = f"{surah}:{ayah}-{end_ayah}"
 result_key = f"{passage_key}|recitation"
 
 try:
-    words, track_word_counts, segments = fetch_passage(
-        surah, ayah, end_ayah, RECITERS[reciter]["folder"], language
+    words, track_word_counts, segments, verse_translations = fetch_passage(
+        surah, ayah, end_ayah, RECITERS[reciter]["folder"], language, translation_resources.get(language)
     )
     tracks = [
         audio_url(surah, a, RECITERS[reciter]["folder"])
@@ -1016,9 +1039,6 @@ except Exception as exc:
         st.code(str(exc))
     st.stop()
 
-verse_translations = translated_verses(
-    surah, ayah, end_ayah, translation_resources.get(language)
-)
 translation_available = bool(verse_translations)
 if language != "en" and not translation_available:
     st.info(ui_labels["unavailable"])
