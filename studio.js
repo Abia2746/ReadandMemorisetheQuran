@@ -1409,9 +1409,12 @@ export default function(component) {
         wordNodes.forEach((el,i)=>{
           const review=flaggedIndices.has(i);
           const good=confirmedIndices.has(i)&&!review;
-          const active=i===currentWord;
-          const uncertain=!review&&!good&&(active||(i<currentWord&&i>confirmedWord));
-          const state=(review?1:0)|(good?2:0)|(active?4:0)|(uncertain?8:0);
+          // On-device SDK gives a tentative audio position only.
+          // Do not use the bright completion highlight for a first phoneme.
+          const active=false;
+          const uncertain=!review&&!good&&(i===currentWord||
+            (i<currentWord&&i>confirmedWord));
+          const state=(review?1:0)|(good?2:0)|(uncertain?8:0);
           if(paintedStates.get(i)===state)return;
           paintedStates.set(i,state);
           el.classList.toggle("am-review",review);
@@ -1421,7 +1424,7 @@ export default function(component) {
           if(currentTab==="cover"&&good&&!el.querySelector(".am-revealed-ar"))
             el.appendChild(CE("span","am-revealed-ar",words[i].ar||""));
         });
-        const percentage=Math.round(100*(Math.max(0,currentWord+1))/Math.max(1,words.length))+"%";
+        const percentage=Math.round(100*(Math.max(0,confirmedWord+1))/Math.max(1,words.length))+"%";
         if(progressFill.style.width!==percentage)progressFill.style.width=percentage;
       };
       session.subscribe(event=>{
