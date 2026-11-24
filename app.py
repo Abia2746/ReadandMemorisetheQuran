@@ -23,6 +23,7 @@ from interface_locales import ui_text
 from dynamic_localization import get_ui_translations
 from tajweed_review import rubric_for_prompt, normalize_review
 from phonetic_review import phonetic_reference, wav_signal_evidence, review_vowel_suggestions, wav_excerpt
+from phoneme_client import infer_acoustic_phones, service_ready
 from prayer_room import earn_recording_review
 
 
@@ -1119,6 +1120,64 @@ with left:
         "before submitting recordings."
     )
     if recording:
+        # Dedicated acoustic phoneme recognition is separate from Gemini's
+        # language-model review. No audio is submitted without user clicking.
+        acoustic_url = str(st.secrets.get("PHONEME_SERVICE_URL", "")).strip()
+        acoustic_token = str(st.secrets.get("PHONEME_SERVICE_TOKEN", "")).strip()
+        acoustic_key = "am_acoustic_" + hashlib.sha256(recording.getvalue()).hexdigest()[:24]
+        if service_ready(acoustic_url, acoustic_token):
+            st.caption(
+                "Experimental sound-by-sound analysis uses a separate trained "
+                "Qur'anic acoustic model. It sends this short audio clip "
+                "privately to the configured model server only when you click."
+            )
+            if st.button("Analyse actual acoustic phonemes (experimental)",
+                         key="run_" + acoustic_key, use_container_width=True):
+                try:
+                    with st.spinner("Listening to the actual audio at sound level…"):
+                        st.session_state[acoustic_key] = infer_acoustic_phones(
+                            recording.getvalue(), acoustic_url, acoustic_token
+                        )
+                except (RuntimeError, ValueError) as exc:
+                    st.warning(str(exc))
+            acoustic_result = st.session_state.get(acoustic_key)
+            if acoustic_result:
+                st.markdown("#### What the acoustic model actually heard")
+                st.caption(
+                    "These sound symbols come from real microphone waveform inference, "
+                    "not from the displayed Qur'an text. They are hypotheses, "
+                    "NOT verified pronunciation or Tajweed grades."
+                )
+                st.code(acoustic_result["heard_hypotheses"] or "No speech sounds could be resolved.")
+                st.caption("Decoder: " + acoustic_result.get("model_id", "unknown"))
+                events = acoustic_result.get("observations", [])
+                short_vowels = [v for v in events if v["kind"] == "short_vowel_hypothesis"]
+                long_vowels = [v for v in events if v["kind"] == "long_vowel_hypothesis"]
+                doubled = [v for v in events if v["kind"] == "geminated_consonant_hypothesis"]
+                st.write(
+                    "**Detected sound hypotheses:** " +
+                    str(len(short_vowels)) + " short vowel · " +
+                    str(len(long_vowels)) + " long vowel · " +
+                    str(len(doubled)) + " doubled consonant"
+                )
+                with st.expander("Inspect every proposed acoustic sound and approximate time"):
+                    for event in events:
+                        st.caption(
+                            str(event["start_s"]) + "–" + str(event["end_s"]) +
+                            " sec · /" + event["token"] + "/ · " + event["meaning"] +
+                            " · UNVERIFIED"
+                        )
+                st.info(acoustic_result["guidance"])
+                st.caption(
+                    "Not measured or not validated: " +
+                    "; ".join(acoustic_result.get("not_measured", []))
+                )
+        else:
+            st.caption(
+                "Acoustic phoneme analysis is not connected yet. A dedicated "
+                "model server must be deployed and privately configured. "
+                "The ordinary recorded Tajweed practice review remains available."
+            )
         if st.button(_ui("Analyse this recording"), type="primary", use_container_width=True):
             try:
                 with st.spinner(_ui("Reviewing your audio against the selected Quran text...")):
