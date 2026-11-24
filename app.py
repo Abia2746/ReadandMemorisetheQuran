@@ -1173,8 +1173,20 @@ if saved:
     if (isinstance(review, dict)
             and review.get("vowel_reference_regenerate_on_open")
             and not review.get("vowel_reference")):
+        # Respect the SAVED recording scope, which may differ from the
+        # current review dropdown's selection.
+        saved_scope = saved.get("recording_scope", "Entire selected passage")
+        reference_words = words
+        if isinstance(saved_scope, str) and saved_scope.startswith("Ayah "):
+            try:
+                recorded_ayah = int(saved_scope.split()[-1])
+                reference_words = [
+                    word for word in words if int(word["ayah"]) == recorded_ayah
+                ]
+            except (ValueError, IndexError, KeyError):
+                reference_words = []
         review = dict(review)
-        review["vowel_reference"] = phonetic_reference(expected_recording_words)
+        review["vowel_reference"] = phonetic_reference(reference_words)
     if isinstance(review, dict) and review.get("vowel_reference"):
         st.markdown("#### Harakah-by-harakah learning map")
         st.caption(
