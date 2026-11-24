@@ -75,3 +75,26 @@ For authenticated users, cloud restoration loads the saved nickname and up to 1,
 - [ ] Expire/revoke refresh token and verify the app requires a fresh sign-in.
 - [ ] Verify Safari private mode and mobile in-app email browser behavior.
 - [ ] Replace localStorage with HttpOnly cookie-backed sessions before public release.
+
+## November 2026: Cloud study data and Hifdh milestone
+
+Account-owned Supabase tables added (RLS enabled, restricted to the verified owner):
+
+- learner_settings: Quran language, passage, reciter, teacher options, sensitivity and clue mode. Saved automatically after changes.
+- learner_hifdh_plans: adaptive plan, self-reported completed ayahs and daily sessions. Saved after planner actions and restored into an isolated local cache on sign-in.
+- learner_recitation_reviews: up to 50 most recent text-only reviews restored on sign-in; the latest review per passage is retained. Raw microphone recordings are not uploaded.
+
+Local planner and Prayer Room data for signed-in learners use the Supabase account ID, not the nickname. Guest sessions receive a distinct random local identity. Old nickname-only SQLite records are not automatically imported because names are not unique.
+
+**Limits**: Prayer Room coins/equipment and XP/streak are still local. Full chat, recordings, all historic reviews and native notifications are not synced. Browser persistence currently uses localStorage in the Streamlit preview; migrate to secure HttpOnly cookie-backed auth before public launch. No money or premium status is inferred from these new tables.
+
+### Cross-device acceptance tests still required
+- [ ] Complete verified email signup, sign in and test same-browser persistence.
+- [ ] Change language, reciter, teacher and ayah; verify cloud restoration in another browser.
+- [ ] Save/edit a Hifdh plan; finish today's study and verify completion/session history on another device.
+- [ ] Save text-only review feedback and verify it restores without an audio file.
+- [ ] Sign in as another account and check that previous learner data is absent.
+- [ ] Simulate unavailable network and confirm sync failures remain visible.
+- [ ] Run GitHub Actions syntax and Hifdh planner snapshot tests.
+
+The last Supabase check still had no email-confirmed learner, so end-to-end login and cloud sync cannot yet be claimed as passing.
