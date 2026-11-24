@@ -3,6 +3,7 @@
  * Deliberately separate from text ASR and word verification. */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiPath } from "@/lib/verseApi";
+import { accessToken, useStudyAuth } from "@/lib/auth";
 
 type Phone = {phone:string;approx_start_ms:number;approx_end_ms:number;uncertainty:string};
 type AlignmentEvent = {kind:string;expected:string|null;observed:string|null;outcome:string;explanation:string};
@@ -32,6 +33,7 @@ function resample(values:Float32Array,sourceRate:number):number[] {
 }
 
 export function AcousticPractice({verseRef}:{verseRef:string}){
+  const auth=useStudyAuth();
   const [caps,setCaps]=useState<Capabilities|null>(null);
   const [running,setRunning]=useState(false);
   const [status,setStatus]=useState("Not started. Acoustic accuracy is not certified.");
@@ -76,8 +78,11 @@ export function AcousticPractice({verseRef}:{verseRef:string}){
     busy.current=true;
     const controller=new AbortController();abort.current=controller;
     try{
+      const token=await accessToken();
+      if(!token)throw Error("Sign in before starting acoustic analysis");
       const response=await fetch(apiPath("/api/acoustic/analyse"),{
-        method:"POST",headers:{"Content-Type":"application/octet-stream","X-Quran-Verse":verseRef},
+        method:"POST",headers:{"Content-Type":"application/octet-stream","X-Quran-Verse":verseRef,
+          "Authorization":`Bearer ${token}`},
         body:new Blob([pcm16(segment).buffer as ArrayBuffer],{type:"application/octet-stream"}),signal:controller.signal,cache:"no-store",
       });
       const result=await response.json().catch(()=>null);
@@ -101,6 +106,10 @@ export function AcousticPractice({verseRef}:{verseRef:string}){
   },[stop]);
 
   const start=async()=>{
+    if(!auth.isSignedIn){
+      setStatus("Please sign in to use the acoustic inference service.");
+      return;
+    }
     if(!caps?.available){
       setStatus(caps?.reason||"Checking whether a trained model is available.");
       return;
