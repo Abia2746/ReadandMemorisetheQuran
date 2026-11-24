@@ -300,3 +300,126 @@ def unequip(name, category):
         except BaseException:
             con.execute("ROLLBACK")
             raise
+
+
+def export_room_snapshot(name):
+    """Read cosmetic XP, inventory and reward history for authenticated backup."""
+    if not isinstance(name, str) or not name.startswith("account:"):
+        raise ValueError("Only account-owned rooms may be backed up.")
+    with closing(_db()) as con:
+        _profile(con, name)
+        user = con.execute("SELECT xp,streak,last_day FROM users WHERE name=?", (name,)).fetchone()
+        wallet = con.execute("SELECT coins,equipped_json FROM room_wallet WHERE name=?", (name,)).fetchone()
+        owned = [row[0] for row in con.execute(
+            "SELECT item_id FROM room_owned WHERE name=? ORDER BY item_id", (name,)
+        )]
+        earnings = con.execute(
+            "SELECT event_key,xp,coins,created_at FROM room_earnings WHERE name=? ORDER BY created_at LIMIT 5000",
+            (name,)
+        ).fetchall()
+        transactions = con.execute(
+            "SELECT item_id,cost,created_at FROM room_transactions WHERE name=? ORDER BY created_at LIMIT 300",
+            (name,)
+        ).fetchall()
+    return {
+        "version": 1, "xp": max(0,int(user[0] or 0)),
+        "streak": max(0,int(user[1] or 0)),
+        "last_day": user[2],
+        "coins": max(0,int(wallet[0] or 0)),
+        "equipped": json.loads(wallet[1] or "{}"),
+        "owned": owned,
+        "earnings": [
+            {"key": key, "xp": xp, "coins": coins, "at": timestamp}
+            for key,xp,coins,timestamp in earnings
+        ],
+        "transactions": [
+            {"item": item, "cost": cost, "at": stamp}
+            for item,cost,stamp in transactions
+        ],
+    }
+
+
+def import_room_snapshot(name, snapshot):
+    """Restore an account's cosmetic state atomically, validating inventory.
+
+    This is a convenience backup, NOT authoritative billing or financial value.
+    """
+    if not isinstance(name,str) or not name.startswith("account:"):
+        raise ValueError("Invalid account-owned room.")
+    if not isinstance(snapshot,dict) or snapshot.get("version") != 1:
+        raise ValueError("Unsupported room backup")
+    owned = snapshot.get("owned")
+    equipped = snapshot.get("equipped")
+    earnings = snapshot.get("earnings")
+    transactions = snapshot.get("transactions")
+    if (not isinstance(owned,list) or len(owned)>len(ITEMS)
+        or not isinstance(equipped,dict) or len(equipped)>len(CATEGORIES)
+        or not isinstance(earnings,list) or len(earnings)>5000
+        or not isinstance(transactions,list) or len(transactions)>300):
+        raise ValueError("Invalid room backup collections")
+    if any(not isinstance(item,str) or item not in BY_ID for item in owned):
+        raise ValueError("Unknown room item")
+    if len(set(owned)) != len(owned):
+        raise ValueError("Duplicate owned room item")
+    for category,item in equipped.items():
+        if category not in CATEGORIES or (item is not None and (
+            item not in owned or BY_ID[item]["category"] != category)):
+            raise ValueError("Invalid room decoration")
+    xp, coins, streak = snapshot.get("xp"), snapshot.get("coins"), snapshot.get("streak")
+    if any(type(x) is not int or x < 0 or x > 10000000 for x in (xp,coins,streak)):
+        raise ValueError("Invalid room score")
+    day = snapshot.get("last_day")
+    if day is not None:
+        if not isinstance(day,str):
+            raise ValueError("Invalid streak date")
+        try:
+            dt.date.fromisoformat(day)
+        except ValueError:
+            raise ValueError("Invalid streak date")
+    clean_earnings=[]
+    for r in earnings:
+        if not isinstance(r,dict):
+            raise ValueError("Invalid earning")
+        key,rx,rc,stamp=r.get("key"),r.get("xp"),r.get("coins"),r.get("at")
+        if (not isinstance(key,str) or not 1<=len(key)<=180
+           or type(rx) is not int or not 0<=rx<=500
+           or type(rc) is not int or not 0<=rc<=500
+           or not isinstance(stamp,str) or len(stamp)>70):
+            raise ValueError("Invalid earning details")
+        clean_earnings.append((name,key,rx,rc,stamp))
+    if len({r[1] for r in clean_earnings}) != len(clean_earnings):
+        raise ValueError("Duplicate earnings")
+    clean_transactions=[]
+    for r in transactions:
+        item,cost,stamp=r.get("item"),r.get("cost"),r.get("at")
+        if (not isinstance(item,str) or item not in owned
+            or type(cost) is not int or cost != BY_ID[item]["price"]
+            or not isinstance(stamp,str) or len(stamp)>70):
+            raise ValueError("Invalid room purchase")
+        clean_transactions.append((name,item,cost,stamp))
+    if len({r[1] for r in clean_transactions}) != len(clean_transactions):
+        raise ValueError("Duplicate purchases")
+    with closing(_db()) as con:
+        con.execute("BEGIN IMMEDIATE")
+        try:
+            _profile(con,name)
+            for table in ("room_owned","room_earnings","room_transactions"):
+                con.execute(f"DELETE FROM {table} WHERE name=?", (name,))
+            con.execute(
+                "UPDATE users SET xp=?,streak=?,last_day=? WHERE name=?",
+                (xp,streak,day,name))
+            con.execute(
+                "UPDATE room_wallet SET coins=?,equipped_json=? WHERE name=?",
+                (coins,json.dumps(equipped),name))
+            con.executemany("INSERT INTO room_owned(name,item_id) VALUES (?,?)",
+                            [(name,item) for item in owned])
+            con.executemany(
+                "INSERT INTO room_earnings(name,event_key,xp,coins,created_at) VALUES (?,?,?,?,?)",
+                clean_earnings)
+            con.executemany(
+                "INSERT INTO room_transactions(name,item_id,cost,created_at) VALUES (?,?,?,?)",
+                clean_transactions)
+            con.execute("COMMIT")
+        except BaseException:
+            con.execute("ROLLBACK")
+            raise
