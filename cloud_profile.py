@@ -39,6 +39,18 @@ def restore_cloud_learning():
         st.session_state["name"] = ""
     if profiles and profiles[0].get("display_name"):
         st.session_state["name"] = str(profiles[0]["display_name"])[:80]
+    # Loading happens before reader/teacher widgets are mounted.
+    # A failure leaves cloud restore pending instead of pretending it synced.
+    try:
+        from cloud_learning import restore_preferences, restore_hifdh_plan
+        settings_found = restore_preferences(user_id)
+        plan_found = restore_hifdh_plan(user_id)
+    except (requests.RequestException, RuntimeError, ValueError, OSError) as exc:
+        st.session_state["am_cloud_load_error"] = True
+        st.session_state["am_cloud_sync_error_type"] = type(exc).__name__
+        return
     st.session_state["am_cloud_review_rows"] = progress
+    st.session_state["am_cloud_settings_found"] = settings_found
+    st.session_state["am_cloud_plan_found"] = plan_found
     st.session_state["am_cloud_loaded_for"] = user_id
     st.session_state.pop("am_cloud_load_error", None)
