@@ -1170,6 +1170,11 @@ if saved:
     st.caption(_ui("Recording: ") + saved.get("recording_scope", _ui("Selected passage")))
     st.info(saved.get("feedback") or _ui("The AI returned no general feedback."))
     review = saved.get("review")
+    if (isinstance(review, dict)
+            and review.get("vowel_reference_regenerate_on_open")
+            and not review.get("vowel_reference")):
+        review = dict(review)
+        review["vowel_reference"] = phonetic_reference(expected_recording_words)
     if isinstance(review, dict) and review.get("vowel_reference"):
         st.markdown("#### Harakah-by-harakah learning map")
         st.caption(
