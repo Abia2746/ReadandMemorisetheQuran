@@ -8,4 +8,4 @@ RUN useradd --create-home --uid 10001 appuser
 USER appuser
 EXPOSE 8080
 # Health route does not download model on startup. First inference warms it.
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080", "--workers", "1"]
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080", "--workers", "1", "--no-access-log"]
