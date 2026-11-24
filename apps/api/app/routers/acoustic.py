@@ -1,7 +1,8 @@
 """Opt-in acoustic analysis: 16 kHz mono PCM16, capped and never stored."""
 from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Request
-from app.services.acoustic_model import decode_pcm16, audio_quality, analyse
+from app.services.acoustic_model import decode_pcm16, audio_quality, analyse, load_approved_model
+from app.services.phoneme_alignment import align_approved_verse
 
 router = APIRouter(prefix="/api/acoustic", tags=["acoustic"])
 
@@ -51,4 +52,13 @@ async def analyse_audio(request: Request):
     except (RuntimeError, ValueError, OSError, ImportError, KeyError) as exc:
         # Do not expose filesystem paths or internal model registry metadata.
         raise HTTPException(503, "A validated trained phoneme model is not available on this server") from exc
+    verse_ref = request.headers.get("x-quran-verse", "")
+    if verse_ref:
+        try:
+            surah_str, ayah_str = verse_ref.split(":")
+            surah, ayah = int(surah_str), int(ayah_str)
+            _, registry = load_approved_model()
+            result["alignment"] = align_approved_verse(registry, surah, ayah, result["phones"])
+        except (ValueError, KeyError):
+            raise HTTPException(422, "Invalid Qur’an verse reference")
     return {**result, "audio_quality": quality}
