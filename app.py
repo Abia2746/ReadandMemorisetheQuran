@@ -1174,6 +1174,25 @@ if saved:
     st.markdown("### " + _ui("Your last practice review"))
     st.caption(_ui("Recording: ") + saved.get("recording_scope", _ui("Selected passage")))
     st.info(saved.get("feedback") or _ui("The AI returned no general feedback."))
+    with st.expander("Guided lesson · when a Tajweed teacher isn't available", expanded=True):
+        st.markdown(
+            "**1. Listen** to your selected Hafs reciter without speaking. "
+            "**2. Repeat** the same short phrase carefully. "
+            "**3. Record** and listen to your own voice. "
+            "**4. Compare** only evidence-supported differences; do not "
+            "assume an AI guess is correct. **5. Revisit** uncertain sounds "
+            "and ask a qualified teacher when possible."
+        )
+        st.caption("Practice attempts are not an ijazah, teacher assessment, or proof of accurate recitation.")
+        guided_key = "am_guided_repeats_" + hashlib.sha256(result_key.encode()).hexdigest()[:16]
+        st.session_state.setdefault(guided_key, 0)
+        st.progress(min(3, st.session_state[guided_key]) / 3)
+        st.caption(str(min(3, st.session_state[guided_key])) + " of 3 deliberate repetitions logged")
+        if st.button("I've carefully repeated the passage once", key=guided_key+"_button"):
+            st.session_state[guided_key] = min(3, st.session_state[guided_key] + 1)
+            st.rerun()
+        if st.session_state[guided_key] >= 3:
+            st.info("Practice cycle complete. Record again to check whether the audio evidence has changed; pronunciation remains unverified.")
     review = saved.get("review")
     if (isinstance(review, dict)
             and review.get("vowel_reference_regenerate_on_open")
