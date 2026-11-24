@@ -61,6 +61,52 @@ def request_magic_link(email, create_account=True):
     return email
 
 
+def ensure_session_valid():
+    """Validate or renew an existing Supabase session before private data is used."""
+    session = st.session_state.get("am_auth")
+    if not session or not session.get("access_token"):
+        return False
+    url, key = _settings()
+    try:
+        response = requests.get(
+            url + "/auth/v1/user",
+            headers={"apikey": key, "Authorization": "Bearer " + session["access_token"]},
+            timeout=12,
+        )
+        if response.status_code == 401 and session.get("refresh_token"):
+            renewed = requests.post(
+                url + "/auth/v1/token",
+                params={"grant_type": "refresh_token"},
+                headers={"apikey": key, "Content-Type": "application/json"},
+                json={"refresh_token": session["refresh_token"]},
+                timeout=12,
+            )
+            if renewed.status_code == 200:
+                next_tokens = renewed.json()
+                if next_tokens.get("access_token") and next_tokens.get("refresh_token"):
+                    session["access_token"] = next_tokens["access_token"]
+                    session["refresh_token"] = next_tokens["refresh_token"]
+                    response = requests.get(
+                        url + "/auth/v1/user",
+                        headers={"apikey": key, "Authorization": "Bearer " + session["access_token"]},
+                        timeout=12,
+                    )
+        if response.status_code == 401 or response.status_code == 403:
+            st.session_state.pop("am_auth", None)
+            st.session_state["am_auth_error"] = "Your session expired. Please sign in again."
+            st.session_state["am_auth_signout"] = True
+            return False
+        if response.status_code != 200:
+            return False
+        if response.json().get("id") != session.get("user_id"):
+            st.session_state.pop("am_auth", None)
+            st.session_state["am_auth_signout"] = True
+            return False
+        return True
+    except requests.RequestException:
+        return False
+
+
 def _table_request(table, method="GET", payload=None, params=None, upsert=False):
     url, key = _settings()
     session = st.session_state.get("am_auth")
@@ -122,36 +168,11 @@ div[data-testid="stDialog"] button[kind="primaryFormSubmit"] {background:linear-
         return
     session = st.session_state.get("am_auth")
     if session:
-        # Check token against Supabase on every render; do not trust session state alone.
-        url, key = _settings()
-        try:
-            resp = requests.get(url + "/auth/v1/user",
-                headers={"apikey": key, "Authorization": "Bearer " + session["access_token"]},
-                timeout=12)
-            if resp.status_code == 401 and session.get("refresh_token"):
-                renewed = requests.post(
-                    url + "/auth/v1/token", params={"grant_type": "refresh_token"},
-                    headers={"apikey": key, "Content-Type": "application/json"},
-                    json={"refresh_token": session["refresh_token"]},
-                    timeout=12,
-                )
-                if renewed.status_code == 200:
-                    payload = renewed.json()
-                    if payload.get("access_token") and payload.get("refresh_token"):
-                        session["access_token"] = payload["access_token"]
-                        session["refresh_token"] = payload["refresh_token"]
-                        resp = requests.get(
-                            url + "/auth/v1/user",
-                            headers={"apikey": key, "Authorization": "Bearer " + session["access_token"]},
-                            timeout=12,
-                        )
-            if resp.status_code != 200 or resp.json().get("id") != session["user_id"]:
-                st.session_state.pop("am_auth", None)
-                st.warning("Your session expired. Please sign in again.")
-                return
-        except requests.RequestException:
-            st.warning("Could not verify your session. Please try again.")
+        # Supabase, not Streamlit session state, is the account authority.
+        if not ensure_session_valid():
+            st.warning("Your session could not be verified. Please sign in again if needed.")
             return
+        url, key = _settings()
         st.success("Your account is verified and signed in.")
         if session.get("email"):
             st.caption("Signed in as " + session["email"])
@@ -188,6 +209,8 @@ div[data-testid="stDialog"] button[kind="primaryFormSubmit"] {background:linear-
             except requests.RequestException:
                 pass
             st.session_state.pop("am_auth", None)
+            st.session_state["am_auth_signout"] = True
+            st.session_state["am_cloud_loaded_for"] = None
             st.rerun()
         return
     if st.session_state.get("am_auth_error"):
