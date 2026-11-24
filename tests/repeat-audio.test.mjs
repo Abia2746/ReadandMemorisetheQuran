@@ -22,6 +22,11 @@ class Node{
     this.ended=false;this.hidden=false;this.disabled=false;this.value="";
   }
   appendChild(n){this.children.push(n);return n}
+  insertBefore(node,reference){
+    const index=this.children.indexOf(reference);
+    this.children.splice(index<0?this.children.length:index,0,node);
+    return node;
+  }
   replaceChildren(...n){this.children=n}
   setAttribute(k,v){this.attrs[k]=v}
   addEventListener(){}

@@ -63,12 +63,12 @@ export function AcousticPractice({verseRef}:{verseRef:string}){
   useEffect(()=>()=>stop(),[stop]);
   useEffect(()=>{
     let active=true;
-    fetch(apiPath("/api/acoustic/capabilities"),{cache:"no-store"})
+    fetch(apiPath(`/api/acoustic/capabilities?verse=${encodeURIComponent(verseRef)}`),{cache:"no-store"})
       .then(r=>r.ok?r.json():Promise.reject())
       .then((c:Capabilities)=>{if(active)setCaps(c)})
       .catch(()=>{if(active)setCaps({available:false,reason:"Acoustic API unreachable"})});
     return ()=>{active=false};
-  },[]);
+  },[verseRef]);
 
   const sendWindow=useCallback(async()=>{
     if(!alive.current||busy.current||data.current.length<2*HZ)return;
@@ -91,7 +91,7 @@ export function AcousticPractice({verseRef}:{verseRef:string}){
         setStatus(response.status===503
           ?"A trained and reviewed phoneme model is not deployed. Text recognition remains separate."
           :`Acoustic service unavailable (${response.status}).`);
-        if(response.status===503)stop();
+        if([401,403,422,429,503].includes(response.status))stop();
         return;
       }
       const report=result as Result;
@@ -101,9 +101,9 @@ export function AcousticPractice({verseRef}:{verseRef:string}){
       if(alive.current&&epoch.current===currentEpoch)
         setStatus("The acoustic request failed; check API connection.");
     }finally{
-      busy.current=false;
+      if(epoch.current===currentEpoch)busy.current=false;
     }
-  },[stop]);
+  },[stop,verseRef]);
 
   const exportSession=()=>{
     const sounds=reports.flatMap(r=>r.phones||[]).map(p=>p.phone);
@@ -111,7 +111,7 @@ export function AcousticPractice({verseRef}:{verseRef:string}){
     const lines=[
       "Al-Muallim acoustic evidence (NOT a verified Tajweed grade)",
       "Passage: "+verseRef,
-      "Audio windows analysed: "+reports.length,
+      "Recent audio windows in this report (maximum 8): "+reports.length,
       "Model phoneme hypotheses: "+(sounds.join(" · ")||"None"),
       "Possible differences: "+differences.length,
       ...differences.slice(0,40).map(e=>"Expected "+(e.expected||"—")+"; predicted "+(e.observed||"—")+"; UNCERTAIN"),
@@ -136,16 +136,20 @@ export function AcousticPractice({verseRef}:{verseRef:string}){
       return;
     }
     stop();setReports([]);setStatus("Requesting microphone permission…");
+    const startingEpoch=epoch.current;
+    setRunning(true);
     try{
       if(!navigator.mediaDevices?.getUserMedia)throw Error("Microphone access requires HTTPS and a compatible browser.");
       const mic=await navigator.mediaDevices.getUserMedia({
         audio:{channelCount:1,echoCancellation:false,noiseSuppression:false,autoGainControl:false},
         video:false,
       });
+      if(epoch.current!==startingEpoch){mic.getTracks().forEach(t=>t.stop());return;}
       stream.current=mic;
       const context=new AudioContext();ctx.current=context;
       if(!context.audioWorklet)throw Error("AudioWorklet is not supported.");
       await context.audioWorklet.addModule("/worklets/pcm-processor.js");
+      if(epoch.current!==startingEpoch)return;
       const source=context.createMediaStreamSource(mic);
       const processor=new AudioWorkletNode(context,"almuallim-pcm");node.current=processor;
       const silent=context.createGain();gain.current=silent;silent.gain.value=0;
@@ -158,10 +162,12 @@ export function AcousticPractice({verseRef}:{verseRef:string}){
       };
       source.connect(processor);processor.connect(silent);silent.connect(context.destination);
       await context.resume();
+      if(epoch.current!==startingEpoch)return;
       alive.current=true;setRunning(true);
       setStatus("Listening to actual microphone audio; analysing 2–4 second windows.");
       interval.current=setInterval(()=>{void sendWindow()},2500);
     }catch(e){
+      if(epoch.current!==startingEpoch)return;
       stop();setStatus(e instanceof Error?e.message:"Microphone capture failed.");
     }
   };
@@ -183,7 +189,7 @@ export function AcousticPractice({verseRef}:{verseRef:string}){
     <p role="status" aria-live="polite" className="mt-3 text-xs text-[#E6D5B8]">{status}</p>
     {reports.length>0&&<div className="mt-3 rounded-xl border border-[#6C5939] bg-[#2A1F18] p-3">
       <h4 className="text-sm font-semibold text-[#EDD39F]">Session evidence summary</h4>
-      <p className="mt-1 text-xs text-[#E6D5B8]">Practised passage: {verseRef} · Audio windows: {reports.length}</p>
+      <p className="mt-1 text-xs text-[#E6D5B8]">Practised passage: {verseRef} · Recent windows (up to 8): {reports.length}</p>
       <p className="mt-1 text-xs text-[#E6D5B8]">
         Phone hypotheses: {reports.reduce((sum,r)=>sum+(r.phones?.length||0),0)}.
         Possible differences: {reports.reduce((sum,r)=>sum+(r.alignment?.events?.filter(e=>e.kind!=="match").length||0),0)}.
@@ -206,7 +212,9 @@ export function AcousticPractice({verseRef}:{verseRef:string}){
         <p className="mt-1 text-[#EDD39F]">
           {report.alignment?.status==="candidate_alignment"
             ? "Phone-to-reference alignment (all differences unverified)"
-            : "Expert-reviewed phoneme reference unavailable"}
+            : report.alignment?.status==="uncertain_location"
+            ? "This clip could not be placed confidently in the ayah."
+            : "No alignment available for this clip."}
         </p>
         {report.alignment?.events?.filter(e=>e.kind!=="match").slice(0,6).map((e,j)=>
           <p key={j} className="mt-1 text-[#C0AB90]">

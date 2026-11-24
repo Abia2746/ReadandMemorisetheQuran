@@ -25,6 +25,8 @@ jobs:
         with:
           node-version: "22"
       - name: Install Next.js dependencies
+        env:
+          ONNXRUNTIME_NODE_INSTALL: skip
         run: npm install --no-audit --no-fund
       - name: TypeScript strict check
         run: npm run typecheck
@@ -48,7 +50,7 @@ jobs:
           python-version: "3.12"
       - run: python -m pip install -r apps/api/requirements.txt
       - run: python -m compileall -q apps/api/app
-      - run: PYTHONPATH=apps/api python -m pytest -q apps/api/tests
+      - run: cd apps/api && python -m pytest -q tests
       - name: Root-level acoustic evidence regression tests
         run: python -m unittest tests.test_acoustic_evidence
       - name: Compile acoustic training script without training data

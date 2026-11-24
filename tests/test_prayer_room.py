@@ -22,7 +22,7 @@ class PrayerRoomTests(unittest.TestCase):
         self.assertEqual(state["coins"], 100)
         self.assertEqual(state["xp"], 0)
         self.assertEqual(state["owned"], [])
-        self.assertEqual(len(state["items"]), 14)
+        self.assertEqual(len(state["items"]), 21)
 
     def test_one_read_once_per_verse_per_utc_day(self):
         result = room.earn("Student", "read", 2, 60, today="2026-11-19")

@@ -183,7 +183,7 @@ export function NoorPlanner(){
          {state.completed_today&&<p className="mt-3 text-xs text-[#2FA76B]">Today&apos;s new memorisation is recorded. You can rest.</p>}
        </div>
        <div className="grid gap-3 lg:grid-cols-3">
-         <StudyGroup title="Sabq · New" subtitle="Your recommended new verses, in gentle groups." items={state.sabq||[]} accent="#D4AF37"/>
+         <StudyGroup title="Sabq · New" subtitle={state.completed_today?"You have finished today’s new passage. Your next study day will bring the next verses.":"Your recommended new verses, in gentle groups."} items={state.sabq||[]} accent="#D4AF37"/>
          <StudyGroup title="Sabqi · Recent" subtitle="Recently memorised verses and red-flagged passages." items={state.sabqi||[]} accent="#2E7D32"/>
          <StudyGroup title="Manzil · Older" subtitle="Older memorisation to revisit before it fades." items={state.manzil||[]} accent="#C8A96E"/>
        </div>

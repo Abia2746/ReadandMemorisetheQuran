@@ -27,10 +27,11 @@ export function GuidedRecitationCoach({verseRef,onListen,onStartReciting}:{
 }){
   const [done,setDone]=useState<PracticeStep[]>([]);
   const [sound,setSound]=useState("");
+  const [question,setQuestion]=useState<"stuck"|"sound"|"ready"|null>(null);
   const [notes,setNotes]=useState("");
   const [saved,setSaved]=useState(false);
   const [log,setLog]=useState<PracticeLog|null>(null);
-  useEffect(()=>{setDone([]);setSound("");setNotes("");setSaved(false);setLog(null)},[verseRef]);
+  useEffect(()=>{setDone([]);setQuestion(null);setSound("");setNotes("");setSaved(false);setLog(null)},[verseRef]);
   const allDone=done.length===STEPS.length;
   const count=useMemo(()=>done.length, [done]);
   const toggle=(step:PracticeStep)=>{
@@ -90,6 +91,27 @@ export function GuidedRecitationCoach({verseRef,onListen,onStartReciting}:{
         {step.id==="recite"&&<button type="button" className="am-small-action mt-2" onClick={onStartReciting}>Open microphone</button>}
       </div>)}
     </div>
+    <fieldset className="mt-4 rounded-xl border border-[#5C4A32] p-3">
+      <legend className="px-2 text-sm text-[#EDD39F]">Ask Noor about this ayah</legend>
+      <div className="flex flex-wrap gap-2">
+        <button type="button" className="am-small-action" aria-pressed={question==="stuck"}
+          onClick={()=>setQuestion("stuck")}>I lost my place</button>
+        <button type="button" className="am-small-action" aria-pressed={question==="sound"}
+          onClick={()=>setQuestion("sound")}>How do I practise this sound?</button>
+        <button type="button" className="am-small-action" aria-pressed={question==="ready"}
+          onClick={()=>setQuestion("ready")}>What should I revise next?</button>
+      </div>
+      <p role="status" className="mt-2 text-sm text-[#E6D5B8]">
+        {question==="stuck" && "Replay the ayah. Pause at the last word you remember and listen for the next word. Now cover the text and try joining those two words."}
+        {question==="sound" && (sound
+          ? `You chose ${sound}. Listen for it in one word, repeat that word, then return it to its phrase. Write down the word if you would like a teacher to hear it.`
+          : "Choose the sound you are unsure about below. Use the same word from this ayah each time you compare.")}
+        {question==="ready" && (sound
+          ? `Return to the word you marked for ${sound}. Try it once from memory before replaying the reciter.`
+          : "Try this ayah once with the text covered. If you need a prompt, note the word where you paused and start your next revision there.")}
+      </p>
+      {question && <button type="button" className="am-small-action" onClick={onListen}>Replay ayah {verseRef}</button>}
+    </fieldset>
     <div className="mt-4 grid gap-3 sm:grid-cols-2">
       <label className="text-xs text-[#E6D5B8]">Uncertain sound (optional)
         <select className="am-field mt-1 w-full" value={sound} onChange={e=>{setSound(e.target.value);setSaved(false)}}>

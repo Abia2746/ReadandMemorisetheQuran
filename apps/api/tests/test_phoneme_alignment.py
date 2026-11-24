@@ -76,3 +76,42 @@ def test_metrics_not_fabricated_for_unmeasured_features():
 def test_no_independent_labels_means_no_accuracy_claim():
     with pytest.raises(ValueError):
         evaluate_human_labelled_errors([])
+
+
+def test_rolling_window_excludes_unheard_verse_edges():
+    ref = {"verse_phone_references": {"1:1": ["a", "b", "c", "d"]}}
+    result = align_approved_verse(ref, 1, 1, [{"phone": "b"}, {"phone": "c"}])
+    assert [e["reference_index"] for e in result["events"]] == [1, 2]
+    assert result["edit_distance"] == 0
+
+
+@pytest.mark.parametrize("heard", [[], ["a"], ["x"], ["a", "b"]])
+def test_unlocated_or_repeated_windows_abstain(heard):
+    ref = {"verse_phone_references": {"1:1": ["a", "b", "a", "b"]}}
+    result = align_approved_verse(ref, 1, 1, [{"phone": p} for p in heard])
+    assert result["status"] == "uncertain_location"
+    assert result["events"] == []
+
+
+def test_abstention_counts_against_end_to_end_error_detection():
+    rows = [dict(feature="madd", teacher_error=True, heldout_speaker="test", model_flag=flag)
+            for flag in [True, None]]
+    result = evaluate_human_labelled_errors(rows)["features"]["madd"]
+    assert result["recall"] == 1
+    assert result["coverage"] == result["end_to_end_recall"] == 0.5
+
+
+def test_phone_confusions_include_correct_and_substituted_tokens():
+    rates = phoneme_error_rate(["ب", "َ", "ت", "ُ"], ["ب", "ِ", "ت", "ُ"])
+    assert rates["aligned_phone_pairs"]["َ"] == {"ِ": 1}
+    assert rates["aligned_phone_pairs"]["ب"] == {"ب": 1}
+
+
+def test_double_review_counts_only_independently_scored_rows():
+    rows = [dict(feature="ghunnah", teacher_error=True, model_flag=None,
+                 heldout_speaker="fixture", second_teacher_error=value)
+            for value in [None, True, False]]
+    score = evaluate_human_labelled_errors(rows)["features"]["ghunnah"]
+    assert score["double_reviewed"] == 2
+    assert score["teacher_disagreement_rate"] == .5
+    assert score["precision"] is None
