@@ -66,6 +66,7 @@ class PhoneticEvidenceTests(unittest.TestCase):
                    for n in range(16000)]
         evidence = wav_signal_evidence(wav(samples))
         self.assertEqual(evidence["quality"], "usable_signal")
+        self.assertTrue(evidence["audible_regions"])
         self.assertNotIn("correct", str(evidence).lower())
 
     def test_tentative_vowel_claim_needs_valid_word_mark_and_timestamp(self):
@@ -88,6 +89,14 @@ class PhoneticEvidenceTests(unittest.TestCase):
         self.assertEqual(review_vowel_suggestions(
             [{**row, "time_s": 999}], self.reference, good_audio
         ), [])
+        self.assertEqual(review_vowel_suggestions(
+            [row], self.reference,
+            {**good_audio, "audible_regions": [[3.0, 4.0]]}
+        ), [], "Silent timestamp cannot support a putative vowel finding")
+        self.assertEqual(len(review_vowel_suggestions(
+            [row], self.reference,
+            {**good_audio, "audible_regions": [[1.5, 2.5]]}
+        )), 1)
         self.assertEqual(review_vowel_suggestions(
             [{**row, "status": "correct"}], self.reference, good_audio
         ), [])
