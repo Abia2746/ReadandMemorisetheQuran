@@ -747,6 +747,15 @@ for key, default in DEFAULTS.items():
 # Complete emailed sign-in link on page load, regardless of the panel state.
 from auth_callback import accept_magic_link_tokens
 accept_magic_link_tokens()
+# Restore the learner's cloud profile and reviewed verses when a verified
+# Supabase session is available. Guest data never becomes paid account data.
+from supabase_auth import ensure_session_valid
+from cloud_profile import restore_cloud_learning
+if st.session_state.get("am_auth"):
+    if ensure_session_valid():
+        restore_cloud_learning()
+else:
+    st.session_state.setdefault("am_cloud_review_rows", [])
 
 # Premium-feeling, accessible account entry point. Reading stays open to guests.
 from supabase_auth import render_account
@@ -765,6 +774,12 @@ with account_col:
     account_label = "◉ My account" if st.session_state.get("am_auth") else "Sign in / Join free"
     if st.button(account_label, key="am_open_account", use_container_width=True):
         _account_dialog()
+
+if st.session_state.get("am_cloud_load_error"):
+    st.caption("Cloud learning history couldn't be loaded. Your account is safe; try refreshing.")
+if st.session_state.get("am_auth") and st.session_state.get("am_cloud_loaded_for"):
+    count = len(st.session_state.get("am_cloud_review_rows") or [])
+    st.caption(f"☁ Cloud profile connected · {count} verses in your revision history")
 
 if st.session_state.pop("am_new_login", False):
     st.success("Welcome to Al-Mu’allim. Your email has been verified and your account is signed in.")
