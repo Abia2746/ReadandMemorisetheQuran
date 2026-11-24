@@ -54,6 +54,21 @@ class PlannerTests(unittest.TestCase):
         self.assertTrue(planner.get_state("A learning profile")["finished_today"])
         self.assertFalse(planner.finish_today("A learning profile")["ok"])
 
+    def test_revision_uses_only_prior_self_reported_verses_in_goal(self):
+        self.save()
+        with planner._connection() as con:
+            con.executemany("INSERT INTO hifdh_completed VALUES(?,?,?,?)", [
+                ("A learning profile",112,1,"2026-11-01"),
+                ("A learning profile",112,2,"2026-11-18"),
+                ("A learning profile",112,3,"2026-11-19"),
+                ("Someone else",112,4,"2026-11-15"),
+            ])
+        state=planner.get_state("A learning profile")
+        self.assertEqual([r["from"] for r in state["sabqi_ranges"]],[2])
+        self.assertEqual([r["from"] for r in state["manzil_ranges"]],[1])
+        self.save(review_minutes=0)
+        self.assertFalse(planner.get_state("A learning profile")["sabqi_ranges"])
+
     def test_editing_plan_keeps_completed_ayahs(self):
         self.save()
         planner.finish_today("A learning profile")

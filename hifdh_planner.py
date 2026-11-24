@@ -197,8 +197,8 @@ def get_state(name:str, *, day:dt.date|None=None):
         row=con.execute("SELECT plan_json FROM hifdh_plans WHERE name=?",(name,)).fetchone()
         saved=bool(row)
         config=_safe_config(json.loads(row[0]) if row else {},now=day)
-        complete={(s,a) for s,a in con.execute(
-            "SELECT surah,ayah FROM hifdh_completed WHERE name=?",(name,)).fetchall()}
+        complete={(s,a):stamp for s,a,stamp in con.execute(
+            "SELECT surah,ayah,completed FROM hifdh_completed WHERE name=?",(name,)).fetchall()}
         daily=con.execute(
             "SELECT scope,surah,first_ayah,last_ayah FROM hifdh_sessions WHERE name=? AND day=?",
             (name,day.isoformat())
@@ -227,6 +227,34 @@ def get_state(name:str, *, day:dt.date|None=None):
         today_ranges=_format_ranges(todays_items)
     minutes=config["minutes"]
     review=config["review_minutes"]
+    recent=[]
+    older=[]
+    if saved and review and study_today:
+        for verse in goal_items:
+            if verse not in complete:
+                continue
+            try:
+                stamp=dt.datetime.fromisoformat(complete[verse])
+                completed_day=stamp.astimezone(TZ).date() if stamp.tzinfo else stamp.date()
+            except (ValueError,TypeError):
+                continue
+            age=(day-completed_day).days
+            if 1<=age<=7:
+                recent.append(verse)
+            elif age>7:
+                older.append(verse)
+    # Rotate within each learner's own history; the time budget is a suggestion.
+    def rotation(pool,limit):
+        if not pool or not limit:
+            return []
+        offset=day.toordinal()%len(pool)
+        selected=(pool[offset:]+pool[:offset])[:limit]
+        return _format_ranges(sorted(selected))
+    budget=max(1,review//2)
+    recent_budget=(budget+1)//2 if older else budget
+    recent_budget=min(recent_budget,len(recent))
+    older_budget=min(budget-recent_budget,len(older))
+    recent_budget=min(len(recent),budget-older_budget)
     overload=required>cap or (required>=18 and minutes<45)
     if not saved:
         speech=("Assalamu alaikum. Choose a surah or the full Qur'an, tell me "
@@ -261,6 +289,8 @@ def get_state(name:str, *, day:dt.date|None=None):
         "required_ayahs_per_day":required,"recommended_ayahs":recommended,
         "overload":overload,"today":day.isoformat(),
         "today_ranges":today_ranges,
+        "sabqi_ranges":rotation(recent,recent_budget),
+        "manzil_ranges":rotation(older,older_budget),
         "teacher_message":speech,
         "reminder_supported":"calendar_export",
         "notification_explanation":(

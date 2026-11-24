@@ -99,7 +99,7 @@ function attachHifdhJourney(component,D,ui){
     CE("h3","","Today's study plan"));
   const metrics=CE("div","am-hifdh-metrics");
   for(const [label,value] of [
-    ["Memorised",(state.done||0)+" / "+(state.goal_total||0)],
+    ["Self-reported",(state.done||0)+" / "+(state.goal_total||0)],
     ["Progress",(state.progress_pct||0)+"%"],
     ["Suggested",String(state.required_ayahs_per_day||0)+" ayahs / day"]
   ]){
@@ -126,11 +126,13 @@ function attachHifdhJourney(component,D,ui){
   }else if(!state.study_today){
     step("☾","Today is a rest or catch-up day. You can listen or review without pressure.");
   }else{
-    step("01","Revision · "+(config.review_minutes??15)+" min: yesterday's verses and a selection from last week.");
+    
     step("02","Listen once to a trusted reciter, then work through a few words at a time.");
-    for(const r of state.today_ranges||[])step("✦",r.label);
+    for(const r of state.today_ranges||[])step("✦","Sabq · "+r.label);
     step("03","Recite without hints and review difficult sounds with a qualified teacher.");
   }
+  for(const r of state.sabqi_ranges||[])step("↻","Sabqi · "+r.label);
+  for(const r of state.manzil_ranges||[])step("↻","Manzil · "+r.label);
   today.appendChild(steps);
   const done=btn("✓ I completed today's planned passage","am-button am-primary am-hifdh-done");
   done.disabled=!saved||state.finished_today||!state.study_today||!(state.today_ranges||[]).length;
