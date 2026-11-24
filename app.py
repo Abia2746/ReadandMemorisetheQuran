@@ -1083,12 +1083,14 @@ with left:
                 # account. Unverified AI feedback never marks verses memorised.
                 try:
                     from supabase_auth import save_review_progress
+                    from cloud_learning import save_recitation_review
                     reviewed_ayahs = (
                         range(ayah, end_ayah + 1)
                         if recording_scope == "Entire selected passage"
                         else [int(recording_scope.split()[-1])]
                     )
                     save_review_progress(surah, reviewed_ayahs)
+                    save_recitation_review(result_key, st.session_state.results[result_key])
                 except Exception:
                     # Cloud sync must never prevent the local recitation review.
                     st.session_state["am_cloud_sync_failed"] = True
