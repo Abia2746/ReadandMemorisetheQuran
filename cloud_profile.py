@@ -45,6 +45,8 @@ def restore_cloud_learning():
         from cloud_learning import restore_preferences, restore_hifdh_plan
         settings_found = restore_preferences(user_id)
         plan_found = restore_hifdh_plan(user_id)
+        from cloud_learning import restore_prayer_room
+        room_found = restore_prayer_room(user_id)
         from cloud_learning import restore_recitation_reviews
         saved_reviews = restore_recitation_reviews(user_id)
     except (requests.RequestException, RuntimeError, ValueError, OSError) as exc:
@@ -55,5 +57,6 @@ def restore_cloud_learning():
     st.session_state["am_cloud_review_rows"] = progress
     st.session_state["am_cloud_settings_found"] = settings_found
     st.session_state["am_cloud_plan_found"] = plan_found
+    st.session_state["am_cloud_room_found"] = room_found
     st.session_state["am_cloud_loaded_for"] = user_id
     st.session_state.pop("am_cloud_load_error", None)
