@@ -146,8 +146,10 @@ async function fixture(mode,overrides={},startListening=true){
   const x=await fixture("full");
   x.callback({type:"position",state:"locked",observed:[{word:{surah:2,ayah:60,word:2}}]});
   const wordNodes=nodes(x.mount).filter(n=>n.className.split(/\s+/).includes("am-word"));
-  assert.equal(wordNodes.filter(n=>n.className.includes("am-active")).length,1);
-  assert.match(wordNodes[1].className,/am-active/,"reading highlight follows the SDK");
+  assert.equal(wordNodes.filter(n=>n.className.includes("am-active")).length,0,
+    "SDK-only position must never display as verified active highlighting");
+  assert.match(wordNodes[1].className,/am-uncertain/,
+    "tentative location should be visually distinguishable from verified recitation");
   assert.equal(nodes(x.mount).filter(n=>n.className.includes("am-revealed-ar")).length,0,
     "reading mode does not insert duplicate Arabic text");
   x.dispose();
