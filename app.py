@@ -1122,8 +1122,13 @@ with left:
     if recording:
         # Dedicated acoustic phoneme recognition is separate from Gemini's
         # language-model review. No audio is submitted without user clicking.
-        acoustic_url = str(st.secrets.get("PHONEME_SERVICE_URL", "")).strip()
-        acoustic_token = str(st.secrets.get("PHONEME_SERVICE_TOKEN", "")).strip()
+        try:
+            acoustic_url = str(st.secrets.get("PHONEME_SERVICE_URL", "")).strip()
+            acoustic_token = str(st.secrets.get("PHONEME_SERVICE_TOKEN", "")).strip()
+        except Exception:
+            # Public free reading remains available even with no Streamlit
+            # secrets configured or when private service access is unavailable.
+            acoustic_url, acoustic_token = "", ""
         acoustic_key = "am_acoustic_" + hashlib.sha256(recording.getvalue()).hexdigest()[:24]
         if service_ready(acoustic_url, acoustic_token):
             st.caption(
