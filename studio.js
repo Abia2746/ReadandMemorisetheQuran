@@ -154,17 +154,6 @@ export default function(component) {
 
   const engineSelect=CE("select","am-input");
   engineSelect.setAttribute("aria-label","Speech recognition method");
-  const sensitivitySelect=CE("select","am-input");
-  sensitivitySelect.setAttribute("aria-label","Word-matching sensitivity");
-  [
-    ["responsive","Responsive · softer short words"],
-    ["careful","Careful · fewer uncertain jumps"]
-  ].forEach(([value,label])=>{
-    const option=CE("option","",label);
-    option.value=value;
-    sensitivitySelect.appendChild(option);
-  });
-  sensitivitySelect.value="responsive";
   [
     ["cloud",D.cloudAvailable?"Cloud Live · recommended":"Cloud Live · requires API key"],
     ["browser","Safari/browser recogniser · fallback"],
@@ -179,10 +168,10 @@ export default function(component) {
     (navigator.platform==="MacIntel"&&navigator.maxTouchPoints>1);
   const browserCanTranscribe=Boolean(window.SpeechRecognition||window.webkitSpeechRecognition);
   engineSelect.value=D.cloudAvailable?"cloud":browserCanTranscribe?"browser":"local";
-  append(micControls,micButton,engineSelect,sensitivitySelect);
+  append(micControls,micButton,engineSelect);
   const meter=CE("div","am-meter"),meterFill=CE("div","");
   meter.appendChild(meterFill);
-  const micText=CE("div","am-note","Preparing Qur’an recognition SDK…");
+  const micText=CE("div","am-note","Choose a listener, then tap Start listening.");
   const micMessage=CE("div","am-note",D.cloudAvailable?"Cloud phrase verification selected. Only fully recognised phrases advance.":"On-device positioning cannot validate complete pronunciation. Use browser Arabic transcription when supported, or enable Cloud Live.");
   append(micBody,micDescription,micControls,meter,micText,micMessage);
   micPanel.appendChild(micBody);
@@ -203,12 +192,16 @@ export default function(component) {
     ["Verses",String((meta.end||meta.a)-(meta.a||0)+1)],
     ["Words",String(words.length)],
     ["Reciter",String(D.reciter||"Selected reciter")],
-    ["Progress",String(D.reviewed||0)+" words reviewed"]
+    ["Reviewed previously",String(D.reviewed||0)+" words"]
   ];
   statRows.forEach(([label,value])=>{
     const line=CE("div","am-mini-row");
     append(line,CE("span","",label),CE("b","",value));stats.appendChild(line);
   });
+  const liveCount=CE("b","","0 / "+words.length);
+  const matchedRow=CE("div","am-mini-row");
+  append(matchedRow,CE("span","","Words matched this session"),liveCount);
+  stats.appendChild(matchedRow);
   side.appendChild(stats);
   const reviewPanel=CE("section","am-panel am-mini");
   reviewPanel.appendChild(CE("h3","am-smallhead","How practice works"));
@@ -362,10 +355,10 @@ export default function(component) {
   };
   correctButton.onclick=()=>{
     const i=rescueTarget();if(i<0)return;
-    userCorrected.add(i);flaggedIndices.delete(i);practiceReview.delete(i);confirmedIndices.add(i);
+    userCorrected.add(i);flaggedIndices.delete(i);practiceReview.delete(i);
     wordNodes[i]?.classList.remove("am-review","am-uncertain","am-practice-flag");
-    wordNodes[i]?.classList.add("am-confirmed");
-    rescueText.textContent="✓ Marked as recognised by you. This corrects the practice record; it does not verify Tajweed.";
+    
+    rescueText.textContent="Review flag cleared by you.";
   };
   roundButton.onclick=()=>{
     const indices=[...new Set([...practiceReview,...flaggedIndices])].sort((a,b)=>a-b);
@@ -433,55 +426,59 @@ export default function(component) {
     return count>0&&tokens.length>=count&&
       tokens.slice(0,count).every((token,i)=>token===expected[start+i]);
   }
-  function confirmPhrases(tokens,start){
-    let cursor=start,used=0;
-    while(cursor<words.length){
-      const count=phraseEnd(cursor)-cursor;
-      if(!phraseMatches(tokens.slice(used),cursor))break;
-      for(let i=cursor;i<cursor+count;i++)mark(i,true);
-      cursor+=count;used+=count;
+  // Accept a new starting position only when four consecutive final tokens
+  // identify exactly one location within an ayah of the selected passage.
+  function uniquePhrase(tokens){
+    if(tokens.length<PHRASE_WORDS)return -1;
+    let found=-1;
+    for(let i=0;i+PHRASE_WORDS<=words.length;i++){
+      if(phraseEnd(i)-i!==PHRASE_WORDS||!phraseMatches(tokens,i))continue;
+      if(found>=0)return -1;
+      found=i;
     }
-    return {cursor,used};
+    return found;
   }
-  function prefixSize(tokens,start){
-    const limit=Math.min(tokens.length,phraseEnd(start)-start);
-    let matched=0;
-    for(;matched<limit;matched++)if(tokens[matched]!==expected[start+matched])break;
-    return matched;
-  }
-  function mark(index,confirm){
-    if(index<0||index>=words.length)return;
-    // Never reveal or confirm a word if an earlier word is still missing.
-    const nextRequired=confirmedWord+1;
-    if(index>nextRequired){
-      coach("↶ Let’s continue in order. Repeat the next unrevealed word.","guide");
-      return;
-    }
-    const alreadyConfirmed=confirmedIndices.has(index);
-    if(currentWord===index && (!confirm || alreadyConfirmed))return;
-    currentWord=index;
-    if(confirm){
-      confirmedIndices.add(index);
-      flaggedIndices.delete(index);
-      confirmedWord=Math.max(confirmedWord,index);
-    }
-    wordNodes.forEach((el,i)=>{
-      el.classList.toggle("am-active",i===index);
-      // Recording progress is kept in state; multiple completed words do not
-      // receive permanent background highlights, in either Read or Memorise.
-      el.classList.toggle("am-confirmed",confirmedIndices.has(i));
-      el.classList.toggle("am-review",flaggedIndices.has(i));
-      if(confirmedIndices.has(i))el.classList.remove("am-uncertain");
-      el.classList.remove("am-ayah-playing");
-      // Memorisation begins with English-only clues. Confirmed words reveal
-      // their actual Arabic text progressively as the learner recites.
-      if(currentTab==="cover" && confirmedIndices.has(i) && !el.querySelector(".am-revealed-ar")){
-        el.appendChild(CE("span","am-revealed-ar",words[i].ar||""));
+  function matchFinalTokens(pending,cursor){
+    let matched=false;
+    while(pending.length){
+      let start=cursor;
+      if(!phraseMatches(pending,start)){
+        start=uniquePhrase(pending);
+        if(start<0){
+          if(pending.length<PHRASE_WORDS)break;
+          pending.shift();
+          continue;
+        }
       }
-    });
-    progressFill.style.width=Math.round(100*(confirmedWord+1)/Math.max(1,words.length))+"%";
-    if(confirm)coach("✓ Beautiful progress. Keep going, one word at a time.","success");
-    wordNodes[index]?.scrollIntoView({behavior:"smooth",block:"nearest",inline:"nearest"});
+      const end=phraseEnd(start);
+      for(let i=start;i<end;i++)markMatched(i);
+      pending.splice(0,end-start);
+      cursor=end;
+      matched=true;
+    }
+    if(matched){
+      updateMatchCount();
+      wordNodes[cursor-1]?.scrollIntoView({behavior:"instant",block:"nearest",inline:"nearest"});
+      coach("Phrase matched in the Arabic transcript. Keep going.","success");
+    }
+    return {cursor,matched};
+  }
+  function updateMatchCount(){
+    liveCount.textContent=confirmedIndices.size+" / "+words.length;
+    progressFill.style.width=Math.round(100*confirmedIndices.size/Math.max(1,words.length))+"%";
+  }
+  function markMatched(index){
+    wordNodes[currentWord]?.classList.remove("am-active");
+    currentWord=confirmedWord=index;
+    confirmedIndices.add(index);
+    flaggedIndices.delete(index);
+    const el=wordNodes[index];
+    if(!el)return;
+    el.classList.remove("am-review","am-uncertain","am-ayah-playing");
+    el.classList.add("am-confirmed");
+    if(currentTab==="cover"&&!el.querySelector(".am-revealed-ar")){
+      el.appendChild(CE("span","am-revealed-ar",words[index].ar||""));
+    }
   }
   const digits="٠١٢٣٤٥٦٧٨٩";
   function arabicDigits(n){return String(n).replace(/[0-9]/g,d=>digits[Number(d)])}
@@ -622,7 +619,7 @@ export default function(component) {
   }
   toggleHint.onclick=()=>{showHints=!showHints;renderWords()};
   toggleColour.onclick=()=>{showTajweed=!showTajweed;renderWords()};
-  resetBtn.onclick=()=>{currentWord=-1;confirmedWord=-1;confirmedIndices.clear();flaggedIndices.clear();lastPlaybackUiKey="";progressFill.style.width="0%";setStatus("Ready to practise from the beginning.");transcript.textContent="";renderWords()};
+  resetBtn.onclick=()=>{currentWord=-1;confirmedWord=-1;confirmedIndices.clear();flaggedIndices.clear();updateMatchCount();lastPlaybackUiKey="";progressFill.style.width="0%";setStatus("Ready to practise from the beginning.");transcript.textContent="";renderWords()};
   recordHint.onclick=()=>{
     micPanel.scrollIntoView({behavior:"smooth",block:"center"});
     // Start capture from the original tap, preserving the iPad user gesture.
@@ -979,29 +976,16 @@ export default function(component) {
       let idx=-1;
       if(final.trim()){
         phraseBuffer.push(...normalized(final).split(" ").filter(Boolean));
-        while(phraseBuffer.length){
-          const count=phraseEnd(cursor)-cursor;
-          if(!count)break;
-          const matches=prefixSize(phraseBuffer,cursor);
-          if(matches===count){
-            const result=confirmPhrases(phraseBuffer,cursor);
-            cursor=result.cursor;idx=cursor-1;
-            phraseBuffer=phraseBuffer.slice(result.used);
-            continue;
-          }
-          if(matches<Math.min(count,phraseBuffer.length)){
-            phraseBuffer=[];
-            coach("↶ Full phrase not recognised. Please repeat it.","guide");
-          }
-          break;
-        }
+        const result=matchFinalTokens(phraseBuffer,cursor);
+        cursor=result.cursor;
+        if(result.matched)idx=cursor-1;
       }
       if(interim.trim()){
         setStatus("Listening · full phrase awaiting verification","active");
       }
       const heard=(final+" "+interim).trim();
       if(heard)transcript.textContent="Recognised Arabic (approximate): "+heard.slice(0,180);
-      setStatus(idx>=0?"Following your recitation · "+Math.round(100*(idx+1)/Math.max(1,words.length))+"% of passage":
+      setStatus(idx>=0?"Following your recitation · "+Math.round(100*confirmedIndices.size/Math.max(1,words.length))+"% of passage":
         "Arabic heard, but no match yet. Check the selected ayahs.","active");
     };
     r.onerror=e=>{
@@ -1163,27 +1147,10 @@ export default function(component) {
       lastCloudFinal=tokens;
       if(!fresh.length)return;
       cloudAccum.push(...fresh);
-      let anyVerified=false;
-      while(cloudAccum.length){
-        const needed=phraseEnd(cursor)-cursor;
-        if(!needed)break;
-        const prefix=prefixSize(cloudAccum,cursor);
-        if(prefix===needed){
-          const result=confirmPhrases(cloudAccum,cursor);
-          cursor=result.cursor;
-          cloudAccum=cloudAccum.slice(result.used);
-          anyVerified=true;
-          continue;
-        }
-        if(prefix<Math.min(needed,cloudAccum.length)){
-          cloudAccum=[];
-          coach("↶ I couldn't verify the complete phrase. Please repeat it.","guide");
-        }
-        break;
-      }
-      setStatus(anyVerified?
-        "Full phrase recognised · "+Math.round(cursor*100/Math.max(1,words.length))+"%":
-        "Arabic heard · waiting for complete phrase","active");
+      const result=matchFinalTokens(cloudAccum,cursor);
+      cursor=result.cursor;
+      setStatus(result.matched?"Phrase matched · "+liveCount.textContent+" words":
+        "Arabic heard · waiting for a complete phrase","active");
     };
     setStatus("Connecting to Gemini's live transcription service...","active");
     const url="wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContentConstrained?access_token="+encodeURIComponent(token);
@@ -1347,12 +1314,13 @@ export default function(component) {
   let tilawaSdkReady=null,tilawaSdkError=null;
   tilawaSdkModule.then(m=>{
     tilawaSdkReady=m;
-    if(!live){
+    if(!live&&engineSelect.value==="local"){
       micText.textContent="Qur'an SDK ready · tap Start listening to load the model and begin.";
       micMessage.textContent="R5 · Quran-specific recognition is ready for live practice. Soft short words may need repetition; individual vowels are not certified.";
     }
   }).catch(e=>{
     tilawaSdkError=e;
+    if(engineSelect.value!=="local")return;
     const reason=String(e?.message||e).slice(0,220);
     micText.textContent="Qur'an SDK failed to load: "+reason;
     micMessage.textContent="If the model module cannot load, the reader still works. Cloud Live is an alternate transcription method.";
@@ -1399,36 +1367,7 @@ export default function(component) {
       // Skipped positions are UNKNOWN, never silently marked correct or wrong.
       let lastObserved=-1;
       let lastObservationAt=0;
-      const observedCounts=new Map();
-      const observedFirstAt=new Map();
-      const paintedStates=new Map();
-      let lastPaintAt=0;
-      let lastScrolled=-1;
-      const suspectWords=new Set();
-      const repaint=()=>{
-        // Only mutate nodes whose visual state actually changed. Rewriting
-        // hundreds of DOM classes on every recognition event blocks audio UI.
-        wordNodes.forEach((el,i)=>{
-          const review=flaggedIndices.has(i);
-          const good=confirmedIndices.has(i)&&!review;
-          // On-device SDK gives a tentative audio position only.
-          // Do not use the bright completion highlight for a first phoneme.
-          const active=false;
-          const uncertain=!review&&!good&&(i===currentWord||
-            (i<currentWord&&i>confirmedWord));
-          const state=(review?1:0)|(good?2:0)|(uncertain?8:0);
-          if(paintedStates.get(i)===state)return;
-          paintedStates.set(i,state);
-          el.classList.toggle("am-review",review);
-          el.classList.toggle("am-confirmed",good);
-          el.classList.toggle("am-active",active);
-          el.classList.toggle("am-uncertain",uncertain);
-          if(currentTab==="cover"&&good&&!el.querySelector(".am-revealed-ar"))
-            el.appendChild(CE("span","am-revealed-ar",words[i].ar||""));
-        });
-        const percentage=Math.round(100*(Math.max(0,confirmedWord+1))/Math.max(1,words.length))+"%";
-        if(progressFill.style.width!==percentage)progressFill.style.width=percentage;
-      };
+      let lastNode=null;
       session.subscribe(event=>{
         if(!live||disposed||!event)return;
         if(event.type==="position"){
@@ -1447,48 +1386,20 @@ export default function(component) {
             .sort((a,b)=>b.idx-a.idx)[0];
           const idx=candidate.idx,now=Date.now();
           if(idx<lastObserved-2 && now-lastObservationAt<1400)return;
-          const repeated=idx===lastObserved;
-          observedCounts.set(idx,(observedCounts.get(idx)||0)+1);
-          if(!observedFirstAt.has(idx))observedFirstAt.set(idx,now);
-          const moved=idx!==lastObserved;
-          lastObserved=idx;lastObservationAt=now;
-          currentWord=idx;
-          // Position-lock indicates where a reader may be, NOT what they
-          // recited. Never turn a word green after a few samples of its onset.
-          // The SDK may show tentative tracking but cannot certify a phrase.
-          // Avoid repainting the entire passage for every duplicate model
-          // event, and avoid expensive animated scroll on each audio frame.
-          if(moved||now-lastPaintAt>=110){
-            repaint();
-            lastPaintAt=now;
-          }
-          if(moved&&idx!==lastScrolled){
-            lastScrolled=idx;
-            wordNodes[idx]?.scrollIntoView({behavior:"instant",block:"nearest",inline:"nearest"});
-          }
-          const state=flaggedIndices.has(idx)?"possible mismatch":
-            confirmedIndices.has(idx)?"learner confirmed":"position estimate · not verified";
-          micMessage.textContent="Ayah "+candidate.word.ayah+", word "+candidate.word.word+
-            " · "+state+". Subtle vowels and Tajweed are not verified by this model.";
-          setStatus("Live tracking · "+state,"active");
+          lastObservationAt=now;
+          const node=wordNodes[idx];
+          if(node===lastNode&&idx===lastObserved)return;
+          lastNode?.classList.remove("am-uncertain");
+          lastNode=node;
+          lastObserved=currentWord=idx;
+          if(!confirmedIndices.has(idx))node?.classList.add("am-uncertain");
+          node?.scrollIntoView({behavior:"instant",block:"nearest",inline:"nearest"});
+          setStatus("Following estimated position · ayah "+candidate.word.ayah+
+            ", word "+candidate.word.word,"active");
         }else if(event.type==="checker"&&event.state==="confirmed"){
-          const idx=globalIndex(event.location);
-          if(idx>=0&&!userCorrected.has(idx)){
-            suspectWords.add(idx);
-            practiceReview.add(idx);
-            flaggedIndices.add(idx);
-            confirmedIndices.delete(idx);
-            if(idx<=confirmedWord)confirmedWord=idx-1;
-            currentWord=idx;
-            repaint();
-            coach("Possible recitation mismatch at the highlighted word. Please review.","guide");
-            micMessage.textContent="Possible mismatch at ayah "+words[idx].ayah+
-              ", word "+(idx+1)+": "+String(event.errorClass||"recognition mismatch")+
-              ". This is not a verified vowel or Tajweed assessment.";
-            setStatus("Possible word mismatch · review red highlight","active");
-          }
+          setStatus("Position uncertain · continue reciting or replay the ayah","active");
         }else if(event.type==="capabilities"){
-          micMessage.textContent="Qur'an-specific tracking enabled. Green means recognised word evidence; red means model-reported possible mismatch; purple means unverified.";
+          micMessage.textContent="Qur'an-specific tracking enabled. Purple follows the estimated word. Choose a transcript listener for green phrase matches.";
         }
       });
       let lastMeterUpdate=0;
@@ -1512,7 +1423,7 @@ export default function(component) {
       if(disposed)return;
       micText.textContent="On-device Quran recognition active · no recitation audio sent to Gemini.";
       setStatus("Quran model listening. Begin reciting the displayed ayahs...","active");
-      coach("🎙 I’m listening. Start with the first word; Arabic will reveal as words are recognised.","guide");
+      coach("🎙 I’m listening. Start with the first word; Purple follows the estimated word. Switch to a transcript listener for green phrase matches.","guide");
     }catch(error){
       await cleanup();
       cleanupLive=null;
@@ -1537,6 +1448,7 @@ export default function(component) {
         await requestCloudToken();
         return;
       }
+      transcript.textContent="";
       live=true;
       if(engineSelect.value==="cloud")await cloudLive();
       else if(engineSelect.value==="local")await localLive(preparedLocalMic);
