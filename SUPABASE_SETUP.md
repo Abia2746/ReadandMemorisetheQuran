@@ -98,3 +98,16 @@ Local planner and Prayer Room data for signed-in learners use the Supabase accou
 - [ ] Run GitHub Actions syntax and Hifdh planner snapshot tests.
 
 The last Supabase check still had no email-confirmed learner, so end-to-end login and cloud sync cannot yet be claimed as passing.
+
+## 24 November 2026 — Prayer Room cosmetic cloud backup
+
+Added `learner_room_backups` with per-user RLS policies and a bounded JSON snapshot.
+Signed-in accounts now attempt to save room XP, coins, purchased decorations, equipped items, reward ledger and streak state after eligible in-app actions. The next login can restore the snapshot into an account-specific local cache. Restore validates item names, caps, duplicate IDs and relationships before applying changes in a SQLite transaction.
+
+The backup only covers **cosmetic in-app rewards**. It is user-writable and MUST NOT be used as proof of payment, premium entitlement, real money or authoritative competition standings.
+
+Known limitations: Local guest rooms are not synced. A cloud save may fail while a local action succeeds; the UI reports that backup is pending rather than claiming successful sync. Repeated failed actions do not create new cloud rewards. Existing local rewards from name-only profiles are not automatically imported.
+
+Verification performed: database RLS and all four owner-only policies confirmed through Supabase; test source and CI workflow committed. A real cross-device signed-in run and green CI evidence remain outstanding because the project has no confirmed login yet.
+
+Next launch blocker: configure reliable email delivery and test signup verification on the actual deployed Streamlit site. Move session storage out of JavaScript-accessible browser storage before accepting live payments.
