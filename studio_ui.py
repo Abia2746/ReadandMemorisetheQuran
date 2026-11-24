@@ -280,6 +280,18 @@ def render_studio(
                 else:
                     feedback = {"ok": False, "message": "This room action is not supported."}
                 st.session_state["_am_room_feedback"] = feedback["message"]
+                if account and feedback.get("ok") and action in (
+                    "read", "memorise", "buy", "equip", "unequip"
+                ):
+                    try:
+                        from cloud_learning import backup_prayer_room
+                        backup_prayer_room()
+                        st.session_state.pop("_am_room_sync_failed", None)
+                    except Exception:
+                        st.session_state["_am_room_sync_failed"] = True
+                        st.session_state["_am_room_feedback"] += (
+                            " Your room was saved locally, but cloud backup is pending."
+                        )
             except (ValueError, OSError, RuntimeError) as exc:
                 st.session_state["_am_room_feedback"] = str(exc)[:200]
             st.rerun()
