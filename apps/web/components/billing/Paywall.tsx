@@ -6,7 +6,7 @@
  * Prices must come from verified Stripe catalog or RevenueCat Store offerings.
  * This view does not process money, collect cards, or use advertising SDKs.
  */
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 
 export type PlanTier = "pro_monthly" | "pro_annual" | "family_annual";
 export type PaywallReason =
