@@ -211,6 +211,10 @@ div[data-testid="stDialog"] button[kind="primaryFormSubmit"] {background:linear-
             st.session_state.pop("am_auth", None)
             st.session_state["am_auth_signout"] = True
             st.session_state["am_cloud_loaded_for"] = None
+            st.session_state["am_cloud_review_rows"] = []
+            st.session_state["am_profile_user"] = None
+            st.session_state["name"] = ""
+            st.session_state["results"] = {}
             st.rerun()
         return
     if st.session_state.get("am_auth_error"):
