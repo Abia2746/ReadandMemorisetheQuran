@@ -4,7 +4,7 @@ export type QuranWord = {
   meaning: string; transliteration: string | null;
 };
 export type QuranVerse = {
-  surah:number; ayah:number; arabic_uthmani:string;
+  surah:number; ayah:number; arabic_uthmani:string; text_source?:string;
   translation:string; translation_attribution:string;
   words:QuranWord[]; audio_url:string; reciter:string; free:true;
 };
@@ -27,10 +27,20 @@ export async function fetchVerse(surah:number,ayah:number,reciter:ReciterId="dos
   if(!validVerse(surah,ayah))throw Error("Invalid verse reference");
   const key=`${surah}:${ayah}:${lang}:${reciter}`;
   // De-duplicate simultaneous un-aborted calls across reader components.
-  if(signal)return fetchJSON<QuranVerse>(`/api/quran/verse/${surah}/${ayah}?lang=${lang}&reciter=${reciter}`,signal);
+  const path = `/api/quran/verse/${surah}/${ayah}?lang=${encodeURIComponent(lang)}&reciter=${reciter}`;
+  async function read() {
+    if (origin) {
+      try { return await fetchJSON<QuranVerse>(path,signal); }
+      catch (error) { if (signal?.aborted) throw error; }
+    }
+    const response = await fetch(path,{signal});
+    if (!response.ok) throw Error("Qur’an passage unavailable.");
+    return await response.json() as QuranVerse;
+  }
+  if(signal)return read();
   const hit=inFlight.get(key) as Promise<QuranVerse>|undefined;
   if(hit)return hit;
-  const promise=fetchJSON<QuranVerse>(`/api/quran/verse/${surah}/${ayah}?lang=${lang}&reciter=${reciter}`);
+  const promise=read();
   inFlight.set(key,promise);void promise.finally(()=>inFlight.delete(key)).catch(()=>{});
   return promise;
 }

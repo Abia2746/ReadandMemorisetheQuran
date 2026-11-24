@@ -230,6 +230,9 @@ function Workspace(){
         <p className="mt-2 text-xs text-[#C0AB90]">No Arabic verse or translation will be invented. Check the backend Qur'an API credentials and connection.</p>
       </div>}
       {verse && <section className="mt-1">
+        {verse.text_source==="Tanzil" && <p className="px-4 py-2 text-xs text-[#E6D5B8]">
+          Arabic text from the <a className="underline" href="https://tanzil.net">Tanzil Project</a>. Word details are temporarily unavailable.
+        </p>}
         {mode==="memorise"?
           <div className="am-ayah-panel p-4 sm:p-6">
             <div className="mb-3 flex justify-between text-xs text-[#C8A96E]">
