@@ -9,24 +9,39 @@ import requests
 import streamlit as st
 
 MAGIC_LINK_JS = r"""
-export default function({setTriggerValue}) {
-  const fragment = window.location.hash;
-  if (!fragment || !(fragment.includes("access_token=") || fragment.includes("error="))) return;
-  const values = new URLSearchParams(fragment.slice(1));
-  const access = values.get("access_token");
-  const authError = values.get("error");
-  const authCode = values.get("error_code");
-  const refresh = values.get("refresh_token");
-  const tokenType = values.get("token_type");
-  // Clear the browser URL before anything else handles the token.
-  window.history.replaceState(null, "", window.location.pathname + window.location.search);
-  if (authError) {
-    setTriggerValue("auth_error", authCode === "otp_expired" ? "expired" : "failed");
-    return;
-  }
-  if (access && refresh && tokenType === "bearer") {
-    setTriggerValue("tokens", {access_token: access, refresh_token: refresh});
-  }
+export default function({setTriggerValue, data}) {
+  const key = "al-muallim.preview-auth.v1";
+  try {
+    if (data?.signout) { localStorage.removeItem(key); return; }
+    const active = data?.session;
+    if (active?.access_token && active?.refresh_token) {
+      localStorage.setItem(key, JSON.stringify(active));
+    }
+    const fragment = window.location.hash;
+    if (fragment && (fragment.includes("access_token=") || fragment.includes("error="))) {
+      const p = new URLSearchParams(fragment.slice(1));
+      window.history.replaceState(null, "", window.location.pathname + window.location.search);
+      if (p.get("error")) {
+        setTriggerValue("auth_error", p.get("error_code") === "otp_expired" ? "expired" : "failed");
+        return;
+      }
+      const access = p.get("access_token");
+      const refresh = p.get("refresh_token");
+      if (access && refresh && p.get("token_type") === "bearer") {
+        const credentials = {access_token:access, refresh_token:refresh};
+        localStorage.setItem(key, JSON.stringify(credentials));
+        setTriggerValue("tokens", credentials);
+      }
+      return;
+    }
+    if (active?.access_token) return;
+    const saved = localStorage.getItem(key);
+    if (saved && !window.__alMuallimRestoreAttempted) {
+      window.__alMuallimRestoreAttempted = true;
+      const credentials = JSON.parse(saved);
+      if (credentials?.refresh_token) setTriggerValue("tokens", credentials);
+    }
+  } catch { localStorage.removeItem(key); }
 }
 """
 
@@ -38,9 +53,19 @@ def accept_magic_link_tokens():
         html="<div aria-hidden='true' style='height:0'></div>",
         js=MAGIC_LINK_JS,
     )
-    result = callback(key="am_magic_link_callback", on_tokens_change=lambda: None,
+    session = st.session_state.get("am_auth")
+    result = callback(
+        key="am_magic_link_callback",
+        data={
+            "session": {
+                "access_token": session.get("access_token"),
+                "refresh_token": session.get("refresh_token"),
+            } if session else None,
+            "signout": bool(st.session_state.get("am_auth_signout")),
+        },
+        on_tokens_change=lambda: None,
                       on_auth_error_change=lambda: None)
-    if st.session_state.get("am_auth"):
+    if st.session_state.get("am_auth_signout") or st.session_state.get("am_auth"):
         return
     if result.auth_error:
         st.session_state["am_auth_error"] = "That sign-in link expired. Request a new link." if result.auth_error == "expired" else "Sign-in could not be completed. Request a fresh link."
@@ -62,13 +87,30 @@ def accept_magic_link_tokens():
             headers={"apikey": key, "Authorization": "Bearer " + access},
             timeout=12,
         )
+        if resp.status_code == 401:
+            renewed = requests.post(
+                url + "/auth/v1/token",
+                params={"grant_type": "refresh_token"},
+                headers={"apikey": key, "Content-Type": "application/json"},
+                json={"refresh_token": refresh}, timeout=12,
+            )
+            if renewed.status_code == 200:
+                new_tokens = renewed.json()
+                access = new_tokens.get("access_token", "")
+                refresh = new_tokens.get("refresh_token", "")
+                resp = requests.get(
+                    url + "/auth/v1/user",
+                    headers={"apikey": key, "Authorization": "Bearer " + access},
+                    timeout=12,
+                )
         if resp.status_code != 200:
-            st.session_state["am_auth_error"] = "Your sign-in link expired or could not be verified. Request a fresh link."
+            st.session_state["am_auth_error"] = "Your session expired. Request a fresh sign-in link."
             return
         user = resp.json()
         if not isinstance(user.get("id"), str) or not user["id"]:
             st.session_state["am_auth_error"] = "Your account could not be verified. Please try again."
             return
+        st.session_state["am_auth_signout"] = False
         st.session_state["am_auth"] = {
             "access_token": access,
             "refresh_token": refresh,
