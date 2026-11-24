@@ -111,3 +111,22 @@ Known limitations: Local guest rooms are not synced. A cloud save may fail while
 Verification performed: database RLS and all four owner-only policies confirmed through Supabase; test source and CI workflow committed. A real cross-device signed-in run and green CI evidence remain outstanding because the project has no confirmed login yet.
 
 Next launch blocker: configure reliable email delivery and test signup verification on the actual deployed Streamlit site. Move session storage out of JavaScript-accessible browser storage before accepting live payments.
+
+## Authentication hardening — November 24, 2026
+
+The Streamlit Components v2 callback no longer writes incoming email link credentials directly to browser persistence before the Supabase Auth /user endpoint validates them. Unverified, expired or revoked credentials cause the preview browser cache to clear; successful confirmed sessions are saved for same-browser recovery. Rotated refresh tokens are verified again before use. Explicit sign-out clears the session and local data.
+
+Email requests are throttled per Streamlit session: 90 seconds after a successful request; a longer retry block is applied after Supabase HTTP 429. Supabase project-wide email caps are separate and cannot be bypassed by frontend changes. The confirmation email must be sent by an authorised SMTP provider for public registrations.
+
+Required manual Supabase dashboard configuration:
+
+1. Authentication > URL Configuration: set Site URL to https://readandmemorisethequran-9uvtv8lpn9ozytdqtk6ceh.streamlit.app/ and include that exact app URL in allowed redirects.
+2. Authentication > SMTP Settings: connect an authorised transactional SMTP provider using its credentials through the private Supabase dashboard; do not put credentials in GitHub or chat.
+3. Authentication > Email Templates: verify links redirect to the actual app, not localhost:3000. Keep email confirmation enabled.
+4. On the live Streamlit app, request ONE new email, verify it ONCE and confirm the login screen shows the correct account.
+5. Sign out, reload, test an expired link and an invalid link, and verify browser storage is cleared.
+6. Test again in Safari and a mobile email app, and verify a second account cannot read the first account's data.
+
+**Preview-only warning:** token persistence still relies on JavaScript-accessible browser localStorage. Upgrade to a server-side, Secure, HttpOnly, SameSite cookie session architecture, with CSRF and session-revocation tests, before processing live money. No real payments have been enabled.
+
+Regression tests added in tests/test_auth_callback_security.py. GitHub CI still needs a confirmed green run; real confirmation is not testable while the existing account is unconfirmed.
