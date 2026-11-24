@@ -1170,6 +1170,67 @@ if saved:
     st.caption(_ui("Recording: ") + saved.get("recording_scope", _ui("Selected passage")))
     st.info(saved.get("feedback") or _ui("The AI returned no general feedback."))
     review = saved.get("review")
+    if isinstance(review, dict) and review.get("vowel_reference"):
+        st.markdown("#### Harakah-by-harakah learning map")
+        st.caption(
+            "Every written short-vowel mark below comes from the selected "
+            "Qur'an text, NOT from audio detection. None is certified correct "
+            "or incorrect. Stopping and connecting words may change how a "
+            "vowel is realised in recitation."
+        )
+        audio_evidence = review.get("signal_quality") or {}
+        if audio_evidence.get("available"):
+            st.caption(
+                "Recording: " + str(audio_evidence.get("duration_s")) +
+                " seconds · signal quality: " +
+                str(audio_evidence.get("quality", "unknown")).replace("_", " ")
+            )
+        vowel_suggestions = review.get("vowel_suggestions") or []
+        if vowel_suggestions:
+            st.markdown("**Vowel sounds worth reviewing (unverified AI suggestions)**")
+            for clue in vowel_suggestions:
+                with st.expander(
+                    "Ayah " + str(clue["ayah"]) + " · " + clue["word"] +
+                    " · letter " + str(clue["letter_i"] + 1) +
+                    " · around " + str(clue["time_s"]) + "s"
+                ):
+                    st.write("**Expected written vowel:** " +
+                             ", ".join(clue["expected"]))
+                    st.write("**What the AI suggests checking:** " +
+                             clue["evidence"])
+                    st.write("**How to practise:** " + clue["guidance"])
+                    st.caption(
+                        "This is not validated vowel recognition. Listen "
+                        "back to the recording and compare with a qualified "
+                        "Hafs reciter or Tajweed teacher."
+                    )
+        else:
+            st.info(
+                "No individual vowel issue met the evidence threshold. "
+                "This does NOT mean all vowels were pronounced correctly."
+            )
+        with st.expander("Inspect every written vowel, sukun and shaddah"):
+            grouped = {}
+            for unit in review["vowel_reference"]:
+                grouped.setdefault(
+                    (unit["word_i"], unit["ayah"], unit["word"]), []
+                ).append(unit)
+            for (_index, verse, word_text), units in grouped.items():
+                details = []
+                for unit in units:
+                    features = ([v["name"] + " (" + v["sound"] + ")"
+                                 for v in unit["vowels"]] +
+                                unit["features"])
+                    if features:
+                        details.append(unit["letter"] + ": " + ", ".join(features))
+                st.markdown(
+                    "**Ayah " + str(verse) + " · " + word_text + "**"
+                )
+                st.caption(
+                    " · ".join(details) if details else
+                    "No short vowel marking present in this written word."
+                )
+        st.caption(review.get("vowel_verification", ""))
     if isinstance(review, dict) and review.get("rules"):
         st.caption(review.get("disclaimer") or
                    _ui("AI practice suggestions are not verified Tajweed grades."))
