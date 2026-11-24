@@ -8,6 +8,7 @@ import { MushafReader } from "@/components/mushaf/MushafReader";
 import { MeaningTileGrid } from "@/components/memorise/MeaningTileGrid";
 import { WordActionPopover } from "@/components/mushaf/WordActionPopover";
 import { RecitationProvider, useRecitation } from "@/components/audio/RecitationProvider";
+import { AcousticPractice } from "@/components/audio/AcousticPractice";
 import { AYAHS_PER_SURAH, type ReciterId } from "@/lib/quranMetadata";
 import { fetchJSON, fetchVerse, postJSON, apiPath, type QuranVerse, type QuranWord, type WordStatus, type DifficultWord } from "@/lib/verseApi";
 import { useStudyAuth, accessToken } from "@/lib/auth";
@@ -294,6 +295,7 @@ function Workspace(){
             Compare with Qari recitation or a qualified Tajweed teacher.
           </p>
         </div>
+        <AcousticPractice key={`${surah}:${ayah}`} verseRef={`${surah}:${ayah}`}/>
         {queue.length>0&&<section className="mb-8 mt-4 rounded-2xl border border-[#4A3828] bg-[#241913] p-4">
           <h2 className="font-editorial text-lg text-[#EDD39F]">Difficult Words · gentle revision</h2>
           <div className="mt-3 flex flex-wrap gap-2">
