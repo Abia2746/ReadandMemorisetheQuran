@@ -1076,9 +1076,15 @@ with left:
                 # Reward a *completed* AI review once per unique audio file,
                 # not each time its form is submitted or the page reloads.
                 review_id = hashlib.sha256(recording.getvalue()).hexdigest()
-                earn_recording_review(
+                review_reward = earn_recording_review(
                     storage_profile, surah, ayah, end_ayah, review_id
                 )
+                if review_reward.get("ok") and st.session_state.get("am_auth"):
+                    try:
+                        from cloud_learning import backup_prayer_room
+                        backup_prayer_room()
+                    except Exception:
+                        st.session_state["am_cloud_room_sync_failed"] = True
                 # Signed-in learners can save a revision marker to their own cloud
                 # account. Unverified AI feedback never marks verses memorised.
                 try:
