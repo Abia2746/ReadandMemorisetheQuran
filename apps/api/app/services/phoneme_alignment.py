@@ -6,6 +6,8 @@ reviewed Hafs target sequences. Alignment alone does not prove pronunciation.
 from __future__ import annotations
 from typing import Any, Mapping, Sequence
 
+from .quran_metadata import valid_verse
+
 MAX_PHONES = 450
 KINDS = {"match", "substitution_candidate", "deletion_candidate", "insertion_candidate"}
 
@@ -19,6 +21,7 @@ def _phone(item: Mapping[str, Any] | str) -> str:
 def align_phone_sequence(
     reference: Sequence[Mapping[str, Any] | str],
     observed: Sequence[Mapping[str, Any] | str],
+    *, partial_window: bool = False,
 ) -> dict[str, Any]:
     """Levenshtein alignment with explicit insertions/deletions.
 
@@ -36,7 +39,7 @@ def align_phone_sequence(
     # DP with stable tie order match/substitute, delete, insert.
     scores = [[0] * (m + 1) for _ in range(n + 1)]
     for i in range(n + 1):
-        scores[i][0] = i
+        scores[i][0] = 0 if partial_window else i
     for j in range(m + 1):
         scores[0][j] = j
     for i in range(1, n + 1):
@@ -47,7 +50,23 @@ def align_phone_sequence(
             )
     events = []
     i, j = n, m
-    while i or j:
+    if partial_window:
+        # A rolling clip can start/end anywhere in the reviewed verse.
+        distance = min(row[m] for row in scores)
+        ends = [k for k, row in enumerate(scores) if row[m] == distance]
+        if not m or len(ends) != 1 or distance >= m:
+            return {"status": "uncertain_location", "events": [], "verified_tajweed": False}
+        i = ends[0]
+    distance = scores[i][j]
+    while j or (i and not partial_window):
+        if partial_window:
+            choices = [
+                i and j and scores[i][j] == scores[i-1][j-1] + (expected[i-1] != heard[j-1]),
+                i and scores[i][j] == scores[i-1][j] + 1,
+                j and scores[i][j] == scores[i][j-1] + 1,
+            ]
+            if sum(bool(choice) for choice in choices) != 1:
+                return {"status": "uncertain_location", "events": [], "verified_tajweed": False}
         if i and j and scores[i][j] == scores[i-1][j-1] + (expected[i-1] != heard[j-1]):
             kind = "match" if expected[i-1] == heard[j-1] else "substitution_candidate"
             events.append((kind, i-1, j-1))
@@ -79,7 +98,7 @@ def align_phone_sequence(
             ),
         })
     return {
-        "edit_distance": scores[n][m],
+        "edit_distance": distance,
         "reference_phones": n,
         "observed_phones": m,
         "events": output,
@@ -95,7 +114,7 @@ def align_approved_verse(
     observed: Sequence[Mapping[str, Any]],
 ) -> dict[str, Any]:
     """Never trust browser-supplied phonetic labels as canonical reference."""
-    if not (1 <= surah <= 114 and 1 <= ayah <= 286):
+    if not valid_verse(surah, ayah):
         raise ValueError("Invalid verse")
     entries = registry.get("verse_phone_references")
     key = f"{surah}:{ayah}"
@@ -106,7 +125,7 @@ def align_approved_verse(
                 "message": "No expert-reviewed phone reference configured for this verse"}
     if not all(isinstance(x, str) and x and len(x) <= 64 for x in reference):
         raise ValueError("Malformed reviewed reference")
-    result = align_phone_sequence(reference, observed)
+    result = align_phone_sequence(reference, observed, partial_window=True)
     return {"status": "candidate_alignment", "reference": key, **result}
 
 

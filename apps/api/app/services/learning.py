@@ -66,7 +66,12 @@ async def compute_plan_state(conn:asyncpg.Connection,user_id:UUID,plan:dict)->di
                        if (day+timedelta(days=i)).weekday() in weekdays)
     required=math.ceil(len(remaining)/max(1,available_days))
     today_study=day.weekday() in weekdays
-    suggested=min(15,required) if today_study else 0
+    session=await conn.fetchval(
+        """SELECT 1 FROM study_sessions
+           WHERE user_id=$1 AND plan_id=$2 AND local_day=$3 AND scope='sabq'
+           LIMIT 1""",user_id,plan["id"],day,
+    )
+    suggested=min(15,required) if today_study and not session else 0
     # Always preserve a manageable suggestion instead of pretending to
     # meet an impossible deadline; user can extend months without penalty.
     new_passage=remaining[:suggested]
@@ -84,11 +89,6 @@ async def compute_plan_state(conn:asyncpg.Connection,user_id:UUID,plan:dict)->di
     priority=list(dict.fromkeys((r["surah"],r["ayah"]) for r in difficult))
     sabqi=list(dict.fromkeys(priority+[v for v in recent if v not in new_passage]))[:8]
     manzil=[v for v in older if v not in sabqi][:8]
-    session=await conn.fetchval(
-        """SELECT 1 FROM study_sessions
-           WHERE user_id=$1 AND plan_id=$2 AND local_day=$3 AND scope='sabq'
-           LIMIT 1""",user_id,plan["id"],day,
-    )
     return {
         "plan_id":str(plan["id"]),"title":plan["title"],
         "today":day.isoformat(),"goal":plan["goal"],"surah":plan["surah"],
