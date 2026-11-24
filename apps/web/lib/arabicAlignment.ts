@@ -1,5 +1,5 @@
 import type { QuranWord, WordStatus } from "./verseApi";
-/** Orthographic matching only. It does not grade vowels, makharij or Tajweed. */
+/** Orthographic matching only. It cannot establish vowel or Tajweed accuracy. */
 export function normalizeArabic(value:string):string {
   return value.normalize("NFKD")
     .replace(/[\u064B-\u065F\u0670\u06D6-\u06ED\u0640]/g,"")
@@ -13,49 +13,51 @@ export type AlignmentUpdate = {
   nextExpected:number;
   trustworthy:boolean;
 };
+/**
+ * A partial word / single word / interim ASR result is NOT a verified phrase.
+ * Confirm only whole ordered phrases of up to four words, ending at the ayah
+ * boundary. No skipping, Levenshtein, phoneme-prefix or low-confidence green.
+ *
+ * This is still just textual recognition, not a Tajweed assessment.
+ */
 export function alignObservation(
   expected:QuranWord[],observed:string,
   lastConfirmed:number, final:boolean, confidence:number|null
 ): AlignmentUpdate {
+  const cursor=Math.max(0,lastConfirmed+1);
+  const none:AlignmentUpdate={matched:[],reviewCandidates:[],
+    nextExpected:cursor,trustworthy:false};
+  if(!final||cursor>=expected.length)return none;
   const tokens=normalizeArabic(observed).split(/\s+/).filter(Boolean);
-  const expectedForms=expected.map(w=>normalizeArabic(w.arabic));
-  const matched:number[]=[];const gaps:number[]=[];
-  let cursor=Math.max(0,lastConfirmed+1);
-  for(const word of tokens){
-    if(!word)continue;
-    const end=Math.min(expected.length,cursor+5);
-    let idx=-1;
-    // Avoid falsely asserting very short common Arabic words unless directly next.
-    for(let i=cursor;i<end;i++){
-      if(expectedForms[i]===word && (word.length>2||i===cursor)){
-        idx=i;break;
-      }
-    }
-    if(idx<0)continue;
-    if(idx>cursor)for(let n=cursor;n<idx;n++)gaps.push(n);
-    matched.push(idx);cursor=idx+1;
+  if(!tokens.length)return none;
+  const forms=expected.map(w=>normalizeArabic(w.arabic));
+  let i=cursor,j=0;
+  const matched:number[]=[];
+  while(i<expected.length){
+    const ayah=expected[i].ayah;
+    let end=i;
+    while(end<expected.length&&end-i<4&&expected[end].ayah===ayah)end++;
+    const size=end-i;
+    if(tokens.length-j<size)break;
+    const phrase=forms.slice(i,end);
+    const heard=tokens.slice(j,j+size);
+    if(phrase.some((w,index)=>w!==heard[index]))break;
+    for(let n=i;n<end;n++)matched.push(n);
+    i=end;j+=size;
   }
-  const trustworthy=final && typeof confidence==="number" && confidence>=0.88;
-  // Red means 'needs review', NOT proof of mispronunciation. Never turn
-  // a low-confidence ASR omission into a claimed error.
-  return {
-    matched:final?matched:[],
-    reviewCandidates:trustworthy?gaps:[],
-    nextExpected:matched.length?matched[matched.length-1]+1:lastConfirmed+1,
-    trustworthy,
-  };
+  // Confidence does not prove Tajweed. It only affects whether a completed
+  // text observation may be trusted; never invent a red "wrong" label.
+  const trustworthy=typeof confidence==="number"&&confidence>=0.88;
+  return {matched:trustworthy?matched:[],reviewCandidates:[],
+    nextExpected:trustworthy?i:cursor,trustworthy};
 }
 export function statusMapAfter(
   previous:Record<string,WordStatus>,
-  expected:QuranWord[], update:AlignmentUpdate
+  expected:QuranWord[],update:AlignmentUpdate
 ):Record<string,WordStatus>{
   const statuses={...previous};
   for(const idx of update.matched){
     if(expected[idx])statuses[expected[idx].id]="confirmed";
-  }
-  for(const idx of update.reviewCandidates){
-    const item=expected[idx];
-    if(item && statuses[item.id]!=="confirmed")statuses[item.id]="review";
   }
   return statuses;
 }
