@@ -323,7 +323,7 @@ div[data-testid="stDialog"] button[kind="primaryFormSubmit"] {background:linear-
         with st.form("am_verify_otp"):
             otp = st.text_input(
                 "Email verification code", max_chars=8,
-                placeholder="6-digit code", autocomplete="one-time-code",
+                placeholder="6-digit code",
                 key="am_email_otp_input",
             )
             verify = st.form_submit_button(
