@@ -1105,6 +1105,8 @@ export default function(component) {
     let socket=null,stream=null,audioContext=null,source=null,processor=null,mute=null;
     let closed=false,gotTranscript=false,maxRms=0;
     let cursor=Math.max(0,confirmedWord+1);
+    let cloudAccum=[];
+    let lastCloudFinal=[];
     let watchdogId=null;
     const cleanup=async()=>{
       closed=true;
@@ -1143,17 +1145,43 @@ export default function(component) {
         setStatus("Cloud listening · waiting to verify full phrase","active");
         return;
       }
-      // Overlapping final responses may repeat already-completed words.
-      // The next complete phrase must match exactly and in order.
-      const leading=tokens.findIndex(token=>token===expected[cursor]);
-      const candidate=leading>=0?tokens.slice(leading):[];
-      const result=confirmPhrases(candidate,cursor);
-      if(result.used){
-        cursor=result.cursor;
-        setStatus("Full phrase recognised · "+Math.round(cursor*100/Math.max(1,words.length))+"%","active");
-      }else{
-        setStatus("Arabic heard · phrase not confirmed yet","active");
+      // Some transcription services resend their cumulative final words.
+      // Strip *only* exact, already-received overlaps before buffering the
+      // next phrase; repeated identical events must not manufacture progress.
+      let overlap=0;
+      const max=Math.min(lastCloudFinal.length,tokens.length);
+      for(let n=max;n>0;n--){
+        if(lastCloudFinal.slice(-n).every((token,i)=>token===tokens[i])){
+          overlap=n;break;
+        }
       }
+      let fresh=tokens.slice(overlap);
+      if(lastCloudFinal.length>=tokens.length &&
+         tokens.every((token,i)=>token===lastCloudFinal[i]))fresh=[];
+      lastCloudFinal=tokens;
+      if(!fresh.length)return;
+      cloudAccum.push(...fresh);
+      let anyVerified=false;
+      while(cloudAccum.length){
+        const needed=phraseEnd(cursor)-cursor;
+        if(!needed)break;
+        const prefix=prefixSize(cloudAccum,cursor);
+        if(prefix===needed){
+          const result=confirmPhrases(cloudAccum,cursor);
+          cursor=result.cursor;
+          cloudAccum=cloudAccum.slice(result.used);
+          anyVerified=true;
+          continue;
+        }
+        if(prefix<Math.min(needed,cloudAccum.length)){
+          cloudAccum=[];
+          coach("↶ I couldn't verify the complete phrase. Please repeat it.","guide");
+        }
+        break;
+      }
+      setStatus(anyVerified?
+        "Full phrase recognised · "+Math.round(cursor*100/Math.max(1,words.length))+"%":
+        "Arabic heard · waiting for complete phrase","active");
     };
     setStatus("Connecting to Gemini's live transcription service...","active");
     const url="wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContentConstrained?access_token="+encodeURIComponent(token);
