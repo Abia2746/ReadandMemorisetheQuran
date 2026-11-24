@@ -7,7 +7,7 @@ import unittest
 import wave
 
 from phonetic_review import (
-    phonetic_reference, review_vowel_suggestions, wav_signal_evidence,
+    phonetic_reference, review_vowel_suggestions, wav_signal_evidence, wav_excerpt,
 )
 
 
@@ -100,6 +100,24 @@ class PhoneticEvidenceTests(unittest.TestCase):
         self.assertEqual(review_vowel_suggestions(
             [{**row, "status": "correct"}], self.reference, good_audio
         ), [])
+
+    def test_exact_short_audio_excerpt_is_in_memory_only(self):
+        # 3 sec PCM with a distinguishable constant sample on each second.
+        payload = wav([1000] * 16000 + [2000] * 16000 + [3000] * 16000)
+        clip = wav_excerpt(payload, 1.5, before_s=0.25, after_s=0.25)
+        self.assertIsInstance(clip, bytes)
+        with wave.open(io.BytesIO(clip), "rb") as handle:
+            self.assertEqual(handle.getframerate(), 16000)
+            self.assertEqual(handle.getnframes(), 8000)
+            data = handle.readframes(8000)
+        self.assertEqual(min(struct.unpack("<8000h", data)), 2000)
+        self.assertEqual(max(struct.unpack("<8000h", data)), 2000)
+
+    def test_invalid_excerpt_timestamp_is_rejected(self):
+        signal = wav([1000] * 16000)
+        self.assertIsNone(wav_excerpt(signal, 30))
+        self.assertIsNone(wav_excerpt(signal, float("nan")))
+        self.assertIsNone(wav_excerpt(b"not wave", 0.5))
 
     def test_invalid_audio_never_generates_precision(self):
         result = wav_signal_evidence(b"not a wave recording")
