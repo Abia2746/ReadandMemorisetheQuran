@@ -56,6 +56,20 @@ class DecoderTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             parse_wav(distorted.getvalue())
 
+    def test_constant_signal_stereo_cancellation_and_partial_wav_are_rejected(self):
+        for channels,payload in [(1,struct.pack("<h",4500)*16000),
+                                 (2,struct.pack("<hh",4500,-4500)*16000)]:
+            buffer=io.BytesIO()
+            with wave.open(buffer,"wb") as wav:
+                wav.setnchannels(channels)
+                wav.setsampwidth(2)
+                wav.setframerate(16000)
+                wav.writeframes(payload)
+            with self.assertRaisesRegex(ValueError,"varying audio"):
+                parse_wav(buffer.getvalue())
+        with self.assertRaisesRegex(ValueError,"Incomplete"):
+            parse_wav(pcm_wave()[:-2000])
+
     def test_ctc_skips_blank_and_repetition(self):
         tokens=ctc_spans([1,1,0,2,2,0,4,4,0,5],
                          [.8,.9,1,.7,.8,1,.85,.86,1,.91],

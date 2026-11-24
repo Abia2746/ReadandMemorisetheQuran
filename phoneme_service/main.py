@@ -50,7 +50,7 @@ def parse_wav(raw: bytes) -> tuple[np.ndarray, int]:
             if not MIN_SECONDS <= length <= MAX_SECONDS:
                 raise ValueError("Record between 0.35 and 15 seconds")
             samples = np.frombuffer(w.readframes(frames), dtype="<i2")
-            if len(samples) < channels or len(samples) % channels:
+            if len(samples) != frames * channels:
                 raise ValueError("Incomplete audio payload")
             peak = int(np.max(np.abs(samples.astype(np.int32))))
             if peak < 600:
@@ -58,6 +58,8 @@ def parse_wav(raw: bytes) -> tuple[np.ndarray, int]:
             if np.mean(np.abs(samples.astype(np.int32)) >= 32760) > 0.005:
                 raise ValueError("Recording is clipped; reduce input level")
             mono = samples.reshape(-1, channels).astype(np.float32).mean(axis=1) / 32768.0
+            if np.std(mono) < .008:
+                raise ValueError("Microphone recording contains too little varying audio")
             # The model expects 16kHz. Resampling is independent of phoneme
             # recognition; it does not invent or correct pronunciation.
             if rate != 16000:
