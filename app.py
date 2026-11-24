@@ -831,6 +831,8 @@ if not st.session_state.name:
 language_labels, translation_resources = available_translations()
 st.session_state.setdefault("quran_language", "en")
 language_options = sorted(language_labels, key=lambda code: (code != "en", language_labels[code].casefold()))
+if st.session_state.get("quran_language") not in language_options:
+    st.session_state["quran_language"] = "en"
 language = st.selectbox(
     "🌐 Language / اللغة / Langue",
     options=language_options,
@@ -895,6 +897,8 @@ st.session_state.setdefault("quran_nav_surah", int(st.session_state.surah))
 st.session_state.setdefault("quran_nav_start", int(st.session_state.ayah))
 st.session_state.setdefault("quran_nav_end", int(st.session_state.end_ayah))
 st.session_state.setdefault("quran_nav_reciter", st.session_state.get("selected_reciter", "Yasser Al-Dosari"))
+if st.session_state.quran_nav_reciter not in RECITERS:
+    st.session_state.quran_nav_reciter = next(iter(RECITERS))
 nav_surah, nav_start, nav_end, nav_reciter = st.columns([2.1, 1, 1, 1.8])
 with nav_surah:
     surah = st.selectbox(
@@ -916,6 +920,22 @@ st.session_state.surah = int(surah)
 st.session_state.ayah = int(ayah)
 st.session_state.end_ayah = int(end_ayah)
 st.session_state["selected_reciter"] = reciter
+
+# Autosave meaningful study changes for signed-in learners, avoiding
+# repeated network requests on ordinary Streamlit reruns.
+if (st.session_state.get("am_auth")
+        and st.session_state.get("am_cloud_loaded_for") ==
+            st.session_state["am_auth"]["user_id"]):
+    from cloud_learning import get_preference_values, save_preferences
+    current_preferences = get_preference_values()
+    if st.session_state.get("am_cloud_preferences_snapshot") != current_preferences:
+        try:
+            save_preferences()
+            st.session_state.pop("am_cloud_preferences_save_error", None)
+        except Exception:
+            st.session_state["am_cloud_preferences_save_error"] = True
+    if st.session_state.get("am_cloud_preferences_save_error"):
+        st.caption("☁ Study settings couldn't sync. They remain available for this session.")
 
 passage_key = f"{surah}:{ayah}-{end_ayah}"
 result_key = f"{passage_key}|recitation"
