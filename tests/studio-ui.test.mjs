@@ -72,7 +72,7 @@ const testWords=[
   {ar:"اضْرِبْ",en:"Strike",tr:"idrib",ayah:60,letters:[]},
   {ar:"الْحَجَرَ",en:"The stone",tr:"al-hajara",ayah:60,letters:[]}
 ];
-async function fixture(mode,overrides={},startListening=true){
+async function fixture(mode,overrides={},startListening=true,browserWindow={}){
   let callback,prepared=0,listenCount=0,stopCount=0;
   const mockSdk={
     prepareMicrophone(){
@@ -94,7 +94,7 @@ async function fixture(mode,overrides={},startListening=true){
     "\nreturn Studio;";
   const factory=new Function("mockSdk","document","window","navigator","sessionStorage",
      "localStorage","AbortController","createPrayerRoomScene", combined);
-  const create=factory(mockSdk,document,{},{
+  const create=factory(mockSdk,document,browserWindow,{
     userAgent:"iPad",platform:"iPad",maxTouchPoints:5
   },{getItem:()=>null,setItem(){}},{getItem:()=>null,setItem(){}},abortCtor,
     async()=>({start(){},stop(){},dispose(){}}));
@@ -191,3 +191,28 @@ async function fixture(mode,overrides={},startListening=true){
   x.dispose();
 }
 console.log("PASS: SDK position estimates never validate phrases; reader timings remain source-matched.");
+
+{
+  let recogniser;
+  class Speech {
+    constructor(){recogniser=this}
+    start(){}
+    abort(){}
+  }
+  const x=await fixture("blind",{},false,{SpeechRecognition:Speech});
+  const all=()=>nodes(x.mount);
+  const select=all().find(n=>n.tag==="select");
+  select.value="browser";
+  await all().find(n=>n.textContent==="🎙 Start listening").onclick();
+  const deliver=recogniser.onresult;
+  const result=isFinal=>({resultIndex:0,results:[{isFinal,0:{transcript:"فقلنا اضرب الحجر"}}]});
+  deliver(result(false));
+  assert.equal(all().filter(n=>n.className.includes("am-confirmed")).length,0);
+  deliver(result(true));
+  assert.equal(all().filter(n=>n.className.includes("am-confirmed")).length,3);
+  await all().find(n=>n.textContent.includes("Start over")&&n.tag==="button").onclick();
+  deliver(result(true));
+  assert.equal(all().filter(n=>n.className.includes("am-confirmed")).length,0);
+  assert.equal(recogniser.onresult,null);
+  x.dispose();
+}

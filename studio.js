@@ -263,10 +263,8 @@ export default function(component) {
   // A locked position only establishes that individual word. Never reveal
   // all intervening Arabic words after a skip, seek or erroneous match.
   const confirmedIndices=new Set();
-  const flaggedIndices=new Set();
   const practiceReview=new Set();
-  const userCorrected=new Set();
-  let reviewRound=false;
+  let lastReviewIndex=-1;
   let revealIndex=-1;
   let selectedPracticeWord=-1;
   let revealTimer=null;
@@ -293,7 +291,7 @@ export default function(component) {
   const rescueControls=CE("div","am-control-row");
   const revealButton=btn("✦ Reveal phrase","am-button");
   const hearButton=btn("▶ Hear recitation","am-button");
-  const correctButton=btn("✓ Recognition was wrong","am-button");
+  const correctButton=btn("Clear selected review flag","am-button");
   const flagButton=btn("⚑ Flag selected phrase","am-button");
   const roundButton=btn("↻ Review difficult words","am-button");
   const rescueText=CE("div","am-note","");
@@ -355,19 +353,19 @@ export default function(component) {
   };
   correctButton.onclick=()=>{
     const i=rescueTarget();if(i<0)return;
-    userCorrected.add(i);flaggedIndices.delete(i);practiceReview.delete(i);
+    practiceReview.delete(i);
     wordNodes[i]?.classList.remove("am-review","am-uncertain","am-practice-flag");
     
     rescueText.textContent="Review flag cleared by you.";
   };
   roundButton.onclick=()=>{
-    const indices=[...new Set([...practiceReview,...flaggedIndices])].sort((a,b)=>a-b);
+    const indices=[...practiceReview].sort((a,b)=>a-b);
     if(!indices.length){rescueText.textContent="No difficult words saved yet. Reveal or flag a phrase to add it.";return}
-    reviewRound=true;
-    const first=indices[0];
-    currentWord=first;
+    const first=indices.find(i=>i>lastReviewIndex)??indices[0];
+    lastReviewIndex=selectedPracticeWord=first;
+    selectPracticeWord(first);
     showRescue(first);
-    rescueText.appendChild(CE("div","am-note","Review round: "+indices.length+" saved words. Start with this phrase, then use the highlighted words to practise the rest."));
+    rescueText.appendChild(CE("div","am-note","Review "+(indices.indexOf(first)+1)+" of "+indices.length+". Tap Review difficult words for the next phrase."));
     wordNodes[first]?.scrollIntoView({behavior:"instant",block:"nearest"});
   };
   const coaching=CE("div","am-live-coaching");
@@ -471,7 +469,6 @@ export default function(component) {
     wordNodes[currentWord]?.classList.remove("am-active");
     currentWord=confirmedWord=index;
     confirmedIndices.add(index);
-    flaggedIndices.delete(index);
     const el=wordNodes[index];
     if(!el)return;
     el.classList.remove("am-review","am-uncertain","am-ayah-playing");
@@ -554,7 +551,6 @@ export default function(component) {
       // Completed words can reveal Arabic in Cover, but are not all gold.
       if(i===currentWord&&live)el.classList.add("am-active");
       if(confirmedIndices.has(i))el.classList.add("am-confirmed");
-      if(flaggedIndices.has(i))el.classList.add("am-review");
       if(practiceReview.has(i))el.classList.add("am-practice-flag");
       if(selectedPracticeWord===i)el.classList.add("am-practice-selected");
       if(cover && confirmedIndices.has(i)){
@@ -619,7 +615,7 @@ export default function(component) {
   }
   toggleHint.onclick=()=>{showHints=!showHints;renderWords()};
   toggleColour.onclick=()=>{showTajweed=!showTajweed;renderWords()};
-  resetBtn.onclick=()=>{currentWord=-1;confirmedWord=-1;confirmedIndices.clear();flaggedIndices.clear();updateMatchCount();lastPlaybackUiKey="";progressFill.style.width="0%";setStatus("Ready to practise from the beginning.");transcript.textContent="";renderWords()};
+  resetBtn.onclick=async()=>{if(live)await stopLive();currentWord=-1;confirmedWord=-1;confirmedIndices.clear();updateMatchCount();lastPlaybackUiKey="";progressFill.style.width="0%";setStatus("Ready to practise from the beginning.");transcript.textContent="";renderWords()};
   recordHint.onclick=()=>{
     micPanel.scrollIntoView({behavior:"smooth",block:"center"});
     // Start capture from the original tap, preserving the iPad user gesture.
@@ -881,7 +877,10 @@ export default function(component) {
   audio.onloadedmetadata=showPlaybackPosition;
   audio.onseeked=showPlaybackPosition;
   audio.ontimeupdate=showPlaybackPosition;
-  audio.onplay=startPlaybackFollow;
+  audio.onplay=async()=>{
+    if(live)await stopLive();
+    if(!audio.paused)startPlaybackFollow();
+  };
   audio.onpause=()=>{
     stopPlaybackFollow();
     if(currentTab==="listen"||currentTab==="read"||currentTab==="cover"){
@@ -932,7 +931,7 @@ export default function(component) {
     watchdog=restartHandle=null;
   }
   async function stopLive(){
-    live=false;starting=false;clearTimers();
+    live=false;starting=false;micButton.disabled=true;clearTimers();
     try{if(cleanupLive)await cleanupLive()}catch(_){}
     cleanupLive=null;
     micButton.disabled=false;
@@ -966,6 +965,7 @@ export default function(component) {
     };
     r.onspeechstart=()=>setStatus("Speech detected · matching Qur'an words...","active");
     r.onresult=e=>{
+      if(closed||!live||!audio.paused)return;
       received=true;
       if(watchdog!==null){clearTimeout(watchdog);watchdog=null}
       let final="",interim="";
@@ -1094,8 +1094,10 @@ export default function(component) {
     let cloudAccum=[];
     let lastCloudFinal=[];
     let watchdogId=null;
+    let cancelSetup=null;
     const cleanup=async()=>{
       closed=true;
+      cancelSetup?.();
       if(watchdogId!==null)clearTimeout(watchdogId);
       try{if(socket?.readyState===WebSocket.OPEN)socket.send(JSON.stringify({realtimeInput:{audioStreamEnd:true}}))}catch(_){}
       try{processor && (processor.onaudioprocess=null)}catch(_){}
@@ -1110,7 +1112,7 @@ export default function(component) {
     cleanupLive=cleanup;
     const parseSpeech=(spoken,final)=>{
       const phrase=String(spoken||"").trim();
-      if(!phrase)return;
+      if(closed||!live||!audio.paused||!phrase)return;
       // Arabic script check: Gemini may occasionally hallucinate a Hindi,
       // Japanese or other-language transcript despite Arabic recitation.
       const arabicLetters=(phrase.match(/[\u0621-\u064A]/g)||[]).length;
@@ -1160,6 +1162,10 @@ export default function(component) {
       const handshakeTimeout=setTimeout(()=>{
         if(!settled){settled=true;reject(Error("Cloud connection timed out. Check network access."))}
       },18000);
+      cancelSetup=()=>{
+        clearTimeout(handshakeTimeout);
+        if(!settled){settled=true;resolve()}
+      };
       const fail=e=>{
         if(!settled){
           settled=true;
@@ -1182,6 +1188,7 @@ export default function(component) {
         let payload;
         try{payload=JSON.parse(typeof event.data==="string"?event.data:await event.data.text())}
         catch(_){return}
+        if(closed)return;
         if(payload.error){
           fail(Error("Gemini Live response: "+String(payload.error.message||"Invalid session")));
           setStatus("Live transcription error: "+String(payload.error.message||"Invalid session"),"error");
@@ -1195,8 +1202,13 @@ export default function(component) {
               audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true},
               video:false
             });
+            if(closed){
+              stream.getTracks().forEach(track=>track.stop());
+              return;
+            }
             audioContext=new (window.AudioContext||window.webkitAudioContext)();
             await audioContext.resume();
+            if(closed)return;
             source=audioContext.createMediaStreamSource(stream);
             processor=audioContext.createScriptProcessor(4096,1,1);
             mute=audioContext.createGain();
@@ -1420,7 +1432,7 @@ export default function(component) {
           void stopLive();
         }
       });
-      if(disposed)return;
+      if(disposed){await mic.stop();return}
       micText.textContent="On-device Quran recognition active · no recitation audio sent to Gemini.";
       setStatus("Quran model listening. Begin reciting the displayed ayahs...","active");
       coach("🎙 I’m listening. Start with the first word; Purple follows the estimated word. Switch to a transcript listener for green phrase matches.","guide");
@@ -1453,6 +1465,7 @@ export default function(component) {
       if(engineSelect.value==="cloud")await cloudLive();
       else if(engineSelect.value==="local")await localLive(preparedLocalMic);
       else await browserLive();
+      if(!live)return;
       micButton.textContent="■ Stop listening";
       micButton.classList.remove("am-primary");
       micButton.classList.add("am-danger");
