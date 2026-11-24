@@ -416,21 +416,36 @@ export default function(component) {
     }
     return row[b.length];
   }
-  function match(text,cursor){
-    // Strictly ordered matching: never leap over words because a later phrase
-    // resembles the transcript. Repeated interim transcripts may overlap.
-    const heard=normalized(text).split(" ").filter(Boolean);
-    let idx=Math.max(0,cursor),found=-1;
-    for(const token of heard){
-      const target=expected[idx];
-      if(!target)break;
-      if(token===target || (token.length>=5&&target.length>=5&&distance(token,target)<=1)){
-        found=idx;idx++;
-      }else if(found>=0){
-        break;
-      }
+  // Only a complete run of exact Arabic word tokens verifies a phrase.
+  // Position predictions and interim ASR may be displayed, never confirmed.
+  const PHRASE_WORDS=4;
+  function phraseEnd(start){
+    if(start>=words.length)return words.length;
+    const ayah=words[start].ayah;
+    let end=start;
+    while(end<words.length&&end-start<PHRASE_WORDS&&words[end].ayah===ayah)end++;
+    return end;
+  }
+  function phraseMatches(tokens,start){
+    const count=phraseEnd(start)-start;
+    return count>0&&tokens.length>=count&&
+      tokens.slice(0,count).every((token,i)=>token===expected[start+i]);
+  }
+  function confirmPhrases(tokens,start){
+    let cursor=start,used=0;
+    while(cursor<words.length){
+      const count=phraseEnd(cursor)-cursor;
+      if(!phraseMatches(tokens.slice(used),cursor))break;
+      for(let i=cursor;i<cursor+count;i++)mark(i,true);
+      cursor+=count;used+=count;
     }
-    return found;
+    return {cursor,used};
+  }
+  function prefixSize(tokens,start){
+    const limit=Math.min(tokens.length,phraseEnd(start)-start);
+    let matched=0;
+    for(;matched<limit;matched++)if(tokens[matched]!==expected[start+matched])break;
+    return matched;
   }
   function mark(index,confirm){
     if(index<0||index>=words.length)return;
@@ -936,7 +951,8 @@ export default function(component) {
       (navigator.platform==="MacIntel"&&navigator.maxTouchPoints>1);
     const r=new BrowserSpeech();
     r.lang="ar-SA";r.continuous=!apple;r.interimResults=true;r.maxAlternatives=1;
-    let closed=false,received=false,started=0,cursor=Math.max(0,confirmedWord+1),lastInterim=-1;
+    let closed=false,received=false,started=0,cursor=Math.max(0,confirmedWord+1);
+    let phraseBuffer=[];
     function armWatchdog(){
       if(watchdog!==null)clearTimeout(watchdog);
       watchdog=setTimeout(()=>{
@@ -960,25 +976,26 @@ export default function(component) {
       }
       let idx=-1;
       if(final.trim()){
-        // Final browser transcripts can contain multiple words per event.
-        // Confirm consecutive words individually instead of jumping ahead.
-        const tokens=normalized(final).split(" ").filter(Boolean);
-        for(const token of tokens){
-          const target=expected[cursor];
-          if(!target)break;
-          if(token===target||(token.length>=5&&target.length>=5&&distance(token,target)<=1)){
-            mark(cursor,true);
-            idx=cursor;
-            cursor++;
-          }else{
-            coach("↶ Please repeat the next word clearly.","guide");
-            break;
+        phraseBuffer.push(...normalized(final).split(" ").filter(Boolean));
+        while(phraseBuffer.length){
+          const count=phraseEnd(cursor)-cursor;
+          if(!count)break;
+          const matches=prefixSize(phraseBuffer,cursor);
+          if(matches===count){
+            const result=confirmPhrases(phraseBuffer,cursor);
+            cursor=result.cursor;idx=cursor-1;
+            phraseBuffer=phraseBuffer.slice(result.used);
+            continue;
           }
+          if(matches<Math.min(count,phraseBuffer.length)){
+            phraseBuffer=[];
+            coach("↶ Full phrase not recognised. Please repeat it.","guide");
+          }
+          break;
         }
       }
       if(interim.trim()){
-        const guess=match(interim,cursor);
-        if(guess>=0){lastInterim=guess;mark(guess,false);idx=guess}
+        setStatus("Listening · full phrase awaiting verification","active");
       }
       const heard=(final+" "+interim).trim();
       if(heard)transcript.textContent="Recognised Arabic (approximate): "+heard.slice(0,180);
@@ -1122,22 +1139,20 @@ export default function(component) {
       // final word: process each consecutive word and preserve intermediate
       // progress. Partial transcripts may overlap previously heard words.
       const tokens=normalized(phrase).split(" ").filter(Boolean);
-      let scan=cursor,idx=-1;
-      for(const token of tokens){
-        const target=expected[scan];
-        if(!target)break;
-        if(token===target||(token.length>=5&&target.length>=5&&distance(token,target)<=1)){
-          if(final)mark(scan,true);
-          idx=scan++;
-        }else if(idx>=0)break;
+      if(!final){
+        setStatus("Cloud listening · waiting to verify full phrase","active");
+        return;
       }
-      if(idx>=0){
-        if(!final)mark(Math.min(cursor,idx),false);
-        else cursor=scan;
-        setStatus("Cloud recognition active · "+Math.round((idx+1)*100/Math.max(1,words.length))+
-          "% of the selected passage","active");
-      } else {
-        setStatus("Cloud recognised Arabic audio, but couldn't match these words to the selected ayahs.","active");
+      // Overlapping final responses may repeat already-completed words.
+      // The next complete phrase must match exactly and in order.
+      const leading=tokens.findIndex(token=>token===expected[cursor]);
+      const candidate=leading>=0?tokens.slice(leading):[];
+      const result=confirmPhrases(candidate,cursor);
+      if(result.used){
+        cursor=result.cursor;
+        setStatus("Full phrase recognised · "+Math.round(cursor*100/Math.max(1,words.length))+"%","active");
+      }else{
+        setStatus("Arabic heard · phrase not confirmed yet","active");
       }
     };
     setStatus("Connecting to Gemini's live transcription service...","active");
@@ -1405,21 +1420,9 @@ export default function(component) {
           const moved=idx!==lastObserved;
           lastObserved=idx;lastObservationAt=now;
           currentWord=idx;
-          const strong=Number.isFinite(candidate.confidence)&&candidate.confidence>=0.62;
-          // A repeated locked word may be lower confidence, especially for
-          // short words. Allow sustained independent observations to confirm
-          // recognition without treating that as phonetic/Tajweed accuracy.
-          const sustained=observedCounts.get(idx)>=3 &&
-            now-observedFirstAt.get(idx)>=180;
-          if((strong&&observedCounts.get(idx)>=2||sustained)&&!suspectWords.has(idx)){
-            confirmedIndices.add(idx);
-            flaggedIndices.delete(idx);
-          }
-          // Confirm the preceding OBSERVED word when the recogniser moves on.
-          // Never claim unobserved intervening words were verified.
-          if(idx>0&&observedCounts.has(idx-1)&&!suspectWords.has(idx-1))
-            confirmedIndices.add(idx-1);
-          while(confirmedIndices.has(confirmedWord+1))confirmedWord++;
+          // Position-lock indicates where a reader may be, NOT what they
+          // recited. Never turn a word green after a few samples of its onset.
+          // The SDK may show tentative tracking but cannot certify a phrase.
           // Avoid repainting the entire passage for every duplicate model
           // event, and avoid expensive animated scroll on each audio frame.
           if(moved||now-lastPaintAt>=110){
@@ -1431,7 +1434,7 @@ export default function(component) {
             wordNodes[idx]?.scrollIntoView({behavior:"instant",block:"nearest",inline:"nearest"});
           }
           const state=flaggedIndices.has(idx)?"possible mismatch":
-            confirmedIndices.has(idx)?"recognised":"heard · not yet verified";
+            confirmedIndices.has(idx)?"learner confirmed":"position estimate · not verified";
           micMessage.textContent="Ayah "+candidate.word.ayah+", word "+candidate.word.word+
             " · "+state+". Subtle vowels and Tajweed are not verified by this model.";
           setStatus("Live tracking · "+state,"active");
