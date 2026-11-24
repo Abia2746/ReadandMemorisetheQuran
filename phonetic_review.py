@@ -193,3 +193,45 @@ def review_vowel_suggestions(model_output: object, reference: list[dict],
         })
         seen.add((wi,li))
     return result[:24]
+
+
+
+def wav_excerpt(raw: bytes, time_s: float, before_s: float = 1.1,
+                after_s: float = 1.5) -> bytes | None:
+    """Return a short WAV playback excerpt centred on a tentative finding.
+
+    Does not infer word boundaries or phonemes. The snippet stays in memory
+    for the active Streamlit render and is not uploaded to cloud history.
+    """
+    if not isinstance(raw, bytes) or len(raw) > 45_000_000:
+        return None
+    if type(time_s) not in (int, float) or not np.isfinite(time_s):
+        return None
+    if not (0 <= before_s <= 4 and 0 <= after_s <= 4):
+        return None
+    try:
+        with wave.open(io.BytesIO(raw), "rb") as source:
+            if source.getcomptype() != "NONE" or source.getsampwidth() != 2:
+                return None
+            rate = source.getframerate()
+            frames = source.getnframes()
+            if rate <= 0 or not (1 <= source.getnchannels() <= 2):
+                return None
+            length = frames / rate
+            if not (0 <= time_s <= length and length <= MAX_AUDIO_SECONDS):
+                return None
+            first = max(0, int((time_s - before_s) * rate))
+            last = min(frames, int((time_s + after_s) * rate))
+            if last <= first:
+                return None
+            source.setpos(first)
+            payload = source.readframes(last-first)
+            result = io.BytesIO()
+            with wave.open(result, "wb") as out:
+                out.setnchannels(source.getnchannels())
+                out.setsampwidth(source.getsampwidth())
+                out.setframerate(rate)
+                out.writeframes(payload)
+            return result.getvalue()
+    except (wave.Error, EOFError, OSError, ValueError, OverflowError):
+        return None
