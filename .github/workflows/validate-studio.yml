@@ -16,9 +16,9 @@ jobs:
         with:
           node-version: '22'
       - name: Compile Python source
-        run: python -m py_compile app.py studio_ui.py supabase_auth.py auth_callback.py cloud_profile.py cloud_learning.py stripe_checkout.py stripe_membership.py streamlit_pricing.py live_auth.py timing_data.py audio_embed.py tajweed_review.py phonetic_review.py pronunciation_benchmark.py prayer_room.py prayer_clock.py hifdh_planner.py tests/test_hifdh_planner.py tests/test_hifdh_planner_cloud.py tests/test_prayer_room_cloud.py tests/test_auth_callback_security.py tests/test_live_auth.py tests/test_timing_data.py tests/test_tajweed_review.py tests/test_phonetic_review.py tests/test_pronunciation_benchmark.py tests/test_prayer_room.py tests/test_prayer_clock.py
+        run: python -m py_compile app.py studio_ui.py supabase_auth.py auth_callback.py cloud_profile.py cloud_learning.py stripe_checkout.py stripe_membership.py streamlit_pricing.py live_auth.py timing_data.py audio_embed.py tajweed_review.py phonetic_review.py pronunciation_benchmark.py phoneme_client.py phoneme_service/main.py prayer_room.py prayer_clock.py hifdh_planner.py tests/test_hifdh_planner.py tests/test_hifdh_planner_cloud.py tests/test_prayer_room_cloud.py tests/test_auth_callback_security.py tests/test_live_auth.py tests/test_timing_data.py tests/test_tajweed_review.py tests/test_phonetic_review.py tests/test_acoustic_inference.py tests/test_pronunciation_benchmark.py tests/test_prayer_room.py tests/test_prayer_clock.py
       - name: Install minimal test dependency
-        run: python -m pip install requests numpy
+        run: python -m pip install requests numpy fastapi
       - name: Check token and streaming integration tests
         run: python -m unittest discover -s tests -v
       - name: Check browser frontend syntax
