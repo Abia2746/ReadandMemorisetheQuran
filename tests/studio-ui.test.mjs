@@ -106,7 +106,9 @@ async function fixture(mode,overrides={},startListening=true){
   const start=nodes(mount).find(x=>x.tag==="button"&&x.textContent==="🎙 Start listening");
   assert.ok(start,"direct microphone start exists");
   const select=nodes(mount).find(x=>x.tag==="select");
-  assert.equal(select.value,"local","Quran listener selected rather than browser dictation");
+  assert.equal(select.value,"cloud","full-phrase Cloud Live is preferred when available");
+  // Test the local SDK path explicitly: it must remain positioning-only.
+  select.value="local";
   if(startListening){
     await start.onclick();
     assert.equal(prepared,1,"Safari microphone prepared on the real tap");
