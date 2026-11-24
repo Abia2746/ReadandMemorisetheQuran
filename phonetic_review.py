@@ -63,7 +63,8 @@ def phonetic_reference(words: list[dict]) -> list[dict[str, Any]]:
             for mark in unit["marks"] if mark in VOWEL_MARKS
         ]
         unit["features"] = [
-            OTHER_MARKS[mark] for mark in unit["marks"] if mark in OTHER_MARKS
+            OTHER_MARKS.get(mark, unicodedata.name(mark, "unclassified Uthmani mark").lower())
+            for mark in unit["marks"] if mark not in VOWEL_MARKS
         ]
         unit["status"] = "not_acoustically_verified"
         unit.pop("marks")
