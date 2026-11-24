@@ -4,6 +4,7 @@
  * A selected Qari recording is used for reference rather than synthetic Qur'an audio.
  */
 import { useEffect, useMemo, useState } from "react";
+import { RecitationReplay } from "./RecitationReplay";
 import Link from "next/link";
 
 type PracticeStep = "listen"|"recite"|"compare"|"revise";
@@ -91,6 +92,7 @@ export function GuidedRecitationCoach({verseRef,onListen,onStartReciting}:{
         {step.id==="recite"&&<button type="button" className="am-small-action mt-2" onClick={onStartReciting}>Open microphone</button>}
       </div>)}
     </div>
+    <RecitationReplay/>
     <fieldset className="mt-4 rounded-xl border border-[#5C4A32] p-3">
       <legend className="px-2 text-sm text-[#EDD39F]">Ask Noor about this ayah</legend>
       <div className="flex flex-wrap gap-2">
