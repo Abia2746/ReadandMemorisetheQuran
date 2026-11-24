@@ -4,19 +4,15 @@
  * Not calibrated as a Tajweed grader. Processing stays local after download.
  */
 import { pipeline } from "@huggingface/transformers";
-type Message={type:"init"}|{type:"transcribe";audio:Float32Array;sampleRate:number};
+type Message={type:"init";session:number}|{type:"transcribe";session:number;audio:Float32Array;sampleRate:number};
 let loader:Promise<any>|null=null;
 let transcribing=false;
 async function loadModel(){
   if(!loader){
     loader=pipeline("automatic-speech-recognition","onnx-community/whisper-tiny",{
       device:"wasm",dtype:"q8",
-    }).then(worker=>{
-      self.postMessage({type:"ready"});
-      return worker;
     }).catch(error=>{
       loader=null;
-      self.postMessage({type:"error",message:String(error).slice(0,240)});
       throw error;
     });
   }
@@ -24,7 +20,12 @@ async function loadModel(){
 }
 self.onmessage=async (event:MessageEvent<Message>)=>{
   if(event.data.type==="init"){
-    try{await loadModel()}catch{}
+    try{
+      await loadModel();
+      self.postMessage({type:"ready",session:event.data.session});
+    }catch{
+      self.postMessage({type:"error",session:event.data.session,message:"Model download unavailable"});
+    }
     return;
   }
   if(event.data.type!=="transcribe"||transcribing)return;
@@ -36,9 +37,9 @@ self.onmessage=async (event:MessageEvent<Message>)=>{
     const output=await model(pcm,{language:"arabic",task:"transcribe",return_timestamps:false});
     const text=typeof output?.text==="string"?output.text:
       Array.isArray(output)&&typeof output[0]?.text==="string"?output[0].text:"";
-    self.postMessage({type:"transcript",text});
+    self.postMessage({type:"transcript",session:event.data.session,text});
   }catch(e){
-    self.postMessage({type:"error",message:e instanceof Error?e.message:"On-device model unavailable"});
+    self.postMessage({type:"error",session:event.data.session,message:e instanceof Error?e.message:"On-device model unavailable"});
   }finally{transcribing=false}
 };
 export {};

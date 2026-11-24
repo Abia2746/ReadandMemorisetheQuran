@@ -1,6 +1,7 @@
 "use client";
 
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
+import { practiceAudioEvent, takeAudioTurn } from "@/lib/practiceAudio";
 import type { ReactNode } from "react";
 
 export type SpeechObservation = {
@@ -56,7 +57,13 @@ export function RecitationProvider({children}:{children:ReactNode}) {
   const meterTimer = useRef<number|undefined>(undefined);
   const onObservation = useRef<((o:SpeechObservation)=>void)|null>(null);
 
+  const generation = useRef(0);
+  const playbackGeneration = useRef(0);
+
   const stopMicrophone = useCallback(() => {
+    generation.current++;
+    onObservation.current=null;
+    if(workerRef.current)workerRef.current.onmessage=null;
     const rec=recognitionRef.current; recognitionRef.current=null;
     if(rec){rec.onend=null;rec.onresult=null;rec.onerror=null;try{rec.stop()}catch{}}
     workletRef.current?.disconnect();
@@ -76,6 +83,14 @@ export function RecitationProvider({children}:{children:ReactNode}) {
     const audio = new Audio();
     audio.preload="metadata";
     audioRef.current=audio;
+    const interrupt=()=>{
+      playbackGeneration.current++;
+      rangeRef.current=null;
+      audio.pause();
+      stopMicrophone();
+    };
+    window.addEventListener(practiceAudioEvent,interrupt);
+    window.addEventListener("pagehide",interrupt);
     const onPlay=()=>setState(s=>({...s,playing:true}));
     const onPause=()=>setState(s=>({...s,playing:false}));
     const onDuration=()=>setState(s=>({...s,duration:Number.isFinite(audio.duration)?audio.duration:0}));
@@ -100,7 +115,9 @@ export function RecitationProvider({children}:{children:ReactNode}) {
       (window as unknown as {webkitSpeechRecognition?:RecognizerConstructor}).webkitSpeechRecognition;
     setState(s=>({...s,speechSupported:Boolean(BrowserAPI)}));
     return ()=>{
-      stopMicrophone();
+      window.removeEventListener(practiceAudioEvent,interrupt);
+      window.removeEventListener("pagehide",interrupt);
+      interrupt();
       workerRef.current?.terminate();workerRef.current=null;
       audio.pause();
       audio.src="";
@@ -114,7 +131,7 @@ export function RecitationProvider({children}:{children:ReactNode}) {
 
   const playVerse=useCallback(async (url:string,verseId:string)=>{
     const audio=audioRef.current;if(!audio)return;
-    stopMicrophone(); rangeRef.current=null;
+    takeAudioTurn(); rangeRef.current=null;
     if(audio.src!==url){audio.src=url;audio.load();}
     setState(s=>({...s,verseId,note:"Playing the selected Qari recording."}));
     await audio.play();
@@ -125,7 +142,8 @@ export function RecitationProvider({children}:{children:ReactNode}) {
     if(!Number.isFinite(startMs)||!Number.isFinite(endMs)||startMs<0||endMs<=startMs){
       throw Error("Exact source-matched timing is not available for that phrase.");
     }
-    stopMicrophone();
+    takeAudioTurn();
+    const turn=playbackGeneration.current;
     const from=startMs/1000,to=endMs/1000;
     rangeRef.current={from,to,remaining:Math.max(1,Math.min(10,repeats))};
     if(audio.src!==url){audio.src=url;audio.load();}
@@ -137,45 +155,54 @@ export function RecitationProvider({children}:{children:ReactNode}) {
         audio.addEventListener("error",()=>{window.clearTimeout(timeout);reject(Error("Audio unavailable"))},{once:true});
       });
     }
+    if(turn!==playbackGeneration.current)return;
     audio.currentTime=from;
     await audio.play();
   },[stopMicrophone]);
 
-  const pause=useCallback(()=>audioRef.current?.pause(),[]);
-  const stop=useCallback(()=>{rangeRef.current=null;const audio=audioRef.current;if(audio){audio.pause();audio.currentTime=0;}},[]);
+  const pause=useCallback(()=>{playbackGeneration.current++;audioRef.current?.pause()},[]);
+  const stop=useCallback(()=>{playbackGeneration.current++;rangeRef.current=null;const audio=audioRef.current;if(audio){audio.pause();audio.currentTime=0;}},[]);
   const setSpeed=useCallback((speed:number)=>{
     if(audioRef.current)audioRef.current.playbackRate=Math.min(1.4,Math.max(0.65,speed));
   },[]);
 
   const startMicrophone=useCallback(async (observer:(o:SpeechObservation)=>void, engine:"browser"|"whisper"="browser")=>{
     if(!navigator.mediaDevices?.getUserMedia)throw Error("Your browser does not provide microphone access.");
-    stop();stopMicrophone();
+    takeAudioTurn();
+    const session=generation.current;
+    setState(s=>({...s,listening:true,note:"Requesting microphone access…"}));
+    try {
     const stream=await navigator.mediaDevices.getUserMedia({
       audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true},video:false
     });
+    if(session!==generation.current){stream.getTracks().forEach(track=>track.stop());return;}
     streamRef.current=stream;onObservation.current=observer;
     const ContextCtor=window.AudioContext;
     if(ContextCtor){
       const audioCtx=new ContextCtor();
       ctxRef.current=audioCtx;
+      await audioCtx.resume();
+      if(session!==generation.current)return;
       const source=audioCtx.createMediaStreamSource(stream);
       if(engine==="whisper"){
         if(!audioCtx.audioWorklet)throw Error("AudioWorklet unavailable for on-device recognition.");
         await audioCtx.audioWorklet.addModule("/worklets/pcm-processor.js");
+        if(session!==generation.current)return;
         if(!workerRef.current){
           workerRef.current=new Worker(new URL("../../workers/whisper.worker.ts",import.meta.url),{type:"module"});
         }
         const worker=workerRef.current;
         const blocks:Float32Array[]=[];
         let samples=0;let ready=false;
-        worker.onmessage=(event:MessageEvent<{type:string;text?:string;message?:string}>)=>{
+        worker.onmessage=(event:MessageEvent<{type:string;session:number;text?:string;message?:string}>)=>{
+          if(event.data.session!==session || generation.current!==session)return;
           if(event.data.type==="ready"){ready=true;setState(state=>({...state,note:"Whisper is ready. Your Arabic speech stays on this device."}));}
           if(event.data.type==="transcript" && event.data.text){
             onObservation.current?.({transcript:event.data.text,final:true,confidence:null,recognizer:"whisper"});
           }
-          if(event.data.type==="error"){setState(state=>({...state,note:"On-device model: "+(event.data.message||"unavailable")}));}
+          if(event.data.type==="error"){stopMicrophone();setState(state=>({...state,note:"On-device model: "+(event.data.message||"unavailable")}));}
         };
-        worker.postMessage({type:"init"});
+        worker.postMessage({type:"init",session});
         const worklet=new AudioWorkletNode(audioCtx,"almuallim-pcm");
         workletRef.current=worklet;
         worklet.port.onmessage=(event:MessageEvent<{pcm:Float32Array;sourceRate:number}>)=>{
@@ -191,7 +218,7 @@ export function RecitationProvider({children}:{children:ReactNode}) {
           const scale=rate/16000;
           const resampled=new Float32Array(Math.floor(joined.length/scale));
           for(let i=0;i<resampled.length;i++)resampled[i]=joined[Math.min(joined.length-1,Math.floor(i*scale))];
-          worker.postMessage({type:"transcribe",audio:resampled,sampleRate:16000},[resampled.buffer]);
+          worker.postMessage({type:"transcribe",session,audio:resampled,sampleRate:16000},[resampled.buffer]);
         };
         const muted=audioCtx.createGain();muted.gain.value=0;
         whisperNodeRef.current=muted;
@@ -215,6 +242,7 @@ export function RecitationProvider({children}:{children:ReactNode}) {
       meterTimer.current=window.requestAnimationFrame(tick);
     }
     if(engine==="whisper"){
+      if(!ctxRef.current)throw Error("Audio capture is unavailable in this browser.");
       setState(state=>({...state,listening:true,note:"Preparing on-device Arabic Whisper. First use downloads a model; microphone audio remains local."}));
       return;
     }
@@ -223,7 +251,7 @@ export function RecitationProvider({children}:{children:ReactNode}) {
     setState(s=>({...s,listening:true,note:Recognition
       ?"Listening with browser speech recognition (not certified Tajweed)."
       :"Microphone active; Arabic recognition unavailable here. Use manual flagging."}));
-    if(!Recognition)return;
+    if(!Recognition)throw Error("Browser speech recognition is unavailable. Choose on-device Whisper.");
     const recognition=new Recognition();
     recognition.lang="ar-SA";recognition.continuous=true;recognition.interimResults=true;
     recognition.onresult=e=>{
@@ -237,13 +265,17 @@ export function RecitationProvider({children}:{children:ReactNode}) {
         });
       }
     };
-    recognition.onerror=e=>setState(s=>({...s,note:`Speech recognition: ${e.error}. You can still listen to Qari audio.`}));
-    recognition.onend=()=>setState(s=>({
-      ...s,note:s.listening?"Recognition stopped; restart to try again.":s.note
-    }));
+    recognition.onerror=e=>{
+      stopMicrophone();
+      setState(s=>({...s,note:`Speech recognition stopped (${e.error}).`}));
+    };
+    recognition.onend=()=>{stopMicrophone();setState(s=>({...s,note:"Listening finished."}));};
     recognitionRef.current=recognition;
-    try{recognition.start()}catch{
-      setState(s=>({...s,note:"Microphone active, but browser recognition could not start."}));
+    recognition.start();
+    } catch (error) {
+      if(session!==generation.current)return;
+      stopMicrophone();
+      throw error;
     }
   },[stop,stopMicrophone]);
 
