@@ -204,3 +204,8 @@ pointer-events:none;direction:ltr}
 .am-app .am-top { position:sticky; top:0; z-index:50; padding-block:11px; backdrop-filter:blur(18px); -webkit-backdrop-filter:blur(18px); }
 .am-app label,.am-app select,.am-app input { color:#F5EBE0; }
 .am-app select,.am-app input { background:#2A1F18; border:1px solid #4A3828; color:#F5EBE0; }
+
+.am-app .am-mushaf .am-word.am-acoustic-cursor {
+  outline: 3px solid #45bf88;
+  outline-offset: 2px;
+}

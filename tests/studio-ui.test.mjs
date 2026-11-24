@@ -111,7 +111,7 @@ async function fixture(mode,overrides={},startListening=true,browserWindow={},de
   const start=nodes(mount).find(x=>x.tag==="button"&&x.textContent==="🎙 Start listening");
   assert.ok(start,"direct microphone start exists");
   const select=nodes(mount).find(x=>x.tag==="select");
-  assert.equal(select.value,"cloud","full-phrase Cloud Live is preferred when available");
+  assert.equal(select.value,"local","on-device audio is the default even with cloud available");
   // Test the local SDK path explicitly: it must remain positioning-only.
   select.value="local";
   select.onchange();
@@ -157,10 +157,21 @@ async function fixture(mode,overrides={},startListening=true,browserWindow={},de
   const wordNodes=nodes(x.mount).filter(n=>n.className.split(/\s+/).includes("am-word"));
   assert.equal(wordNodes.filter(n=>n.className.includes("am-active")).length,0,
     "SDK-only position must never display as verified active highlighting");
-  assert.match(wordNodes[1].className,/am-uncertain/,
+  assert.match(wordNodes[1].className,/am-acoustic-cursor/,
     "tentative location should be visually distinguishable from verified recitation");
   assert.equal(nodes(x.mount).filter(n=>n.className.includes("am-revealed-ar")).length,0,
     "reading mode does not insert duplicate Arabic text");
+  const word=n=>({word:{surah:2,ayah:60,word:n}});
+  x.callback({type:"position",state:"locked",observed:[word(1),word(3)]});
+  assert.match(wordNodes[0].className,/am-acoustic-cursor/);
+  assert.doesNotMatch(wordNodes[2].className,/am-acoustic-cursor/);
+  x.callback({type:"position",state:"locked",observed:[{word:{surah:2,ayah:61,word:1}},word(2)]});
+  assert.ok(wordNodes.every(n=>!n.className.includes("am-acoustic-cursor")));
+  for(const event of [{state:"ambiguous"},{state:"lost"},{state:"locked",spanHold:true},{state:"locked",hold:"start"}]){
+    x.callback({type:"position",state:"locked",observed:[word(2)]});
+    x.callback({type:"position",observed:[word(2)],...event});
+    assert.ok(wordNodes.every(n=>!n.className.includes("am-acoustic-cursor")));
+  }
   x.dispose();
 }
 {
@@ -230,4 +241,26 @@ console.log("PASS: SDK position estimates never validate phrases; reader timings
   const second=await open("learner-a");assert.equal(flagged(second),1);
   click(second,"Clear selected review flag");second.dispose();
   const last=await open("learner-a");assert.equal(flagged(last),0);last.dispose();
+}
+
+// Optional integration replay: unmodified position events captured from PCM
+// by the pinned SDK. A trace contains hypotheses, never correctness labels.
+if(process.env.QURAN_POSITION_REPLAY){
+  const events=JSON.parse(readFileSync(process.env.QURAN_POSITION_REPLAY,"utf8"));
+  const ayah=Number(process.env.QURAN_REPLAY_AYAH);
+  const count=Number(process.env.QURAN_REPLAY_WORDS);
+  const f=await fixture("blind",{meta:{s:2,a:ayah,end:ayah},trackWordCounts:[count],
+    words:Array.from({length:count},()=>({ayah,ar:"",en:"",letters:[]}))});
+  const positions=new Set();
+  for(const event of events){
+    f.callback(event);
+    const rows=nodes(f.mount).filter(n=>n.className.split(" ").includes("am-word"));
+    const active=rows.flatMap((n,i)=>n.className.split(" ").includes("am-acoustic-cursor")?[i+1]:[]);
+    assert.ok(active.length<=1);
+    active.forEach(i=>positions.add(i));
+    assert.ok(rows.every(n=>!n.className.includes("am-confirmed")));
+  }
+  assert.deepEqual([...positions],JSON.parse(process.env.QURAN_EXPECT_POSITIONS));
+  console.log("Positions followed from real engine events:",[...positions]);
+  f.dispose();
 }

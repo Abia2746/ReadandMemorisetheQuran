@@ -150,31 +150,25 @@ export default function(component) {
   micPanel.appendChild(micTop);
   const micBody=CE("div","am-scaffold");
   const micDescription=CE("p","am-note",
-     "The teacher checks full phrases in order, not just their first sound. Cloud Live or browser final transcripts can confirm complete text phrases; the on-device model only estimates your position. Vowels, makharij and Tajweed still require deeper audio assessment.");
+     "The Qur’an listener follows the sounds in your microphone on this device. A green outline shows your estimated place. Pronunciation and Tajweed remain ungraded.");
   const micControls=CE("div","am-control-row");
   const micButton=btn("🎙 Start listening","am-button am-primary");
 
   const engineSelect=CE("select","am-input");
   engineSelect.setAttribute("aria-label","Speech recognition method");
   [
-    ["cloud",D.cloudAvailable?"Cloud Live · recommended":"Cloud Live · requires API key"],
-    ["browser","Safari/browser recogniser · fallback"],
-    ["local","Quran-specific model · on-device beta"]
+    ["local","On-device Qur’an listener"],
+    ["browser","Optional · browser Arabic transcription"],
+    ["cloud",D.cloudAvailable?"Optional · cloud Arabic transcription":"Cloud transcription · requires API key"]
   ].forEach(([value,label])=>{
     const op=CE("option","",label);op.value=value;engineSelect.appendChild(op);
   });
-  // Full phrase verification requires final Arabic transcripts, not only
-  // position estimates. Prefer Cloud Live if configured; otherwise a capable
-  // browser recogniser, with the on-device model as position-only fallback.
-  const isAppleWebKit=/iPad|iPhone|iPod/.test(navigator.userAgent||"")||
-    (navigator.platform==="MacIntel"&&navigator.maxTouchPoints>1);
-  const browserCanTranscribe=Boolean(window.SpeechRecognition||window.webkitSpeechRecognition);
-  engineSelect.value=D.cloudAvailable?"cloud":browserCanTranscribe?"browser":"local";
+  engineSelect.value="local";
   append(micControls,micButton,engineSelect);
   const meter=CE("div","am-meter"),meterFill=CE("div","");
   meter.appendChild(meterFill);
   const micText=CE("div","am-note","Choose a listener, then tap Start listening.");
-  const micMessage=CE("div","am-note",D.cloudAvailable?"Cloud phrase verification selected. Only fully recognised phrases advance.":"On-device positioning cannot validate complete pronunciation. Use browser Arabic transcription when supported, or enable Cloud Live.");
+  const micMessage=CE("div","am-note","Audio stays on this device while using the Qur’an listener.");
   append(micBody,micDescription,micControls,meter,micText,micMessage);
   micPanel.appendChild(micBody);
   main.appendChild(micPanel);
@@ -200,9 +194,10 @@ export default function(component) {
     const line=CE("div","am-mini-row");
     append(line,CE("span","",label),CE("b","",value));stats.appendChild(line);
   });
-  const liveCount=CE("b","","0 / "+words.length);
+  const liveCount=CE("b","","Waiting for recitation");
+  const liveCountLabel=CE("span","","Current listening position");
   const matchedRow=CE("div","am-mini-row");
-  append(matchedRow,CE("span","","Words matched this session"),liveCount);
+  append(matchedRow,liveCountLabel,liveCount);
   stats.appendChild(matchedRow);
   side.appendChild(stats);
   const reviewPanel=CE("section","am-panel am-mini");
@@ -261,6 +256,7 @@ export default function(component) {
   let currentTab=["read","cover","room","listen","journey"].includes(D.resumeTab)
     ?D.resumeTab:(D.mode==="blind"?"cover":"read");
   let showHints=false,showTajweed=false;
+  let acousticCursor=-1;
   let currentWord=-1,confirmedWord=-1; // A fresh live session must establish its own word evidence.
   // A locked position only establishes that individual word. Never reveal
   // all intervening Arabic words after a skip, seek or erroneous match.
@@ -495,6 +491,13 @@ export default function(component) {
     return {cursor,matched};
   }
   function updateMatchCount(){
+    if(engineSelect.value==="local"){
+      liveCountLabel.textContent="Current listening position";
+      liveCount.textContent=acousticCursor<0?"Waiting for recitation":String(words[acousticCursor].ayah)+", word "+reviewLocations[acousticCursor].position;
+      progressFill.style.width="0%";
+      return;
+    }
+    liveCountLabel.textContent="Words matched in transcript";
     liveCount.textContent=confirmedIndices.size+" / "+words.length;
     progressFill.style.width=Math.round(100*confirmedIndices.size/Math.max(1,words.length))+"%";
   }
@@ -582,7 +585,8 @@ export default function(component) {
       el.addEventListener("keydown",e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();view()}});
       // Only the single actively followed word is visually highlighted.
       // Completed words can reveal Arabic in Cover, but are not all gold.
-      if(i===currentWord&&live)el.classList.add("am-active");
+      if(i===acousticCursor&&live)el.classList.add("am-acoustic-cursor");
+      else if(i===currentWord&&live&&engineSelect.value!=="local")el.classList.add("am-active");
       if(confirmedIndices.has(i))el.classList.add("am-confirmed");
       if(practiceReview.has(i))el.classList.add("am-practice-flag");
       if(selectedPracticeWord===i)el.classList.add("am-practice-selected");
@@ -971,7 +975,11 @@ export default function(component) {
     micButton.textContent="🎙 Start listening";
     micButton.classList.remove("am-danger");
     micButton.classList.add("am-primary");
+    wordNodes[acousticCursor]?.classList.remove("am-acoustic-cursor");
+    acousticCursor=-1;
+    updateMatchCount();
     wordNodes.forEach(el=>el.classList.remove("am-active"));
+    engineSelect.disabled=false;
     setStatus("Listening stopped.");
     coaching.hidden=true;
   }
@@ -1030,7 +1038,7 @@ export default function(component) {
         closed=true;
         setStatus("Safari blocked its speech-recognition service. Your microphone works; choose Cloud Live (requires a configured Gemini API key).","error");
         micMessage.textContent="Safari service-not-allowed is not a Tajweed error. Select Cloud Live or use the recorded-audio review.";
-        engineSelect.value="cloud";
+
       } else if(["not-allowed","audio-capture","language-not-supported"].includes(err)){
         closed=true;
       }
@@ -1040,10 +1048,10 @@ export default function(component) {
       if(closed){
         // Keep the actual Safari error visible instead of overwriting it
         // with the generic "Listening stopped" message.
-        live=false;starting=false;clearTimers();
+        live=false;starting=false;engineSelect.disabled=false;clearTimers();
         cleanupLive=null;
         micButton.disabled=false;
-        micButton.textContent="🎙 Try Cloud Live";
+        micButton.textContent="🎙 Restart listener";
         micButton.classList.remove("am-danger");
         micButton.classList.add("am-primary");
         return;
@@ -1298,7 +1306,7 @@ export default function(component) {
         if(!closed){
           fail(Error("Gemini Live closed: "+event.code+" "+(event.reason||"")));
           setStatus("Cloud transcription session ended ("+event.code+"). Start a new session to continue.","error");
-          live=false;
+          live=false;engineSelect.disabled=false;
           micButton.disabled=false;
           micButton.textContent="🎙 Start new session";
           micButton.classList.add("am-primary");
@@ -1372,7 +1380,17 @@ export default function(component) {
       if(!live&&engineSelect.value==="local")micText.textContent="On-device listener unavailable. Tap Start to retry.";
     });
   }
-  engineSelect.onchange=prepareSelectedListener;
+  engineSelect.onchange=()=>{
+    updateMatchCount();
+    if(engineSelect.value==="local"){
+      micMessage.textContent="Audio stays on this device while using the Qur’an listener.";
+      prepareSelectedListener();
+    }else{
+      micText.textContent="Tap Start listening to use the selected transcription service.";
+      micMessage.textContent=engineSelect.value==="cloud"?"Cloud transcription streams your microphone audio to Gemini.":
+        "Your browser provides Arabic transcription and may use its speech service.";
+    }
+  };
   prepareSelectedListener();
   async function localLive(prepared){
     // prepareMicrophone() is invoked synchronously in the button event, before
@@ -1406,48 +1424,40 @@ export default function(component) {
         const surah=Number(location?.surah),ayah=Number(location?.ayah);
         const word=Number(location?.word);
         const verseIndex=ayah-Number(meta.a);
-        if(surah!==Number(meta.s)||verseIndex<0||verseIndex>=counts.length)return -1;
+        if(!Number.isInteger(ayah)||surah!==Number(meta.s)||verseIndex<0||verseIndex>=counts.length)return -1;
         if(!Number.isInteger(word)||word<1||word>Number(counts[verseIndex]))return -1;
         return verseOffsets[verseIndex]+word-1;
       };
       // Fast-recitation tracking is independent of the memorisation cursor:
       // a recogniser may emit one locked event for several spoken words.
       // Skipped positions are UNKNOWN, never silently marked correct or wrong.
-      let lastObserved=-1;
-      let lastObservationAt=0;
-      let lastNode=null;
+      function clearCursor(){
+        wordNodes[acousticCursor]?.classList.remove("am-acoustic-cursor");
+        acousticCursor=-1;
+        currentWord=-1;
+      }
       session.subscribe(event=>{
         if(!live||disposed||!event)return;
         if(event.type==="position"){
-          if(event.state!=="locked")return;
-          const candidates=(Array.isArray(event.observed)?event.observed:[])
-            .map(c=>({idx:globalIndex(c?.word),confidence:Number(c?.confidence),word:c?.word}))
-            .filter(c=>c.idx>=0);
-          if(!candidates.length){
-            setStatus("Listening · no reliably located Qur'an word yet","active");
+          // The SDK ranks alternatives best first, including out-of-passage
+          // matches. Never substitute a weaker candidate inside the selection.
+          const best=event.observed?.[0];
+          const idx=globalIndex(best?.word);
+          if(event.state!=="locked"||idx<0||event.hold||event.spanHold){
+            clearCursor();
+            updateMatchCount();
+            setStatus(event.state==="locked"&&idx<0?"Heard a different passage · check your selection":
+              "Listening for a clear location…","active");
             return;
           }
-          // Prefer the furthest plausible forward observation. Do not force
-          // the recogniser to emit each word individually during fast reading.
-          const forward=candidates.filter(c=>c.idx>=Math.max(0,lastObserved-1));
-          const candidate=(forward.length?forward:candidates)
-            .sort((a,b)=>b.idx-a.idx)[0];
-          const idx=candidate.idx,now=Date.now();
-          if(idx<lastObserved-2 && now-lastObservationAt<1400)return;
-          lastObservationAt=now;
-          const node=wordNodes[idx];
-          if(node===lastNode&&idx===lastObserved)return;
-          lastNode?.classList.remove("am-uncertain");
-          lastNode=node;
-          lastObserved=currentWord=idx;
-          if(!confirmedIndices.has(idx))node?.classList.add("am-uncertain");
-          node?.scrollIntoView({behavior:"instant",block:"nearest",inline:"nearest"});
-          setStatus("Following estimated position · ayah "+candidate.word.ayah+
-            ", word "+candidate.word.word,"active");
-        }else if(event.type==="checker"&&event.state==="confirmed"){
-          setStatus("Position uncertain · continue reciting or replay the ayah","active");
-        }else if(event.type==="capabilities"){
-          micMessage.textContent="Qur'an-specific tracking enabled. Purple follows the estimated word. Choose a transcript listener for green phrase matches.";
+          if(acousticCursor!==idx){
+            clearCursor();
+            acousticCursor=currentWord=idx;
+            updateMatchCount();
+            wordNodes[idx]?.classList.add("am-acoustic-cursor");
+            wordNodes[idx]?.scrollIntoView({behavior:"instant",block:"nearest",inline:"nearest"});
+          }
+          setStatus("Following ayah "+best.word.ayah+" · word "+best.word.word,"active");
         }
       });
       let lastMeterUpdate=0;
@@ -1471,7 +1481,7 @@ export default function(component) {
       if(disposed){await mic.stop();return}
       micText.textContent="On-device Quran recognition active · no recitation audio sent to Gemini.";
       setStatus("Quran model listening. Begin reciting the displayed ayahs...","active");
-      coach("🎙 I’m listening. Start with the first word; Purple follows the estimated word. Switch to a transcript listener for green phrase matches.","guide");
+      coach("Recite naturally. The green outline follows the word the listener locates.","guide");
     }catch(error){
       await cleanup();
       cleanupLive=null;
@@ -1502,6 +1512,7 @@ export default function(component) {
         return;
       }
       transcript.textContent="";
+      engineSelect.disabled=true;
       live=true;
       if(engineSelect.value==="cloud")await cloudLive();
       else if(engineSelect.value==="local")await localLive(preparedLocalMic);
@@ -1513,7 +1524,7 @@ export default function(component) {
       micButton.disabled=false;
     }catch(e){
       try{preparedLocalMic?.release()}catch(_){}
-      live=false;
+      live=false;engineSelect.disabled=false;
       setStatus("Live tracking unavailable: "+String(e?.message||e),"error");
       micButton.textContent="🎙 Retry listening";
       micButton.disabled=false;
@@ -1529,6 +1540,7 @@ export default function(component) {
     // An old token retained by Streamlit must never silently start Gemini.
     try{sessionStorage.removeItem("amuallim:pendingCloudRequest")}catch(_){}
     engineSelect.value="cloud";
+    engineSelect.onchange();
     Promise.resolve().then(()=>{if(!live&&!starting)void micButton.onclick()});
   }
   return ()=>{
