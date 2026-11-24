@@ -167,3 +167,28 @@ def restore_recitation_reviews(user_id):
         and isinstance(item.get("review_data"), dict)
         and len(item["passage_key"]) <= 64
     }
+
+
+def restore_prayer_room(user_id):
+    """Restore the account's cosmetic Prayer Room, if a backup exists."""
+    from prayer_room import import_room_snapshot
+    rows = _table_request("learner_room_backups", params={
+        "select": "snapshot", "user_id": "eq." + user_id, "limit": "1",
+    }) or []
+    if rows:
+        import_room_snapshot(planner_key(user_id), rows[0]["snapshot"])
+    return bool(rows)
+
+
+def backup_prayer_room():
+    """Save a cosmetic room snapshot after a successful server-side action."""
+    from prayer_room import export_room_snapshot
+    session = st.session_state.get("am_auth")
+    if not session:
+        return False
+    user_id = session["user_id"]
+    snapshot = export_room_snapshot(planner_key(user_id))
+    _table_request("learner_room_backups", "POST",
+                   [{"user_id": user_id, "snapshot": snapshot}],
+                   params={"on_conflict": "user_id"}, upsert=True)
+    return True
