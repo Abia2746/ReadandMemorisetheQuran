@@ -137,6 +137,12 @@ def save_recitation_review(passage_key, review_data):
         "feedback", "tafsir_summary", "review", "recording_scope",
     )
     saved = {k: review_data[k] for k in allowed_fields if k in review_data}
+    if isinstance(saved.get("review"), dict):
+        # The harakah reference is deterministic Qur'an text metadata and can
+        # be rebuilt locally. Avoid oversized cloud rows and needless storage.
+        saved["review"] = dict(saved["review"])
+        saved["review"].pop("vowel_reference", None)
+        saved["review"]["vowel_reference_regenerate_on_open"] = True
     serialized = json.dumps(saved, ensure_ascii=False, default=str)
     if len(serialized.encode("utf-8")) > 60000:
         raise ValueError("Review too large for cloud backup")
