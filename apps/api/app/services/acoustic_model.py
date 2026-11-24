@@ -63,6 +63,45 @@ def create_network(n_tokens: int):
     return PhoneCTC()
 
 
+def collapse_ctc_frames(
+    indices: list[int], vocabulary: list[str], duration_ms: int
+) -> list[dict]:
+    """Collapse frame-level CTC path into contiguous, time-bounded phones.
+
+    Repeat tokens separated by CTC blanks remain separate phones.
+    These boundaries are only approximate and must not be used as
+    independently validated vowel durations or madd assessments.
+    """
+    if duration_ms < 0 or not vocabulary or vocabulary[0] != "<blank>":
+        raise ValueError("Invalid CTC metadata")
+    if any(type(x) is not int or not 0 <= x < len(vocabulary) for x in indices):
+        raise ValueError("CTC output outside configured vocabulary")
+    output: list[dict] = []
+    previous = 0
+    onset = 0
+
+    def emit(index: int, start: int, stop: int) -> None:
+        if index == 0:
+            return
+        output.append({
+            "phone": vocabulary[index],
+            "approx_start_ms": min(duration_ms, max(0, start * 10 - 12)),
+            "approx_end_ms": min(duration_ms, stop * 10 + 12),
+            "uncertainty": (
+                "Uncalibrated CTC best-path interval; neither an "
+                "articulation grade nor a forced-aligned phoneme boundary"
+            ),
+        })
+
+    for frame, index in enumerate(indices):
+        if index != previous:
+            emit(previous, onset, frame)
+            previous = index
+            onset = frame
+    emit(previous, onset, len(indices))
+    return output
+
+
 @lru_cache(maxsize=1)
 def load_approved_model():
     """Refuse model output until deployment operator approves audited weights.
@@ -110,30 +149,9 @@ def analyse(samples: list[float]) -> dict:
         signal = torch.tensor(samples, dtype=torch.float32)
         emissions = model(log_spectrogram(signal)).softmax(-1)
         indices = emissions.argmax(-1).tolist()
-        # A CTC token occupies a *run* of acoustic frames. Previously, each
-        # token was assigned the first frame only, creating misleading 22 ms
-        # spans regardless of how long the phone was heard.
-        phones = []
-        previous = 0
-        onset = 0
-        def emit(index: int, start: int, stop: int) -> None:
-            if index == 0:
-                return  # CTC blank, not a spoken phone
-            phones.append({
-                "phone": registry["vocabulary"][index],
-                "approx_start_ms": max(0, start * 10 - 12),
-                "approx_end_ms": min(round(len(samples) / 16), stop * 10 + 12),
-                "uncertainty": (
-                    "Uncalibrated CTC best-path interval; neither an "
-                    "articulation grade nor a forced-aligned phoneme boundary"
-                ),
-            })
-        for frame, index in enumerate(indices):
-            if index != previous:
-                emit(previous, onset, frame)
-                previous = index
-                onset = frame
-        emit(previous, onset, len(indices))
+        phones = collapse_ctc_frames(
+            indices, registry["vocabulary"], round(len(samples) / 16)
+        )
     return {
         "status": "acoustic_hypotheses_only",
         "model_id": registry["model_id"],
