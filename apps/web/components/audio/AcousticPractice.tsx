@@ -105,6 +105,27 @@ export function AcousticPractice({verseRef}:{verseRef:string}){
     }
   },[stop]);
 
+  const exportSession=()=>{
+    const sounds=reports.flatMap(r=>r.phones||[]).map(p=>p.phone);
+    const differences=reports.flatMap(r=>r.alignment?.events||[]).filter(e=>e.kind!=="match");
+    const lines=[
+      "Al-Muallim acoustic evidence (NOT a verified Tajweed grade)",
+      "Passage: "+verseRef,
+      "Audio windows analysed: "+reports.length,
+      "Model phoneme hypotheses: "+(sounds.join(" · ")||"None"),
+      "Possible differences: "+differences.length,
+      ...differences.slice(0,40).map(e=>"Expected "+(e.expected||"—")+"; predicted "+(e.observed||"—")+"; UNCERTAIN"),
+      "Not verified: vowel correctness, shaddah, madd, ghunnah, makharij or other Tajweed judgments.",
+      "Next step: listen to a Qari phrase and check uncertain sounds with a qualified teacher.",
+      "No original microphone audio is included."
+    ];
+    const blob=new Blob([lines.join("\n")],{type:"text/plain;charset=utf-8"});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement("a");a.href=url;a.download="almuallim-acoustic-evidence.txt";
+    document.body.appendChild(a);a.click();a.remove();
+    window.setTimeout(()=>URL.revokeObjectURL(url),1000);
+  };
+
   const start=async()=>{
     if(!auth.isSignedIn){
       setStatus("Please sign in to use the acoustic inference service.");
@@ -160,6 +181,19 @@ export function AcousticPractice({verseRef}:{verseRef:string}){
       {running?"Stop acoustic analysis":"Start acoustic analysis"}
     </button>
     <p role="status" aria-live="polite" className="mt-3 text-xs text-[#E6D5B8]">{status}</p>
+    {reports.length>0&&<div className="mt-3 rounded-xl border border-[#6C5939] bg-[#2A1F18] p-3">
+      <h4 className="text-sm font-semibold text-[#EDD39F]">Session evidence summary</h4>
+      <p className="mt-1 text-xs text-[#E6D5B8]">Practised passage: {verseRef} · Audio windows: {reports.length}</p>
+      <p className="mt-1 text-xs text-[#E6D5B8]">
+        Phone hypotheses: {reports.reduce((sum,r)=>sum+(r.phones?.length||0),0)}.
+        Possible differences: {reports.reduce((sum,r)=>sum+(r.alignment?.events?.filter(e=>e.kind!=="match").length||0),0)}.
+      </p>
+      <p className="mt-2 text-xs text-[#C0AB90]">
+        The microphone model may mishear sounds. These findings do not establish accurate vowels or Tajweed.
+        Repeat uncertain sounds with a trusted reciter or qualified teacher.
+      </p>
+      <button type="button" className="am-small-action mt-2" onClick={exportSession}>Export evidence report</button>
+    </div>}
     {reports.length>0&&<div className="mt-3 space-y-2">
       <h4 className="text-xs font-semibold text-[#EDD39F]">What was heard (uncertified)</h4>
       {reports.slice(-3).map((report,i)=><div key={i} className="rounded-lg bg-[#352820] p-3 text-xs">
