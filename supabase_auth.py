@@ -248,12 +248,16 @@ div[data-testid="stDialog"] button[kind="primaryFormSubmit"] {background:linear-
 
     if st.session_state.get("am_pending_email") and st.session_state.get("am_pending_mode") == mode:
         st.success("A secure email link has been requested.")
-        st.caption("Open your latest Supabase email and tap the link once. "
-                   "It should bring you back to Al-Mu’allim.")
-        if st.button("Use another email address", key="am_switch_email", use_container_width=True):
+        st.caption("Open the newest confirmation or sign-in email and use the "
+                   "link once. It should bring you back to Al-Mu’allim. "
+                   "A new account may need to confirm its email first.")
+        if st.button("Request a fresh link or change email", key="am_switch_email",
+                     use_container_width=True):
             st.session_state.pop("am_pending_email", None)
             st.session_state.pop("am_pending_mode", None)
             st.rerun()
+        st.caption("If no email arrives, check Spam/Junk. Sending is rate-limited; "
+                   "please do not repeatedly tap the request button.")
     else:
         with st.form("am_magic_link_request"):
             email = st.text_input("Email address", placeholder="name@example.com", key="am_auth_email")
