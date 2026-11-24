@@ -41,4 +41,12 @@ with sync_playwright() as playwright:
     page.wait_for_function("window.testStream.getTracks().every(t => t.readyState === 'ended')")
     assert not posts, posts
     print("Recorded and replayed simulated microphone input, discarded it, cancelled pending capture; zero POSTs.")
+    page.goto(origin + "/journey")
+    page.get_by_role("button", name="I practised 1:1", exact=True).click()
+    page.reload()
+    page.get_by_role("button", name="I practised 1:2", exact=True).wait_for()
+    assert page.get_by_role("button", name="I practised 1:1", exact=True).count() == 0
+    page.get_by_role("button", name="I practised 1:2", exact=True).click()
+    assert page.get_by_role("button", name="I practised 1:3", exact=True).count() == 0
+    print("Device plan persisted across reload and stopped at its self-reported daily target.")
     browser.close()

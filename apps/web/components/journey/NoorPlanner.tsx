@@ -1,5 +1,6 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
+import { DevicePractice } from "./DevicePractice";
 import Link from "next/link";
 import { CalendarDays, Check, Clock3, Sparkles, SunMoon, RotateCcw } from "lucide-react";
 import { useStudyAuth, accessToken } from "@/lib/auth";
@@ -151,6 +152,7 @@ export function NoorPlanner(){
        Revise what you know, study a little new Qur&apos;an, and progress at your own pace.
      </p>
    </section>
+   {!auth.loading&&!auth.isSignedIn&&<DevicePractice/>}
    {!auth.loading&&!auth.isSignedIn&&<section className="rounded-2xl border border-[#4A3828] bg-[#241913] p-6">
      <h2 className="font-editorial text-xl text-[#EDD39F]">Your first plan is free forever</h2>
      <p className="mt-2 text-sm text-[#E6D5B8]">Sign in to keep your saved progress across devices. Reading and Qari listening remain free without a login.</p>
