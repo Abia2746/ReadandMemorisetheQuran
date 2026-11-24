@@ -266,6 +266,38 @@ export default function(component) {
   // all intervening Arabic words after a skip, seek or erroneous match.
   const confirmedIndices=new Set();
   const practiceReview=new Set();
+  const reviewLocations=[];
+  const reviewByAyah=new Map();
+  function readFlags(key){
+    const stored=JSON.parse(localStorage.getItem(key)||"[]");
+    return new Set(Array.isArray(stored)?stored.filter(Number.isInteger):[]);
+  }
+  for(const [i,w] of words.entries()){
+    const key="amuallim:flags:"+D.reviewProfile+":"+meta.s+":"+w.ayah;
+    let group=reviewByAyah.get(key);
+    if(!group){
+      group={count:0,saved:new Set()};
+      if(D.reviewProfile){try{group.saved=readFlags(key)}catch(_){}}
+      reviewByAyah.set(key,group);
+    }
+    const position=++group.count;
+    reviewLocations.push({key,position});
+    if(group.saved.has(position))practiceReview.add(i);
+  }
+  function saveReviewFlag(i,flag){
+    const location=reviewLocations[i];
+    if(!location)return false;
+    if(flag)practiceReview.add(i);else practiceReview.delete(i);
+    wordNodes[i]?.classList.toggle("am-practice-flag",flag);
+    if(!D.reviewProfile)return false;
+    try{
+      const saved=readFlags(location.key);
+      if(flag)saved.add(location.position);else saved.delete(location.position);
+      if(saved.size)localStorage.setItem(location.key,JSON.stringify([...saved]));
+      else localStorage.removeItem(location.key);
+      return true;
+    }catch(_){return false}
+  }
   let lastReviewIndex=-1;
   let revealIndex=-1;
   let selectedPracticeWord=-1;
@@ -329,7 +361,7 @@ export default function(component) {
   function selectPracticeWord(i){
     if(i<0||i>=words.length)return;
     selectedPracticeWord=i;
-    selectedLabel.textContent="Selected · Ayah "+words[i].ayah+", word "+(i+1)+": "+words[i].ar;
+    selectedLabel.textContent="Selected · Ayah "+words[i].ayah+", word "+reviewLocations[i].position+": "+words[i].ar;
     wordNodes.forEach((el,j)=>el.classList.toggle("am-practice-selected",j===i));
     rescueText.textContent="Choose Flag, Reveal or Hear for this selected phrase.";
   }
@@ -337,10 +369,9 @@ export default function(component) {
     const i=rescueTarget();
     if(i<0)return;
     selectedPracticeWord=i;
-    practiceReview.add(i);
-    selectedLabel.textContent="⚑ Saved · Ayah "+words[i].ayah+", word "+(i+1);
-    wordNodes[i]?.classList.add("am-practice-flag");
-    rescueText.textContent="Saved for your difficult-phrase review. This is your own practice flag, not a pronunciation error.";
+    const persisted=saveReviewFlag(i,true);
+    selectedLabel.textContent="⚑ Flagged · Ayah "+words[i].ayah+", word "+reviewLocations[i].position;
+    rescueText.textContent=persisted?"Saved on this device for difficult-phrase review.":"Flagged for this session.";
   };
   revealButton.onclick=()=>{const i=rescueTarget();practiceReview.add(i);showRescue(i)};
   hearButton.onclick=()=>{
@@ -355,7 +386,7 @@ export default function(component) {
   };
   correctButton.onclick=()=>{
     const i=rescueTarget();if(i<0)return;
-    practiceReview.delete(i);
+    saveReviewFlag(i,false);
     wordNodes[i]?.classList.remove("am-review","am-uncertain","am-practice-flag");
     
     rescueText.textContent="Review flag cleared by you.";
@@ -1501,6 +1532,7 @@ export default function(component) {
     Promise.resolve().then(()=>{if(!live&&!starting)void micButton.onclick()});
   }
   return ()=>{
+    clearTimeout(revealTimer);
     prayerRoom.dispose();
     journeyPlanner.dispose();
     live=false;clearTimers();

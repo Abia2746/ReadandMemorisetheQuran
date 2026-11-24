@@ -5,6 +5,7 @@ All user data is passed as structured JSON through data; never interpolate
 user input into HTML, CSS or JavaScript source.
 """
 from pathlib import Path
+import hashlib
 import json
 import logging
 import sqlite3
@@ -113,6 +114,7 @@ def render_studio(
         cloud_session = None
         st.session_state.pop("_am_live_cloud_session", None)
     data = {
+        "reviewProfile": hashlib.sha256(plan_profile.encode("utf-8")).hexdigest(),
         "buildVersion": "2026-11-24-phrase-following",
         "hifdhPlan": plan_data,
         "hifdhCalendar": calendar_data,

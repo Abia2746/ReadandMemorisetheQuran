@@ -72,7 +72,7 @@ const testWords=[
   {ar:"اضْرِبْ",en:"Strike",tr:"idrib",ayah:60,letters:[]},
   {ar:"الْحَجَرَ",en:"The stone",tr:"al-hajara",ayah:60,letters:[]}
 ];
-async function fixture(mode,overrides={},startListening=true,browserWindow={}){
+async function fixture(mode,overrides={},startListening=true,browserWindow={},deviceStore={getItem:()=>null,setItem(){}}){
   let callback,prepared=0,listenCount=0,stopCount=0;
   const mockSdk={
     prepareMicrophone(){
@@ -96,7 +96,7 @@ async function fixture(mode,overrides={},startListening=true,browserWindow={}){
      "localStorage","AbortController","createPrayerRoomScene", combined);
   const create=factory(mockSdk,document,browserWindow,{
     userAgent:"iPad",platform:"iPad",maxTouchPoints:5
-  },{getItem:()=>null,setItem(){}},{getItem:()=>null,setItem(){}},abortCtor,
+  },{getItem:()=>null,setItem(){}},deviceStore,abortCtor,
     async()=>({start(){},stop(){},dispose(){}}));
   const mount=new Element("div");
   mount.className="am-mount";
@@ -217,4 +217,17 @@ console.log("PASS: SDK position estimates never validate phrases; reader timings
   assert.equal(all().filter(n=>n.className.includes("am-confirmed")).length,0);
   assert.equal(recogniser.onresult,null);
   x.dispose();
+}
+
+{
+  const values=new Map();
+  const device={getItem:k=>values.get(k),setItem:(k,v)=>values.set(k,v),removeItem:k=>values.delete(k)};
+  const open=profile=>fixture("blind",{reviewProfile:profile},false,{},device);
+  const click=(x,label)=>nodes(x.mount).find(n=>n.tag==="button"&&n.textContent.includes(label)).onclick();
+  const flagged=x=>nodes(x.mount).filter(n=>n.className.split(" ").includes("am-practice-flag")).length;
+  const first=await open("learner-a");click(first,"Flag selected phrase");first.dispose();
+  const other=await open("learner-b");assert.equal(flagged(other),0);other.dispose();
+  const second=await open("learner-a");assert.equal(flagged(second),1);
+  click(second,"Clear selected review flag");second.dispose();
+  const last=await open("learner-a");assert.equal(flagged(last),0);last.dispose();
 }
