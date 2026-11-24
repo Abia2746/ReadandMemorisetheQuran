@@ -12,7 +12,12 @@ MAGIC_LINK_JS = r"""
 export default function({setTriggerValue, data}) {
   const key = "al-muallim.preview-auth.v1";
   try {
-    if (data?.signout) { localStorage.removeItem(key); return; }
+    if (data?.signout) {
+      localStorage.removeItem(key);
+      window.__alMuallimRestoreAttempted = true;
+      setTriggerValue("signout_cleared", true);
+      return;
+    }
     const active = data?.session;
     if (active?.access_token && active?.refresh_token) {
       localStorage.setItem(key, JSON.stringify(active));
@@ -64,7 +69,10 @@ def accept_magic_link_tokens():
             "signout": bool(st.session_state.get("am_auth_signout")),
         },
         on_tokens_change=lambda: None,
+        on_signout_cleared_change=lambda: None,
                       on_auth_error_change=lambda: None)
+    if result.signout_cleared:
+        st.session_state["am_auth_signout"] = False
     if st.session_state.get("am_auth_signout") or st.session_state.get("am_auth"):
         return
     if result.auth_error:
