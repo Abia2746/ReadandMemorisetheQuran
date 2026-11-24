@@ -1111,6 +1111,13 @@ with left:
         _ui("Record your recitation"),
         key=f"academy_rec_{passage_key}_{st.session_state.tries}",
     )
+    st.caption(
+        "Privacy: choosing Analyse sends this recording to the configured "
+        "Google Gemini service for AI review. We do not upload raw audio "
+        "to your Supabase learning history. Temporary playback excerpts "
+        "stay in this active app session. Review the provider's data terms "
+        "before submitting recordings."
+    )
     if recording:
         if st.button(_ui("Analyse this recording"), type="primary", use_container_width=True):
             try:
