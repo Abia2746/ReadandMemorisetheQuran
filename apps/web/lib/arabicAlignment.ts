@@ -34,9 +34,8 @@ export function alignObservation(
   let i=cursor,j=0;
   const matched:number[]=[];
   while(i<expected.length){
-    const ayah=expected[i].ayah;
-    let end=i;
-    while(end<expected.length&&end-i<4&&expected[end].ayah===ayah)end++;
+    // This API supplies one ayah at a time. Do not assume QuranWord has an ayah field.
+    const end=Math.min(expected.length,i+4);
     const size=end-i;
     if(tokens.length-j<size)break;
     const phrase=forms.slice(i,end);
