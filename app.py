@@ -1250,6 +1250,27 @@ if saved:
                         st.caption("Audio excerpt unavailable here. The original microphone recording is not stored in cloud history.")
                     st.caption("Compare with the selected Hafs reciter, then repeat this phrase slowly:")
                     st.audio(audio_url(surah, int(clue["ayah"]), RECITERS[reciter]["folder"]))
+                    note_id = "vowel:" + str(clue["word_i"]) + ":" + str(clue["letter_i"])
+                    previous_note = (saved.get("review") or {}).get("learner_notes", {}).get(note_id)
+                    if previous_note:
+                        st.caption("Your note: " + previous_note.replace("_", " "))
+                    note_col_1, note_col_2 = st.columns(2)
+                    action = None
+                    with note_col_1:
+                        if st.button("Practised again", key="practice_" + result_key + note_id):
+                            action = "practised_again"
+                    with note_col_2:
+                        if st.button("AI may be mistaken", key="dispute_" + result_key + note_id):
+                            action = "disputed_by_learner"
+                    if action:
+                        saved.setdefault("review", {}).setdefault("learner_notes", {})[note_id] = action
+                        if st.session_state.get("am_auth"):
+                            try:
+                                from cloud_learning import save_recitation_review
+                                save_recitation_review(result_key, saved)
+                            except Exception:
+                                st.warning("Your note is saved for this session but couldn't sync to cloud.")
+                        st.caption("Noted as your own judgement, not teacher verification.")
                     st.caption(
                         "This is not validated vowel recognition. Listen "
                         "back to the recording and compare with a qualified "
