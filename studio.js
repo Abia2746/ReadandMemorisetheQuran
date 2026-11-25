@@ -514,7 +514,7 @@ export default function(component) {
     if(matched){
       updateMatchCount();
       wordNodes[cursor-1]?.scrollIntoView({behavior:"instant",block:"nearest",inline:"nearest"});
-      coach("Phrase matched in the Arabic transcript. Keep going.","success");
+      coach("Words matched in the transcript. Listen back to check the sounds.","guide");
     }
     return {cursor,matched};
   }
@@ -535,6 +535,20 @@ export default function(component) {
     liveCount.textContent=confirmedIndices.size+" / "+words.length;
     progressFill.style.width=Math.round(100*confirmedIndices.size/Math.max(1,words.length))+"%";
   }
+  // An interim transcript can move one location cue, but never reveal or grade words.
+  function previewTranscript(tokens,cursor){
+    wordNodes[currentWord]?.classList.remove("am-active");
+    currentWord=-1;
+    let index=cursor;
+    for(const token of tokens){
+      if(token!==expected[index])break;
+      index++;
+    }
+    if(index>cursor){
+      currentWord=index-1;
+      wordNodes[currentWord]?.classList.add("am-active");
+    }
+  }
   function markMatched(index){
     wordNodes[currentWord]?.classList.remove("am-active");
     currentWord=confirmedWord=index;
@@ -542,7 +556,7 @@ export default function(component) {
     const el=wordNodes[index];
     if(!el)return;
     el.classList.remove("am-review","am-uncertain","am-ayah-playing");
-    el.classList.add("am-confirmed");
+    el.classList.add("am-active");
     if(currentTab==="cover"&&!el.querySelector(".am-revealed-ar")){
       el.appendChild(CE("span","am-revealed-ar",words[index].ar||""));
     }
@@ -621,7 +635,6 @@ export default function(component) {
       // Completed words can reveal Arabic in Cover, but are not all gold.
       if(i===acousticCursor&&live)el.classList.add("am-acoustic-cursor");
       else if(i===currentWord&&live&&engineSelect.value!=="local")el.classList.add("am-active");
-      if(confirmedIndices.has(i))el.classList.add("am-confirmed");
       if(practiceReview.has(i))el.classList.add("am-practice-flag");
       if(selectedPracticeWord===i)el.classList.add("am-practice-selected");
       if(cover && confirmedIndices.has(i)){
@@ -1055,13 +1068,13 @@ export default function(component) {
         cursor=result.cursor;
         if(result.matched)idx=cursor-1;
       }
-      if(interim.trim()){
-        setStatus("Listening · full phrase awaiting verification","active");
+      if(interim.trim()||idx<0||phraseBuffer.length){
+        previewTranscript([...phraseBuffer,...normalized(interim).split(" ").filter(Boolean)],cursor);
       }
       const heard=(final+" "+interim).trim();
       if(heard)transcript.textContent="Recognised Arabic (approximate): "+heard.slice(0,180);
       setStatus(idx>=0?"Following your recitation · "+Math.round(100*confirmedIndices.size/Math.max(1,words.length))+"% of passage":
-        "Arabic heard, but no match yet. Check the selected ayahs.","active");
+        currentWord>=0?"Following provisional transcript · pronunciation ungraded":"Listening for a complete word…","active");
     };
     r.onerror=e=>{
       const err=e.error||"unknown";
@@ -1206,7 +1219,8 @@ export default function(component) {
       // progress. Partial transcripts may overlap previously heard words.
       const tokens=normalized(phrase).split(" ").filter(Boolean);
       if(!final){
-        setStatus("Cloud listening · waiting to verify full phrase","active");
+        previewTranscript([...cloudAccum,...tokens],cursor);
+        setStatus("Following provisional transcript · pronunciation ungraded","active");
         return;
       }
       // Some transcription services resend their cumulative final words.
@@ -1227,6 +1241,7 @@ export default function(component) {
       cloudAccum.push(...fresh);
       const result=matchFinalTokens(cloudAccum,cursor);
       cursor=result.cursor;
+      if(!result.matched)previewTranscript(cloudAccum,cursor);
       setStatus(result.matched?"Phrase matched · "+liveCount.textContent+" words":
         "Arabic heard · waiting for a complete phrase","active");
     };

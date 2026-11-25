@@ -289,11 +289,21 @@ console.log("PASS: SDK position estimates never validate phrases; reader timings
   select.value="browser";
   await all().find(n=>n.textContent==="🎙 Start listening").onclick();
   const deliver=recogniser.onresult;
-  const result=isFinal=>({resultIndex:0,results:[{isFinal,0:{transcript:"فقلنا اضرب الحجر"}}]});
+  const result=(isFinal,transcript="فقلنا اضرب الحجر")=>({resultIndex:0,results:[{isFinal,0:{transcript}}]});
+  const active=()=>all().filter(n=>n.className.split(" ").includes("am-active"));
+  for(const prefix of ["ف","فق"]){
+    deliver(result(false,prefix));
+    assert.equal(active().length,0);
+  }
+  deliver(result(false,"فقلنا"));
+  assert.equal(active().length,1,"first complete interim word moves a single cue synchronously");
+  deliver(result(false,"فق"));
+  assert.equal(active().length,0,"a revised partial transcript withdraws the cue");
   deliver(result(false));
   assert.equal(all().filter(n=>n.className.includes("am-confirmed")).length,0);
   deliver(result(true));
-  assert.equal(all().filter(n=>n.className.includes("am-confirmed")).length,3);
+  assert.equal(active().length,1);
+  assert.equal(all().filter(n=>n.className.includes("am-confirmed")).length,0);
   await all().find(n=>n.textContent.includes("Start over")&&n.tag==="button").onclick();
   deliver(result(true));
   assert.equal(all().filter(n=>n.className.includes("am-confirmed")).length,0);
