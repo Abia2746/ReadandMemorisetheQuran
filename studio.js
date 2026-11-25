@@ -171,6 +171,7 @@ export default function(component) {
   const micText=CE("div","am-note","Choose a listener, then tap Start listening.");
   const micMessage=CE("div","am-note","Audio stays on this device while using the Qur’an listener.");
   append(micBody,micDescription,micControls,meter,micText,micMessage);
+  let vowelPlayback=null;
   const vowelReport=CE("div","am-note");
   vowelReport.setAttribute("role","status");
   micBody.appendChild(vowelReport);
@@ -685,7 +686,7 @@ export default function(component) {
   }
   toggleHint.onclick=()=>{showHints=!showHints;renderWords()};
   toggleColour.onclick=()=>{showTajweed=!showTajweed;renderWords()};
-  resetBtn.onclick=async()=>{if(live)await stopLive();clearAudioCues();vowelReport.replaceChildren();currentWord=-1;confirmedWord=-1;confirmedIndices.clear();updateMatchCount();lastPlaybackUiKey="";progressFill.style.width="0%";setStatus("Ready to practise from the beginning.");transcript.textContent="";renderWords()};
+  resetBtn.onclick=async()=>{if(live)await stopLive();clearAudioCues();clearVowelReview();currentWord=-1;confirmedWord=-1;confirmedIndices.clear();updateMatchCount();lastPlaybackUiKey="";progressFill.style.width="0%";setStatus("Ready to practise from the beginning.");transcript.textContent="";renderWords()};
   recordHint.onclick=()=>{
     micPanel.scrollIntoView({behavior:"smooth",block:"center"});
     // Start capture from the original tap, preserving the iPad user gesture.
@@ -948,6 +949,7 @@ export default function(component) {
   audio.onseeked=showPlaybackPosition;
   audio.ontimeupdate=showPlaybackPosition;
   audio.onplay=async()=>{
+    stopVowelPlayback();
     if(live)await stopLive();
     if(!audio.paused)startPlaybackFollow();
   };
@@ -1416,7 +1418,7 @@ export default function(component) {
   }
   engineSelect.onchange=()=>{
     updateMatchCount();
-    vowelReport.replaceChildren();
+    clearVowelReview();
     if(onDevice()){
       micMessage.textContent=engineSelect.value==="vowels"?"Recite one word or a short phrase. Stop to see possible vowel sounds. Audio stays on this device.":"Audio stays on this device while using the Qur’an listener.";
       prepareSelectedListener();
@@ -1427,7 +1429,43 @@ export default function(component) {
     }
   };
   prepareSelectedListener();
-  function showVowels(evidence){
+  function stopVowelPlayback(){
+    if(vowelPlayback){
+      const context=vowelPlayback;
+      vowelPlayback=null;
+      void context.close().catch(()=>{});
+    }
+  }
+  function clearVowelReview(){
+    stopVowelPlayback();
+    vowelReport.replaceChildren();
+  }
+  async function replayVowel(pcm,time,button){
+    stopVowelPlayback();
+    if(!audio.paused)audio.pause();
+    const first=Math.max(0,Math.floor((time-0.35)*16000));
+    const last=Math.min(pcm.length,Math.ceil((time+0.45)*16000));
+    if(first>=last)return;
+    let context;
+    try{
+      context=new (window.AudioContext||window.webkitAudioContext)();
+      vowelPlayback=context;
+      await context.resume();
+      if(vowelPlayback!==context)return;
+      const buffer=context.createBuffer(1,last-first,16000);
+      buffer.getChannelData(0).set(pcm.subarray(first,last));
+      const player=context.createBufferSource();
+      player.buffer=buffer;
+      player.connect(context.destination);
+      player.onended=()=>{if(vowelPlayback===context)stopVowelPlayback()};
+      player.start();
+    }catch(_){
+      if(context&&vowelPlayback!==context)return;
+      stopVowelPlayback();
+      button.textContent="Playback unavailable";
+    }
+  }
+  function showVowels(evidence,pcm){
     const names=new Map([["َ","Fatḥah /a/"],["ِ","Kasrah /i/"],["ُ","Ḍammah /u/"]]);
     const list=CE("ol","");
     for(const chunk of evidence){
@@ -1435,18 +1473,29 @@ export default function(component) {
         const name=names.get(phone.p);
         if(!name)continue;
         const time=phone.start*chunk.frameMs/1000;
-        list.appendChild(CE("li","",name+" · "+time.toFixed(2)+" s"));
+        if(!Number.isFinite(time)||time<0||time>=pcm.length/16000)continue;
+        // A display threshold only; decoder scores are not calibrated correctness probabilities.
+        const supported=Number.isFinite(phone.conf)&&phone.conf>=0.80&&phone.conf<=1;
+        const label=supported?name:"Vowel unclear";
+        const row=CE("li","",label+" · "+time.toFixed(2)+" s");
+        const replay=btn("Hear clip","am-button");
+        replay.setAttribute("aria-label","Hear your recitation around "+time.toFixed(2)+" seconds");
+        replay.onclick=()=>replayVowel(pcm,time,replay);
+        row.appendChild(replay);
+        list.appendChild(row);
       }
     }
-    vowelReport.replaceChildren();
+    clearVowelReview();
     if(!list.childNodes.length){
       vowelReport.textContent="No short vowel resolved in this recording.";
       return;
     }
-    append(vowelReport,CE("p","","Possible short vowels in recording order. Times mark approximate model detections. Some sounds may be missed or misidentified."),list);
+    append(vowelReport,CE("p","","Possible short vowels in recording order. Tap Hear clip to hear the surrounding sounds in your recording. Weak predictions appear as “Vowel unclear”. The listener can miss vowels or misidentify even a strong prediction."),list);
   }
   async function vowelLive(prepared){
     let engine,session,mic,timer,closed=false,failed=false;
+    const pcm=new Float32Array(12*16000);
+    let recorded=0;
     const cleanup=async()=>{
       if(closed)return;
       closed=true;
@@ -1454,7 +1503,7 @@ export default function(component) {
       try{
         if(mic){
           await mic.stop();
-          if(!failed&&!engineAbort.signal.aborted)showVowels(session.evidence());
+          if(!failed&&!engineAbort.signal.aborted)showVowels(session.evidence(),pcm.subarray(0,recorded));
         }
       }catch(_){vowelReport.textContent="Vowel review could not finish. Try another short recording."}
       finally{
@@ -1470,6 +1519,13 @@ export default function(component) {
         recordEvidence:true,signal:engineAbort.signal});
       if(closed){await engine.dispose();return}
       session=engine.startFreeRecitation();
+      session.onAudio((samples,startMs)=>{
+        const offset=Math.round(startMs*16);
+        if(offset<0||offset>=pcm.length)return;
+        const part=samples.subarray(0,pcm.length-offset);
+        pcm.set(part,offset);
+        recorded=Math.max(recorded,offset+part.length);
+      });
       mic=await engine.listen(session,{prepared,vad:false,onError:()=>{
         failed=true;
         vowelReport.textContent="Audio analysis was interrupted. Try recording again.";
@@ -1629,7 +1685,7 @@ export default function(component) {
       transcript.textContent="";
       engineSelect.disabled=true;
       clearAudioCues();
-      vowelReport.replaceChildren();
+      clearVowelReview();
       live=true;
       if(engineSelect.value==="cloud")await cloudLive();
       else if(engineSelect.value==="vowels")await vowelLive(preparedLocalMic);
@@ -1665,6 +1721,7 @@ export default function(component) {
     clearTimeout(revealTimer);
     prayerRoom.dispose();
     journeyPlanner.dispose();
+    clearVowelReview();
     live=false;clearTimers();
     try{if(cleanupLive)void cleanupLive()}catch(_){}
     try{audio.pause()}catch(_){}

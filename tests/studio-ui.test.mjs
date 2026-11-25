@@ -84,7 +84,7 @@ async function fixture(mode,overrides={},startListening=true,browserWindow={},de
         startFreeRecitation(){
           assert.equal(options.recordEvidence,true);
           assert.equal(options.tier,"lite");
-          return {evidence:()=>overrides.testEvidence,dispose(){}};
+          return {onAudio(fn){fn(Float32Array.from({length:192000},(_,i)=>(i%32)/32),0)},evidence:()=>overrides.testEvidence,dispose(){}};
         },
         startMemorization(){
           return {subscribe(fn){callback=fn},dispose(){}}
@@ -131,14 +131,21 @@ async function fixture(mode,overrides={},startListening=true,browserWindow={},de
 }
 
 {
-  const cases=[["one vowel",[{frameMs:40,phonemes:[{p:"ب",start:0},{p:"َ",start:3}]}],1],["consonant only",[{frameMs:40,phonemes:[{p:"ب",start:0}]}],0]];
+  const cases=[["one vowel",[{frameMs:40,phonemes:[{p:"ب",start:0},{p:"َ",start:3,conf:.92}]}],1],["ambiguous",[{frameMs:40,phonemes:[{p:"ُ",start:12,conf:.56},{p:"ِ",start:14}]}],2],["consonant only",[{frameMs:40,phonemes:[{p:"ب",start:0}]}],0]];
   if(process.env.QURAN_VOWEL_TRACES){
     for(const [name,count] of [["phrase",36],["prefix",0],["quiet",0]]){
       cases.push([name,JSON.parse(readFileSync(resolve(process.env.QURAN_VOWEL_TRACES,name+"-vowels.json"),"utf8")),count]);
     }
   }
   for(const [name,testEvidence,expected] of cases){
-    const x=await fixture("blind",{testEvidence},false);
+    let buffer;
+    const AudioContext=class{
+      async resume(){}
+      async close(){}
+      createBuffer(channels,size,rate){assert.equal(rate,16000);buffer=new Float32Array(size);return {getChannelData:()=>buffer}}
+      createBufferSource(){return {connect(){},start(){}}}
+    };
+    const x=await fixture("blind",{testEvidence},false,{AudioContext});
     const select=nodes(x.mount).find(n=>n.tag==="select");
     select.value="vowels";
     select.onchange();
@@ -149,6 +156,13 @@ async function fixture(mode,overrides={},startListening=true,browserWindow={},de
     const rows=nodes(x.mount).filter(n=>n.tag==="li"&&n.textContent.match(/ · [0-9.]+ s$/));
     assert.equal(rows.length,expected,name);
     if(name==="one vowel")assert.equal(rows[0].textContent,"Fatḥah /a/ · 0.12 s");
+    if(name==="ambiguous")assert.ok(rows.every(n=>n.textContent.startsWith("Vowel unclear")));
+    if(name==="phrase")assert.equal(rows.filter(n=>n.textContent.startsWith("Vowel unclear")).length,1);
+    if(expected){
+      const button=rows[0].children[0];
+      await button.onclick();
+      assert.ok(buffer.length<=12801&&buffer.some(sample=>sample!==0),"replay uses captured PCM around the detection");
+    }
     if(!expected)assert.ok(nodes(x.mount).some(n=>n.textContent==="No short vowel resolved in this recording."));
     assert.ok(nodes(x.mount).every(n=>!n.className.split(" ").includes("am-acoustic-cursor")&&!n.className.split(" ").includes("am-confirmed")));
     x.dispose();
