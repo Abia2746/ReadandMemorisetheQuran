@@ -150,7 +150,7 @@ export default function(component) {
   micPanel.appendChild(micTop);
   const micBody=CE("div","am-scaffold");
   const micDescription=CE("p","am-note",
-     "The Qur’an listener follows the sounds in your microphone on this device. A green outline shows your estimated place. Pronunciation and Tajweed remain ungraded.");
+     "The Qur’an listener follows the sounds in your microphone on this device. A dashed gold outline shows your estimated place. Pronunciation and Tajweed remain ungraded.");
   const micControls=CE("div","am-control-row");
   const micButton=btn("🎙 Start listening","am-button am-primary");
 
@@ -158,6 +158,7 @@ export default function(component) {
   engineSelect.setAttribute("aria-label","Speech recognition method");
   [
     ["local","On-device Qur’an listener"],
+    ["vowels","Short-vowel review · 12 seconds on device"],
     ["browser","Optional · browser Arabic transcription"],
     ["cloud",D.cloudAvailable?"Optional · cloud Arabic transcription":"Cloud transcription · requires API key"]
   ].forEach(([value,label])=>{
@@ -170,6 +171,9 @@ export default function(component) {
   const micText=CE("div","am-note","Choose a listener, then tap Start listening.");
   const micMessage=CE("div","am-note","Audio stays on this device while using the Qur’an listener.");
   append(micBody,micDescription,micControls,meter,micText,micMessage);
+  const vowelReport=CE("div","am-note");
+  vowelReport.setAttribute("role","status");
+  micBody.appendChild(vowelReport);
   micPanel.appendChild(micBody);
   main.appendChild(micPanel);
   const teacher=CE("section","am-panel am-teacher");
@@ -514,6 +518,12 @@ export default function(component) {
     return {cursor,matched};
   }
   function updateMatchCount(){
+    if(engineSelect.value==="vowels"){
+      liveCountLabel.textContent="Short-vowel review";
+      liveCount.textContent="Ungraded";
+      progressFill.style.width="0%";
+      return;
+    }
     if(engineSelect.value==="local"){
       liveCountLabel.textContent="Current listening position";
       liveCount.textContent=acousticCursor<0?"Waiting for recitation":String(words[acousticCursor].ayah)+", word "+reviewLocations[acousticCursor].position;
@@ -675,7 +685,7 @@ export default function(component) {
   }
   toggleHint.onclick=()=>{showHints=!showHints;renderWords()};
   toggleColour.onclick=()=>{showTajweed=!showTajweed;renderWords()};
-  resetBtn.onclick=async()=>{if(live)await stopLive();clearAudioCues();currentWord=-1;confirmedWord=-1;confirmedIndices.clear();updateMatchCount();lastPlaybackUiKey="";progressFill.style.width="0%";setStatus("Ready to practise from the beginning.");transcript.textContent="";renderWords()};
+  resetBtn.onclick=async()=>{if(live)await stopLive();clearAudioCues();vowelReport.replaceChildren();currentWord=-1;confirmedWord=-1;confirmedIndices.clear();updateMatchCount();lastPlaybackUiKey="";progressFill.style.width="0%";setStatus("Ready to practise from the beginning.");transcript.textContent="";renderWords()};
   recordHint.onclick=()=>{
     micPanel.scrollIntoView({behavior:"smooth",block:"center"});
     // Start capture from the original tap, preserving the iPad user gesture.
@@ -1394,19 +1404,21 @@ export default function(component) {
     });
     return sharedQuranEnginePromise;
   }
+  function onDevice(){return engineSelect.value==="local"||engineSelect.value==="vowels"}
   function prepareSelectedListener(){
-    if(engineSelect.value!=="local")return;
+    if(!onDevice())return;
     micText.textContent="Loading the on-device listener…";
     loadSdk().then(()=>{
-      if(!live&&engineSelect.value==="local")micText.textContent="On-device listener ready. Tap Start listening.";
+      if(!live&&onDevice())micText.textContent="On-device listener ready. Tap Start listening.";
     }).catch(()=>{
-      if(!live&&engineSelect.value==="local")micText.textContent="On-device listener unavailable. Tap Start to retry.";
+      if(!live&&onDevice())micText.textContent="On-device listener unavailable. Tap Start to retry.";
     });
   }
   engineSelect.onchange=()=>{
     updateMatchCount();
-    if(engineSelect.value==="local"){
-      micMessage.textContent="Audio stays on this device while using the Qur’an listener.";
+    vowelReport.replaceChildren();
+    if(onDevice()){
+      micMessage.textContent=engineSelect.value==="vowels"?"Recite one word or a short phrase. Stop to see possible vowel sounds. Audio stays on this device.":"Audio stays on this device while using the Qur’an listener.";
       prepareSelectedListener();
     }else{
       micText.textContent="Tap Start listening to use the selected transcription service.";
@@ -1415,6 +1427,59 @@ export default function(component) {
     }
   };
   prepareSelectedListener();
+  function showVowels(evidence){
+    const names=new Map([["َ","Fatḥah /a/"],["ِ","Kasrah /i/"],["ُ","Ḍammah /u/"]]);
+    const list=CE("ol","");
+    for(const chunk of evidence){
+      for(const phone of chunk.phonemes){
+        const name=names.get(phone.p);
+        if(!name)continue;
+        const time=phone.start*chunk.frameMs/1000;
+        list.appendChild(CE("li","",name+" · "+time.toFixed(2)+" s"));
+      }
+    }
+    vowelReport.replaceChildren();
+    if(!list.childNodes.length){
+      vowelReport.textContent="No short vowel resolved in this recording.";
+      return;
+    }
+    append(vowelReport,CE("p","","Possible short vowels in recording order. Times mark approximate model detections. Some sounds may be missed or misidentified."),list);
+  }
+  async function vowelLive(prepared){
+    let engine,session,mic,timer,closed=false,failed=false;
+    const cleanup=async()=>{
+      if(closed)return;
+      closed=true;
+      clearTimeout(timer);
+      try{
+        if(mic){
+          await mic.stop();
+          if(!failed&&!engineAbort.signal.aborted)showVowels(session.evidence());
+        }
+      }catch(_){vowelReport.textContent="Vowel review could not finish. Try another short recording."}
+      finally{
+        prepared.release();
+        session?.dispose();
+        await engine?.dispose();
+      }
+    };
+    cleanupLive=cleanup;
+    try{
+      setStatus("Loading the on-device vowel listener…","active");
+      engine=await tilawaSdkReady.createTilawa({tier:"lite",providers:["wasm"],threads:1,
+        recordEvidence:true,signal:engineAbort.signal});
+      if(closed){await engine.dispose();return}
+      session=engine.startFreeRecitation();
+      mic=await engine.listen(session,{prepared,vad:false,onError:()=>{
+        failed=true;
+        vowelReport.textContent="Audio analysis was interrupted. Try recording again.";
+        if(!closed)void stopLive();
+      }});
+      if(closed){await mic.stop();return}
+      setStatus("Recite now · vowel review stops after 12 seconds.","active");
+      timer=setTimeout(()=>{if(!closed)void stopLive()},12000);
+    }catch(error){failed=true;await cleanup();throw error}
+  }
   async function localLive(prepared){
     // prepareMicrophone() is invoked synchronously in the button event, before
     // asynchronous model downloads, to preserve Safari's user gesture.
@@ -1531,7 +1596,7 @@ export default function(component) {
       if(disposed){await mic.stop();return}
       micText.textContent="On-device Quran recognition active · no recitation audio sent to Gemini.";
       setStatus("Quran model listening. Begin reciting the displayed ayahs...","active");
-      coach("Recite naturally. The green outline follows the word the listener locates.","guide");
+      coach("Recite naturally. The dashed gold outline follows the word the listener locates.","guide");
     }catch(error){
       await cleanup();
       cleanupLive=null;
@@ -1546,7 +1611,7 @@ export default function(component) {
     let preparedLocalMic=null;
     try{
       if(!audio.paused)audio.pause();
-      if(engineSelect.value==="local"){
+      if(onDevice()){
         if(!tilawaSdkReady){
           await loadSdk();
           micText.textContent="On-device listener ready.";
@@ -1564,8 +1629,10 @@ export default function(component) {
       transcript.textContent="";
       engineSelect.disabled=true;
       clearAudioCues();
+      vowelReport.replaceChildren();
       live=true;
       if(engineSelect.value==="cloud")await cloudLive();
+      else if(engineSelect.value==="vowels")await vowelLive(preparedLocalMic);
       else if(engineSelect.value==="local")await localLive(preparedLocalMic);
       else await browserLive();
       if(!live)return;

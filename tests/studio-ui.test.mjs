@@ -79,8 +79,13 @@ async function fixture(mode,overrides={},startListening=true,browserWindow={},de
       prepared++;
       return {release(){}}
     },
-    async createTilawa(){
+    async createTilawa(options){
       return {
+        startFreeRecitation(){
+          assert.equal(options.recordEvidence,true);
+          assert.equal(options.tier,"lite");
+          return {evidence:()=>overrides.testEvidence,dispose(){}};
+        },
         startMemorization(){
           return {subscribe(fn){callback=fn},dispose(){}}
         },
@@ -125,6 +130,30 @@ async function fixture(mode,overrides={},startListening=true,browserWindow={},de
   return {mount,callback,dispose,getStopCount:()=>stopCount};
 }
 
+{
+  const cases=[["one vowel",[{frameMs:40,phonemes:[{p:"ب",start:0},{p:"َ",start:3}]}],1],["consonant only",[{frameMs:40,phonemes:[{p:"ب",start:0}]}],0]];
+  if(process.env.QURAN_VOWEL_TRACES){
+    for(const [name,count] of [["phrase",36],["prefix",0],["quiet",0]]){
+      cases.push([name,JSON.parse(readFileSync(resolve(process.env.QURAN_VOWEL_TRACES,name+"-vowels.json"),"utf8")),count]);
+    }
+  }
+  for(const [name,testEvidence,expected] of cases){
+    const x=await fixture("blind",{testEvidence},false);
+    const select=nodes(x.mount).find(n=>n.tag==="select");
+    select.value="vowels";
+    select.onchange();
+    const mic=nodes(x.mount).find(n=>n.textContent==="🎙 Start listening");
+    await mic.onclick();
+    await mic.onclick();
+    assert.equal(x.getStopCount(),1);
+    const rows=nodes(x.mount).filter(n=>n.tag==="li"&&n.textContent.match(/ · [0-9.]+ s$/));
+    assert.equal(rows.length,expected,name);
+    if(name==="one vowel")assert.equal(rows[0].textContent,"Fatḥah /a/ · 0.12 s");
+    if(!expected)assert.ok(nodes(x.mount).some(n=>n.textContent==="No short vowel resolved in this recording."));
+    assert.ok(nodes(x.mount).every(n=>!n.className.split(" ").includes("am-acoustic-cursor")&&!n.className.split(" ").includes("am-confirmed")));
+    x.dispose();
+  }
+}
 {
   const x=await fixture("blind");
   let reveal=nodes(x.mount).filter(n=>n.className.split(" ").includes("am-revealed-ar"));
