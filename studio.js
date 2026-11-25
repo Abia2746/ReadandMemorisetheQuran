@@ -361,6 +361,29 @@ export default function(component) {
     wordNodes.forEach((el,j)=>el.classList.toggle("am-practice-selected",j===i));
     rescueText.textContent="Choose Flag, Reveal or Hear for this selected phrase.";
   }
+  const audioCues=new Map();
+  const cuePanel=CE("div","am-audio-cues");
+  const cueLabels=new Map([
+    ["wrong_word","Possible word change"],["omitted_word","Possible missed word"],
+    ["added_word","Possible extra word"],["skipped_passage","Possible skipped passage"]
+  ]);
+  rescuePanel.appendChild(cuePanel);
+  function renderAudioCues(){
+    cuePanel.replaceChildren();
+    cuePanel.hidden=audioCues.size===0;
+    if(cuePanel.hidden)return;
+    cuePanel.appendChild(CE("div","am-note","From this recording · select a suggestion to review it."));
+    for(const {index,label} of audioCues.values()){
+      const control=btn(label+" · Ayah "+words[index].ayah+", word "+reviewLocations[index].position,"am-button");
+      control.onclick=()=>selectPracticeWord(index);
+      cuePanel.appendChild(control);
+    }
+  }
+  function clearAudioCues(){
+    audioCues.clear();
+    renderAudioCues();
+  }
+  renderAudioCues();
   flagButton.onclick=()=>{
     const i=rescueTarget();
     if(i<0)return;
@@ -652,7 +675,7 @@ export default function(component) {
   }
   toggleHint.onclick=()=>{showHints=!showHints;renderWords()};
   toggleColour.onclick=()=>{showTajweed=!showTajweed;renderWords()};
-  resetBtn.onclick=async()=>{if(live)await stopLive();currentWord=-1;confirmedWord=-1;confirmedIndices.clear();updateMatchCount();lastPlaybackUiKey="";progressFill.style.width="0%";setStatus("Ready to practise from the beginning.");transcript.textContent="";renderWords()};
+  resetBtn.onclick=async()=>{if(live)await stopLive();clearAudioCues();currentWord=-1;confirmedWord=-1;confirmedIndices.clear();updateMatchCount();lastPlaybackUiKey="";progressFill.style.width="0%";setStatus("Ready to practise from the beginning.");transcript.textContent="";renderWords()};
   recordHint.onclick=()=>{
     micPanel.scrollIntoView({behavior:"smooth",block:"center"});
     // Start capture from the original tap, preserving the iPad user gesture.
@@ -1402,7 +1425,17 @@ export default function(component) {
       if(disposed)return;
       disposed=true;
       try{prepared.release()}catch(_){}
-      try{if(mic)await mic.stop()}catch(_){}
+      try{
+        const finalEvents=mic?await mic.stop():[];
+        // A final decoder pass may withdraw a previously displayed cue.
+        let changed=false;
+        for(const event of finalEvents||[]){
+          if(event.type==="checker"&&(event.state==="resolved"||event.state==="uncertain")){
+            if(audioCues.delete(event.id))changed=true;
+          }
+        }
+        if(changed)renderAudioCues();
+      }catch(_){}
       try{session?.dispose()}catch(_){}
       meterFill.style.width="0%";
     };
@@ -1438,6 +1471,23 @@ export default function(component) {
       }
       session.subscribe(event=>{
         if(!live||disposed||!event)return;
+        if(event.type==="checker"){
+          if(typeof event.id!=="string"||!event.id)return;
+          if(event.state==="resolved"||event.state==="uncertain"){
+            if(audioCues.delete(event.id))renderAudioCues();
+            return;
+          }
+          const index=globalIndex(event.location);
+          const label=cueLabels.get(event.errorClass);
+          if(event.state!=="confirmed"||!label||!Number.isFinite(event.confidence)||event.confidence<0.60||
+             !words[index]||!words[acousticCursor])return;
+          // Confirmation may arrive several ayahs after the affected word.
+          const previous=audioCues.get(event.id);
+          if(previous?.index===index&&previous.label===label)return;
+          audioCues.set(event.id,{index,label});
+          renderAudioCues();
+          return;
+        }
         if(event.type==="position"){
           // The SDK ranks alternatives best first, including out-of-passage
           // matches. Never substitute a weaker candidate inside the selection.
@@ -1513,6 +1563,7 @@ export default function(component) {
       }
       transcript.textContent="";
       engineSelect.disabled=true;
+      clearAudioCues();
       live=true;
       if(engineSelect.value==="cloud")await cloudLive();
       else if(engineSelect.value==="local")await localLive(preparedLocalMic);

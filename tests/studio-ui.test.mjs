@@ -175,6 +175,31 @@ async function fixture(mode,overrides={},startListening=true,browserWindow={},de
   x.dispose();
 }
 {
+  const x=await fixture("blind");
+  const panel=x.mount.querySelector(".am-audio-cues");
+  const location={surah:2,ayah:60,word:2};
+  const cue={type:"checker",id:"w2",state:"confirmed",errorClass:"omitted_word",confidence:.9,location};
+  x.callback(cue);
+  assert.equal(panel.hidden,true);
+  x.callback({type:"position",state:"locked",observed:[{word:location}]});
+  for(const changes of [{state:"suspected"},{confidence:.2},{errorClass:"short_vowel"},{location:{...location,surah:1}}]){
+    x.callback({...cue,...changes});
+    assert.equal(panel.hidden,true);
+  }
+  x.callback(cue);
+  x.callback(cue);
+  const buttons=nodes(panel).filter(n=>n.tag==="button");
+  assert.equal(buttons.length,1);
+  assert.match(buttons[0].textContent,/Possible missed word · Ayah 60, word 2/);
+  assert.equal(nodes(x.mount).some(n=>n.className.split(" ").includes("am-confirmed")),false);
+  buttons[0].onclick();
+  assert.ok(nodes(x.mount).some(n=>n.textContent.includes("Selected · Ayah 60, word 2")));
+  x.callback({type:"position",state:"lost"});
+  x.callback({...cue,state:"resolved"});
+  assert.equal(panel.hidden,true);
+  x.dispose();
+}
+{
   const segments = [
     {ayah:60,word_idx:0,start:0,end:1000},
     {ayah:60,word_idx:1,start:1000,end:2000},
@@ -245,6 +270,24 @@ console.log("PASS: SDK position estimates never validate phrases; reader timings
 
 // Optional integration replay: unmodified position events captured from PCM
 // by the pinned SDK. A trace contains hypotheses, never correctness labels.
+// Replay real SDK events captured from the same clip with different inputs.
+if(process.env.QURAN_CUE_TRACES){
+  for(const [name,surah,counts,expected] of [
+    ["clean",1,[4,4,2,3,4,3,9],0],["cut",1,[4,4,2,3,4,3,9],2],
+    ["other",2,[1,7,8,12,8],0],["silence",1,[4,4,2,3,4,3,9],0]
+  ]){
+    const x=await fixture("blind",{meta:{s:surah,a:1,end:counts.length},
+      trackWordCounts:counts,words:counts.flatMap((count,i)=>Array.from({length:count},()=>({...testWords[0],ayah:i+1})))});
+    const events=JSON.parse(readFileSync(resolve(process.env.QURAN_CUE_TRACES,name+".json"),"utf8"));
+    for(const event of events)x.callback(event);
+    const cues=nodes(x.mount.querySelector(".am-audio-cues")).filter(n=>n.tag==="button");
+    assert.equal(cues.length,expected,name);
+    if(name==="cut")assert.deepEqual(cues.map(n=>n.textContent),[
+      "Possible skipped passage · Ayah 3, word 2","Possible skipped passage · Ayah 4, word 1"
+    ]);
+    x.dispose();
+  }
+}
 if(process.env.QURAN_POSITION_REPLAY){
   const events=JSON.parse(readFileSync(process.env.QURAN_POSITION_REPLAY,"utf8"));
   const ayah=Number(process.env.QURAN_REPLAY_AYAH);
