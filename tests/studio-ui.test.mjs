@@ -87,7 +87,7 @@ async function fixture(mode,overrides={},startListening=true,browserWindow={},de
           return {onAudio(fn){fn(Float32Array.from({length:192000},(_,i)=>(i%32)/32),0)},evidence:()=>overrides.testEvidence,dispose(){}};
         },
         startMemorization(){
-          return {subscribe(fn){callback=fn},dispose(){}}
+          return {subscribe(fn){callback=fn},onAudio(fn){if(overrides.sampleInput)fn(overrides.sampleInput,0)},dispose(){}}
         },
         async listen(){listenCount++;return {stop:async()=>{stopCount++}}},
         async dispose(){}
@@ -243,6 +243,28 @@ async function fixture(mode,overrides={},startListening=true,browserWindow={},de
   x.callback({type:"position",state:"lost"});
   x.callback({...cue,state:"resolved"});
   assert.equal(panel.hidden,true);
+  x.dispose();
+}
+{
+  const input=Float32Array.from({length:32000},(_,i)=>Math.sin(i*.12));
+  let played;
+  class Context{
+    async resume(){}
+    async close(){}
+    createBuffer(_,n){played=new Float32Array(n);return {getChannelData:()=>played}}
+    createBufferSource(){return {connect(){},start(){}}}
+  }
+  const x=await fixture("full",{sampleInput:input},true,{AudioContext:Context});
+  const location={surah:2,ayah:60,word:1};
+  x.callback({type:"position",state:"locked",timeMs:1500,observed:[{word:location}]});
+  const cue={type:"checker",id:"one",state:"confirmed",errorClass:"wrong_word",confidence:.9,location};
+  x.callback(cue);
+  const replay=()=>nodes(x.mount).find(n=>n.textContent==="Hear my recitation near this word");
+  assert.ok(replay().disabled);
+  await nodes(x.mount).find(n=>n.textContent==="■ Stop listening").onclick();
+  assert.equal(replay().disabled,false);
+  await replay().onclick();
+  assert.deepEqual(played,input.slice(0,27200));
   x.dispose();
 }
 {

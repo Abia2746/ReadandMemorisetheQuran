@@ -378,10 +378,17 @@ export default function(component) {
     cuePanel.hidden=audioCues.size===0;
     if(cuePanel.hidden)return;
     cuePanel.appendChild(CE("div","am-note","From this recording · select a suggestion to review it."));
-    for(const {index,label} of audioCues.values()){
+    for(const {index,label,clip} of audioCues.values()){
       const control=btn(label+" · Ayah "+words[index].ayah+", word "+reviewLocations[index].position,"am-button");
       control.onclick=()=>selectPracticeWord(index);
       cuePanel.appendChild(control);
+      if(clip){
+        const replay=btn("Hear my recitation near this word","am-button");
+        replay.disabled=live;
+        replay.title=live?"Stop listening to replay your recording.":"Replay the surrounding sounds.";
+        replay.onclick=()=>{if(!live)void replaySamples(clip,0,clip.length,replay)};
+        cuePanel.appendChild(replay);
+      }
     }
   }
   function clearAudioCues(){
@@ -1025,6 +1032,7 @@ export default function(component) {
     wordNodes[acousticCursor]?.classList.remove("am-acoustic-cursor");
     acousticCursor=-1;
     updateMatchCount();
+    renderAudioCues();
     wordNodes.forEach(el=>el.classList.remove("am-active"));
     engineSelect.disabled=false;
     setStatus("Listening stopped.");
@@ -1456,10 +1464,13 @@ export default function(component) {
     vowelReport.replaceChildren();
   }
   async function replayVowel(pcm,time,button){
-    stopVowelPlayback();
-    if(!audio.paused)audio.pause();
     const first=Math.max(0,Math.floor((time-0.35)*16000));
     const last=Math.min(pcm.length,Math.ceil((time+0.45)*16000));
+    return replaySamples(pcm,first,last,button);
+  }
+  async function replaySamples(pcm,first,last,button){
+    stopVowelPlayback();
+    if(!audio.paused)audio.pause();
     if(first>=last)return;
     let context;
     try{
@@ -1585,6 +1596,34 @@ export default function(component) {
         // pronunciation warnings without teaching the model subtle vowels.
         {confirm:{after:"next-word"},minConfidence:0.60}
       );
+      // Keep a bounded window in session-clock samples. Copy a clip only when
+      // a suggestion has a recent, independently located occurrence of its word.
+      const recent=[];
+      const locatedAt=new Map();
+      session.onAudio?.((samples,startMs)=>{
+        if(disposed||!samples.length)return;
+        const start=Math.round(startMs*16);
+        const end=start+samples.length;
+        recent.push({start,end,samples});
+        while(recent.length&&recent[0].end<=end-16*16000)recent.shift();
+      });
+      function nearbyClip(index){
+        const at=locatedAt.get(index);
+        if(!Number.isFinite(at)||!recent.length)return null;
+        const from=Math.max(0,Math.round(at*16)-24000);
+        const to=Math.min(Math.round(at*16)+3200,recent[recent.length-1].end);
+        if(from<recent[0].start||to<=from||to<Math.round(at*16))return null;
+        const clip=new Float32Array(to-from);
+        let written=0;
+        for(const block of recent){
+          const a=Math.max(from,block.start),b=Math.min(to,block.end);
+          if(b<=a)continue;
+          if(a!==from+written)return null;
+          clip.set(block.samples.subarray(a-block.start,b-block.start),written);
+          written+=b-a;
+        }
+        return written===clip.length?clip:null;
+      }
       const counts=Array.isArray(D.trackWordCounts)?D.trackWordCounts:[];
       // Precompute verse offsets once; recognition events can arrive rapidly.
       const verseOffsets=[0];
@@ -1620,7 +1659,8 @@ export default function(component) {
           // Confirmation may arrive several ayahs after the affected word.
           const previous=audioCues.get(event.id);
           if(previous?.index===index&&previous.label===label)return;
-          audioCues.set(event.id,{index,label});
+          const clip=event.errorClass==="wrong_word"&&audioCues.size<24?nearbyClip(index):null;
+          audioCues.set(event.id,{index,label,clip});
           renderAudioCues();
           return;
         }
@@ -1636,6 +1676,7 @@ export default function(component) {
               "Listening for a clear location…","active");
             return;
           }
+          if(Number.isFinite(event.timeMs))locatedAt.set(idx,event.timeMs);
           if(acousticCursor!==idx){
             clearCursor();
             acousticCursor=currentWord=idx;
