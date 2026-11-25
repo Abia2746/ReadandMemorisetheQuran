@@ -102,7 +102,7 @@ export default function(component) {
   const toggleHint=btn("✧ "+T("hints","Show hints"));
   const toggleColour=btn("◈ Tajweed signs");
   const resetBtn=btn("↺ "+T("reset","Start over"));
-  const recordHint=btn("🎙 Live recitation","am-button am-primary");
+  const recordHint=btn("🎙 Start live word tracking","am-button am-primary");
   append(controls,toggleHint,toggleColour,resetBtn,recordHint);
   readerPanel.appendChild(controls);
   const status=CE("div","am-status");
@@ -688,10 +688,8 @@ export default function(component) {
   toggleColour.onclick=()=>{showTajweed=!showTajweed;renderWords()};
   resetBtn.onclick=async()=>{if(live)await stopLive();clearAudioCues();clearVowelReview();currentWord=-1;confirmedWord=-1;confirmedIndices.clear();updateMatchCount();lastPlaybackUiKey="";progressFill.style.width="0%";setStatus("Ready to practise from the beginning.");transcript.textContent="";renderWords()};
   recordHint.onclick=()=>{
-    micPanel.scrollIntoView({behavior:"smooth",block:"center"});
     // Start capture from the original tap, preserving the iPad user gesture.
-    if(!live)void micButton.onclick();
-    else micButton.focus();
+    if(!starting)void micButton.onclick();
   };
   repeatCount.textContent=String(repetitions)+" repetitions";
   repeatButton.onclick=()=>{
@@ -1003,6 +1001,7 @@ export default function(component) {
     watchdog=restartHandle=null;
   }
   async function stopLive(){
+    recordHint.textContent="🎙 Start live word tracking";
     live=false;starting=false;micButton.disabled=true;clearTimers();
     try{if(cleanupLive)await cleanupLive()}catch(_){}
     cleanupLive=null;
@@ -1086,6 +1085,7 @@ export default function(component) {
         live=false;starting=false;engineSelect.disabled=false;clearTimers();
         cleanupLive=null;
         micButton.disabled=false;
+        recordHint.textContent="🎙 Start live word tracking";
         micButton.textContent="🎙 Restart listener";
         micButton.classList.remove("am-danger");
         micButton.classList.add("am-primary");
@@ -1380,7 +1380,7 @@ export default function(component) {
     sharedQuranEnginePromise=(async()=>{
       const sdk=tilawaSdkReady||await loadSdk();
       const created=await sdk.createTilawa({
-        tier:"auto",
+        tier:"lite",
         providers:["wasm"],threads:1,signal:engineAbort.signal,
         onProgress:p=>{
           const stage=p.stage==="model"?"speech model":
@@ -1614,7 +1614,7 @@ export default function(component) {
           // matches. Never substitute a weaker candidate inside the selection.
           const best=event.observed?.[0];
           const idx=globalIndex(best?.word);
-          if(event.state!=="locked"||idx<0||event.hold||event.spanHold){
+          if(event.state!=="locked"||idx<0||event.hold){
             clearCursor();
             updateMatchCount();
             setStatus(event.state==="locked"&&idx<0?"Heard a different passage · check your selection":
@@ -1692,6 +1692,7 @@ export default function(component) {
       else if(engineSelect.value==="local")await localLive(preparedLocalMic);
       else await browserLive();
       if(!live)return;
+      recordHint.textContent="■ Stop live word tracking";
       micButton.textContent="■ Stop listening";
       micButton.classList.remove("am-primary");
       micButton.classList.add("am-danger");

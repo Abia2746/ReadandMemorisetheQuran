@@ -206,6 +206,8 @@ pointer-events:none;direction:ltr}
 .am-app select,.am-app input { background:#2A1F18; border:1px solid #4A3828; color:#F5EBE0; }
 
 .am-app .am-mushaf .am-word.am-acoustic-cursor {
-  outline: 2px dashed #e1b969;
+  background: #f6d995 !important;
+  color: #35280d !important;
+  outline: 2px dashed #84611d;
   outline-offset: 2px;
 }

@@ -210,7 +210,10 @@ async function fixture(mode,overrides={},startListening=true,browserWindow={},de
   assert.doesNotMatch(wordNodes[2].className,/am-acoustic-cursor/);
   x.callback({type:"position",state:"locked",observed:[{word:{surah:2,ayah:61,word:1}},word(2)]});
   assert.ok(wordNodes.every(n=>!n.className.includes("am-acoustic-cursor")));
-  for(const event of [{state:"ambiguous"},{state:"lost"},{state:"locked",spanHold:true},{state:"locked",hold:"start"}]){
+  x.callback({type:"position",state:"locked",spanHold:true,observed:[word(2)]});
+  assert.match(wordNodes[1].className,/am-acoustic-cursor/,"a repeated span may have a locked position while mistake checking waits");
+  assert.doesNotMatch(wordNodes[1].className,/am-confirmed/);
+  for(const event of [{state:"ambiguous"},{state:"lost"},{state:"locked",hold:"start"}]){
     x.callback({type:"position",state:"locked",observed:[word(2)]});
     x.callback({type:"position",observed:[word(2)],...event});
     assert.ok(wordNodes.every(n=>!n.className.includes("am-acoustic-cursor")));

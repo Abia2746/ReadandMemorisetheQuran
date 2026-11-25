@@ -1112,7 +1112,8 @@ st.markdown(
 )
 
 left, right = st.columns([3, 2], gap="large")
-with left:
+@st.fragment
+def recording_review():
     # A recording can contain one ayah even when the on-screen passage has five.
     # Don't assess verses the learner never intended to recite.
     choices = ["Entire selected passage"] + [
@@ -1132,7 +1133,7 @@ with left:
             word for word in words if int(word["ayah"]) == chosen_ayah
         ]
     recording = st.audio_input(
-        _ui("Record your recitation"),
+        _ui("Record your recitation") + " · for review after recording",
         key=f"academy_rec_{passage_key}_{st.session_state.tries}",
     )
     st.caption(
@@ -1257,6 +1258,9 @@ with left:
                 st.error(_ui("The audio review was unsuccessful. Your recitation has not been graded."))
                 with st.expander(_ui("Technical details")):
                     st.code(str(exc))
+with left:
+    recording_review()
+
 with right:
     st.markdown("#### " + _ui("Review guidance"))
     st.write(_ui("1. Recite just the chosen passage."))
