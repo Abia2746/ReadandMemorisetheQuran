@@ -1,17 +1,48 @@
-.timing-lab {padding:clamp(.85rem,3vw,2rem);border-radius:1.3rem;background:#faf8ef;color:#28261f}
+.timing-lab {padding:clamp(.85rem,3vw,2rem);border-radius:1.3rem;color-scheme:dark;background:#1A1612;color:#F5EFE6}
 .timing-lab [hidden]{display:none!important}
 .timing-lab button,.timing-lab summary,.timing-lab label{min-height:44px;cursor:pointer;font:inherit}
-.timing-lab button{padding:.65rem 1rem;border:1px solid #9f9168;border-radius:2rem;color:#211e18;background:#fffaf0}
+.timing-lab button{padding:.65rem 1rem;border:1px solid #9f9168;border-radius:2rem;color:#F5EFE6;background:#30291f}
 .timing-lab button:disabled{opacity:.55;cursor:default}
 .recite-controls,.recite-summary{display:flex;align-items:center;flex-wrap:wrap;gap:.65rem;margin-block:1rem}
+.timing-lab .recite-controls,.timing-lab .recite-controls label{background:#1A1612;color:#F5EFE6}
+.recite-controls input{accent-color:#D4AF37}
 .recite-controls label{display:inline-flex;align-items:center;gap:.5rem}
-.recite-controls button{background:#d4af37;font-weight:700}
+.timing-lab .recite-controls button{background:#D4AF37;color:#1A1612;font-weight:700}
 .recite-canvas{line-height:2.25;font:clamp(1.7rem,5vw,2.6rem)/2.25 Amiri,"Scheherazade New",serif}
 .recite-word{display:inline-block;padding:0 .18em;border-radius:.3em}
 .recite-word.current{background:#ead89f}
 .recite-word.review{border-bottom:2px dotted #af632d}
 .recite-canvas.memory .recite-word:not(.current){filter:blur(7px);user-select:none}
-.recite-summary span{background:#ebe7d7;border-radius:2rem;padding:.45rem .8rem}
+.recite-summary span{background:#352d22;border-radius:2rem;padding:.45rem .8rem}
 .recite-card{padding:1rem;border:1px solid #a69871;border-radius:1rem}
 .timing-lab details,.timing-lab audio{margin-top:.8rem;max-width:100%}
 .timing-lab :focus-visible{outline:3px solid #94721b;outline-offset:2px}
+.recite-filters{display:flex;gap:.4rem;overflow-x:auto;padding:.25rem 2px .75rem}
+.recite-filters button{flex:none;font-size:.84rem}
+.recite-filters [aria-pressed=true]{color:#fff8dc;background:#493b1c;border-color:#493b1c}
+.recite-canvas{padding:clamp(.85rem,4vw,2.2rem);border-radius:1.15rem;background:#1a1612;color:#F5EFE6;text-align:center}
+.recite-line+.recite-line{border-top:1px solid #463c30;margin-top:.5rem;padding-top:.6rem}
+.recite-word{vertical-align:middle;min-width:44px;min-height:44px;margin:.18em .04em;line-height:1.85;transition:background-color .16s,color .16s}
+.recite-word.current{background:#534322;box-shadow:inset 0 -2px #d4af37;color:white}
+.recite-ayah{display:inline-block;font:normal .8rem/2 sans-serif;border:1px solid #857352;color:#e5cf9e;border-radius:50%;min-width:2em;vertical-align:middle}
+.recite-labels{display:flex;flex-wrap:wrap;justify-content:center;gap:.25rem}
+.recite-labels small{font:600 .68rem/1.45 system-ui}
+.recite-canvas [data-rule=madd]{--accent:#edca71}
+.recite-canvas [data-rule=merge]{--accent:#b5d7a4}
+.recite-canvas [data-rule=soften]{--accent:#accfed}
+.recite-canvas [data-rule=bounce]{--accent:#ffc0aa}
+.recite-canvas [data-rule=nasal]{--accent:#e0bde8}
+.recite-canvas small,.recite-canvas .ink{color:var(--accent)}
+.recite-word.review{border-bottom:2px solid #efaa87;background:#4b3025}
+.recite-canvas.blind-review .recite-word:not(.review):not(:focus){filter:blur(7px)}
+.recite-position,.timing-lab progress{width:100%;height:.35rem;accent-color:#a67d16}
+.recite-controls button:not([hidden]):last-child{animation:recite-pulse 2s ease-in-out infinite}
+@keyframes recite-pulse{50%{box-shadow:0 0 0 4px #d4af3738}}
+@media(prefers-reduced-motion:reduce){.recite-word,.recite-controls button{transition:none;animation:none!important}}
+.recite-word[role=button]{cursor:pointer}
+.timing-lab .recite-card h4{font:1.8rem/1.8 Amiri,"Scheherazade New",serif;margin:0}
+.recite-card button{margin:.25rem .35rem .25rem 0}
+.timing-lab progress{display:block}
+.timing-lab summary{display:list-item;align-content:center}
+
+.recite-word.filtered:not(.current):not(.review){background:#393125}

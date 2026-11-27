@@ -258,7 +258,7 @@ function speakerReferences(words,pcm){
   return groups;
 }
 
-function renderAudit(panel,result,pcm,selection,add,signal,timing,blind=false,saveFlag=null,original=pcm,technical=panel){
+function renderAudit(panel,result,pcm,selection,add,signal,timing,blind=false,saveFlag=null,original=pcm,technical=panel,hintsByWord=new Map()){
   let baseline;
   panel.replaceChildren();
   add("h3","Recitation summary",panel);
@@ -268,6 +268,7 @@ function renderAudit(panel,result,pcm,selection,add,signal,timing,blind=false,sa
   const card=add("section","",panel);card.className="recite-card";card.hidden=true;
   const cards=new Map();
   add("p",result.matched?"Tap a word to listen and practise.":"The recording was unclear. Try one ayah in a quieter spot.",panel);
+  add("p","Hafs reference phones from quran-transcript via Tilawa ref-v2. Timing and resonance are practice cues.",technical);
   const source=add("a","Reference · Tanzil Uthmani text",technical);
   source.href="https://tanzil.net";source.target="_blank";source.rel="noopener";
   let clipUrl,active,context,sourceNode,generation=0;
@@ -296,12 +297,9 @@ function renderAudit(panel,result,pcm,selection,add,signal,timing,blind=false,sa
     }
     const face=add("div","",card);face.hidden=true;cards.set(w,face);
     add("h4",w.arabic,face);
-    const stretch=w.tags.find(t=>t.startsWith("Reference long-vowel units:"));
-    const tip=w.tags.some(t=>t.includes("qalqalah"))?"Give the still consonant a light bounce without adding a vowel.":
-      w.tags.some(t=>t.includes("ghunnah"))?"Let the nasal sound resonate for two counts.":
-      stretch?"Hold the long vowel for "+stretch.split(": ")[1]+" counts in this reference reading.":
-      "Listen once, then repeat the word at a comfortable pace.";
-    add("p",tip,face);
+    const hints=hintsByWord.get(w.ref+":"+(w.index+1))||[];
+    const tips=[...new Set(hints.map(h=>h.tip))];
+    for(const tip of tips.length?tips:["Listen once, then repeat the word at a comfortable pace."])add("p",tip,face);
     if(!w.interval)add("p","This word could not be matched clearly.",face);
     if(timingCue)add("p","Listen again to the length of the short vowel.",face);
     const yours=add("button","▶ Your Voice",face);yours.disabled=!w.interval;

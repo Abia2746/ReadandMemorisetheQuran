@@ -13,7 +13,6 @@ import time
 import unicodedata
 import io
 import wave
-import numpy as np
 
 import requests
 import streamlit as st
@@ -23,8 +22,6 @@ from language_support import available_translations, translated_verses, UI_STRIN
 from interface_locales import ui_text
 from dynamic_localization import get_ui_translations
 from tajweed_review import rubric_for_prompt, normalize_review
-from phonetic_review import phonetic_reference, wav_signal_evidence, review_vowel_suggestions, wav_excerpt
-from phoneme_client import infer_acoustic_phones, service_ready
 from prayer_room import earn_recording_review
 
 
@@ -91,22 +88,6 @@ HARAKAH_NAMES = {
     "\u0654": "Hamza above", "\u0655": "Hamza below", "\u0670": "Superscript alif",
 }
 
-
-# ----------------------------- Helper to load local image as Base64 -----------------------------
-
-def get_image_base64(filename):
-    try:
-        path = pathlib.Path(__file__).with_name(filename)
-        if path.exists():
-            with open(path, "rb") as f:
-                encoded = base64.b64encode(f.read()).decode("utf-8")
-                return f"data:image/jpeg;base64,{encoded}"
-    except Exception:
-        pass
-    return ""
-
-OMAR_B64 = get_image_base64("IMG_6147.jpeg")
-NOOR_B64 = get_image_base64("IMG_6146.jpeg")
 
 
 # ----------------------------- Database & Analytics -----------------------------
@@ -266,6 +247,7 @@ def audio_url(surah, ayah, reciter_folder):
 # ----------------------------- Audio Compression & Gemini Scholarly Fallback -----------------------------
 
 def compress_audio(b):
+    import numpy as np
     try:
         with wave.open(io.BytesIO(b)) as w:
             ch, sw, fr = w.getnchannels(), w.getsampwidth(), w.getframerate()
@@ -461,6 +443,7 @@ def analyse_recitation(audio_bytes, mime_type, words, strictness, teacher_gender
         raise RuntimeError("Audio recording is empty.")
     original_mime = normalize_audio_mime_type(mime_type)
     # Inspect unmodified PCM: amplification/compression can obscure clipping.
+    from phonetic_review import phonetic_reference, wav_signal_evidence, review_vowel_suggestions
     signal_quality = wav_signal_evidence(audio_bytes)
     if signal_quality["available"] and signal_quality["quality"] == "review_needed":
         # The learner needs a better recording before an AI model guesses at
@@ -1102,7 +1085,7 @@ if destination == "practice":
     meta = {"s": surah, "a": ayah, "end": end_ayah, "xp": xp, "streak": streak}
     surah_arabic, surah_english = SURAH_TITLES.get(surah, ("القرآن الكريم", f"Surah {surah}"))
     teacher_name = "Ustadha Noor" if st.session_state.teacher_gender == "Female" else "Ustadh Omar"
-    avatar = NOOR_B64 if st.session_state.teacher_gender == "Female" else OMAR_B64
+    avatar = "app/static/noor.jpeg" if st.session_state.teacher_gender == "Female" else "app/static/omar.jpeg"
 
     # Small MP3 clips can be inspected by the on-device Quran model; if a clip is
     # too long or the source is unreachable, ordinary source-matched timings remain.
@@ -1149,6 +1132,9 @@ if destination == "practice":
             st.audio(tracks[0])
     st.caption("Al-Mu'allim · QuranLife word timings (CC BY 4.0) · Audio: EveryAyah. Recitation feedback supports practice; it is not certified Tajweed assessment.")
     st.stop()
+
+from phonetic_review import phonetic_reference, wav_excerpt
+from phoneme_client import infer_acoustic_phones, service_ready
 
 st.markdown(
     "<div class='am-python-section'>"

@@ -19,3 +19,19 @@ test('isolated-vowel calibration excludes outliers and adapts to later durations
  assert.equal(m.acousticBeat(),null);m.calibrate(140);assert.equal(m.acousticBeat(),120);
  for(let i=0;i<7;i++)m.calibrate(200);assert.equal(m.acousticBeat(),200);
 });
+
+import {awaitRecorderStep} from "../recording_lab.js";
+test("stalled startup times out and disposes a late listener exactly once",async()=>{
+  const signal=new AbortController().signal;
+  let complete,released=0;
+  const pending=new Promise(resolve=>{complete=resolve});
+  await assert.rejects(awaitRecorderStep(pending,5,signal,"Microphone timed out",()=>released++),/Microphone timed out/);
+  complete({});await pending;
+  assert.equal(released,1);
+});
+test("leaving Memorise cancels an unfinished step",async()=>{
+  const controller=new AbortController();
+  const waiting=awaitRecorderStep(new Promise(()=>{}),15000,controller.signal,"Timeout");
+  controller.abort();
+  await assert.rejects(waiting,{name:"AbortError"});
+});

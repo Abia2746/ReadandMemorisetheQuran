@@ -7,5 +7,6 @@ textColor = "#F5EBE0"
 font = "sans serif"
 
 [server]
+enableStaticServing = true
 headless = true
 maxUploadSize = 25

@@ -163,22 +163,21 @@ def render_studio(
         "letterResults": (review or {}).get("letter_results", {}),
         "wordFeedback": (review or {}).get("word_feedback", {}),
     }
-    # Force an ordinary JSON tree: Streamlit component payloads must not
-    # contain numpy scalars, dates, DB adapters or arbitrary Python objects.
-    # Converted values cannot execute code and are not interpolated into JS.
+    # Carry nested lists as JSON so Streamlit does not convert them to
+    # Arrow dataframes. Arabic text stays data throughout.
     try:
-        data = json.loads(json.dumps(data, ensure_ascii=False, default=str))
+        payload = json.dumps(data, ensure_ascii=False, default=str)
     except (TypeError, ValueError) as exc:
         _LOG.exception("R6 component JSON normalization failed")
         st.warning("Room payload could not be serialized; restoring safe defaults.")
         data["room"] = {
             "xp": 0, "coins": 0, "owned": [], "equipped": {}, "items": [],
         }
-        data = json.loads(json.dumps(data, ensure_ascii=False, default=str))
+        payload = json.dumps(data, ensure_ascii=False, default=str)
 
     # app.py provides a basic text and audio reader if the component fails.
     result = _studio(
-        data=data,
+        data={"payload": payload},
         key=key,
         on_request_cloud_change=lambda: None,
         on_room_action_change=lambda: None,
