@@ -20,6 +20,7 @@ from hifdh_planner import get_state as hifdh_state, save_plan as hifdh_save, fin
 _ROOT = Path(__file__).resolve().parent
 _STUDIO_CSS = (
     (_ROOT / "studio.css").read_text(encoding="utf-8")
+    + "\n" + (_ROOT / "apps/web/app/quiz.css").read_text(encoding="utf-8")
     + "\n" + (_ROOT / "prayer_room.css").read_text(encoding="utf-8")
     + "\n" + (_ROOT / "hifdh_planner.css").read_text(encoding="utf-8")
 )

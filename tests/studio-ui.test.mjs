@@ -409,7 +409,15 @@ if(process.env.QURAN_POSITION_REPLAY){
   find("Show meaning").onclick();
   submit();
   assert.ok(find("Round complete · 1 of 2 meanings matched."));
-  find("Retry missed words").onclick();
+  assert.ok(find("Know · 1"));
+  find("Must review · 1").onclick();
   assert.ok(find("Word 1 of 1 · 2:58:1"));
+  find("Sound on").onclick();
+  assert.ok(find("Sound off"));
+  nodes(quiz()).find(n=>n.tag==="input").value="and when";
+  submit(); submit();
+  assert.ok(find("Must review · 0").disabled);
+  find("Know · 2").onclick();
+  assert.ok(find("Word 1 of 2 · 2:57:1"));
   x.dispose();
 }

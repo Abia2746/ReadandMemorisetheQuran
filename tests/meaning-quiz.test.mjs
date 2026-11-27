@@ -12,3 +12,12 @@ test("ignores typography while requiring a complete answer",()=>{
     assert.equal(matchesMeaning(answer,"[the] manna"),false);
   assert.equal(matchesMeaning("you","[over] you"),false);
 });
+
+test("accepts optional words in a published gloss and preserves meaning-bearing differences",()=>{
+  for(const answer of ["asked for water","asked water"," Asked (for) water! "])
+    assert.equal(matchesMeaning(answer,"asked (for) water"),true);
+  assert.equal(matchesMeaning("and quails","and [the] quails"),true);
+  for(const answer of ["water","asked for","asked for food","never asked for water","water asked"])
+    assert.equal(matchesMeaning(answer,"asked (for) water"),false);
+  assert.equal(matchesMeaning("did ask","did (not) ask"),false);
+});
