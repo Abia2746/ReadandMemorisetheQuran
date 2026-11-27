@@ -14,3 +14,8 @@ test('PCM WAV preserves signed sample extremes and frame duration',async()=>{
  assert.equal(wav.getUint32(24,true),16000);assert.equal(wav.getUint32(40,true),6);
  assert.equal(wav.getInt16(44,true),-32768);assert.equal(wav.getInt16(48,true),32767);
 });
+test('isolated-vowel calibration excludes outliers and adapts to later durations',()=>{
+ const m=paceMeter();for(const ms of [20,700,100,120,120])m.calibrate(ms);
+ assert.equal(m.acousticBeat(),null);m.calibrate(140);assert.equal(m.acousticBeat(),120);
+ for(let i=0;i<7;i++)m.calibrate(200);assert.equal(m.acousticBeat(),200);
+});

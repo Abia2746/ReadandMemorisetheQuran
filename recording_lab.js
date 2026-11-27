@@ -1,6 +1,7 @@
 // Values are PCM sample counts at the SDK audio tap's specified rate, 16 kHz.
 export function paceMeter(){
   const taps=[];
+  const isolated=[];
   let lastTap=null, run=0, quiet=0;
   return {
     tap(ms){
@@ -14,6 +15,18 @@ export function paceMeter(){
     beat(){
       if(taps.length<3)return null;
       const sorted=[...taps].sort((a,b)=>a-b);
+      const mid=Math.floor(sorted.length/2);
+      return (sorted[mid]+sorted[Math.floor((sorted.length-1)/2)])/2;
+    },
+    calibrate(duration){
+      if(duration>=60 && duration<=600){
+        isolated.push(duration);
+        if(isolated.length>7)isolated.shift();
+      }
+    },
+    acousticBeat(){
+      if(isolated.length<4)return null;
+      const sorted=[...isolated].sort((a,b)=>a-b);
       const mid=Math.floor(sorted.length/2);
       return (sorted[mid]+sorted[Math.floor((sorted.length-1)/2)])/2;
     },
@@ -57,14 +70,25 @@ export default function(component){
     const el=document.createElement(tag);el.textContent=text;parent.appendChild(el);return el;
   };
   add("h3","Madd timing practice");
-  add("p","Tap four steady beats at your recitation pace. Practise one sustained vowel at a time. The meter follows periodic sound, including humming. Choose the exercise length yourself.");
+  add("p","Tap four steady beats at your recitation pace. Practise one vowel at a time. For a short-vowel exercise, choose 1 beat. The meter follows periodic sound, including humming. Choose the exercise length yourself.");
   const tap=add("button","Tap one beat");
   const pace=add("span","Waiting for taps");
   const meter=paceMeter();
   tap.onclick=()=>{meter.tap(performance.now());const beat=meter.beat();pace.textContent=beat?Math.round(beat)+" ms / beat":"Keep tapping"};
+  const modeLabel=add("label","Pace source ");
+  const mode=add("select","",modeLabel);
+  for(const [id,title] of [["tap","Tapped beat"],["cal","Calibrate with isolated short vowels"],["voice","Use calibrated vowels"]]){
+    const option=add("option",title,mode);option.value=id;
+  }
+  mode.onchange=()=>{
+    pace.textContent=mode.value==="cal"?"While recording, say four separate short vowels at your pace, with silence between them.":
+      mode.value==="voice"?(meter.acousticBeat()?meter.acousticBeat()+" ms / beat":"Calibrate four vowels first"):"Tap four steady beats";
+  };
   const label=add("label","Target ");
   const target=add("select","",label);
-  for(const n of [2,4,6]){const opt=add("option",n+" beats",target);opt.value=String(n)}
+  for(const n of [1,2,4,6]){const opt=add("option",n+" beats",target);opt.value=String(n)}
+  target.value="2";
+  const guard=add("p","");
   const bar=add("progress","");bar.max=2;bar.value=0;bar.setAttribute("aria-label","Elapsed beats");
   const elapsed=add("output","0.0 beats");elapsed.setAttribute("aria-live","off");
   const start=add("button","Prepare local recorder"), stop=add("button","Stop");
@@ -73,10 +97,13 @@ export default function(component){
   status.setAttribute("role","status");
   const player=add("audio","");player.controls=true;player.hidden=true;
   const save=add("a","Download session WAV");save.download="recitation.wav";save.hidden=true;
+  const report=add("section","");
+  let reference,clearAudit;
   let sdk,engine,session,mic,prepared,interval,url,dead=false,opening=false,closing=false;
   const abort=new AbortController();
-  let samples,count=0,analysed=0;
+  let samples,count=0,analysed=0,previousRun=0;
   function clearRecording(){
+    clearAudit?.();clearAudit=null;report.replaceChildren();
     if(url){player.pause();player.removeAttribute("src");player.load();URL.revokeObjectURL(url);url=null}
     save.hidden=player.hidden=true;
   }
@@ -90,8 +117,14 @@ export default function(component){
       url=URL.createObjectURL(pcmWave(samples.subarray(0,count)));
       player.src=save.href=url;player.hidden=save.hidden=false;
       status.textContent="Recording ready for playback.";
+      const inspect=add("button","Inspect word timing and compare reciters",report);
+      const evidence=session.evidence();
+      inspect.onclick=()=>{
+        const result=passageAudit(reference,component.data,evidence);
+        clearAudit=renderAudit(report,result,samples.subarray(0,count),component.data,add,abort.signal);
+      };
     }catch{if(!dead)status.textContent="Recording interrupted. Please try again."}
-    finally{session?.dispose();session=null;prepared?.release();prepared=null;closing=false;start.disabled=dead;}
+    finally{session?.dispose();session=null;prepared?.release();prepared=null;closing=false;start.disabled=dead;if(dead)await engine?.dispose();}
   }
   stop.onclick=()=>void finish();
   start.onclick=async()=>{
@@ -102,13 +135,14 @@ export default function(component){
         status.textContent="Preparing the on-device phoneme listener…";
         sdk=await import("https://esm.sh/@tilawa/core@1.0.0-rc.0/web?bundle&deps=onnxruntime-web@1.30.0");
         if(dead)return;
-        engine=await sdk.createTilawa({tier:"lite",threads:1,providers:["wasm"],recordEvidence:true,signal:abort.signal});
-        if(dead){await engine.dispose();return}
+        reference=await verifiedReference(abort.signal);
+        engine=await sdk.createTilawa({reference,tier:"lite",threads:1,providers:["wasm"],recordEvidence:true,signal:abort.signal});
+        if(dead)return;
         start.textContent="Start recording";status.textContent="Ready. Tap Start recording when you want to begin.";return;
       }
       prepared=sdk.prepareMicrophone();
       clearRecording();samples=new Float32Array(16000*90);count=analysed=0;
-      meter.frame(new Float32Array(640));
+      meter.frame(new Float32Array(640));previousRun=0;
       session=engine.startFreeRecitation();
       session.onAudio((pcm,ms)=>{
         if(dead)return;
@@ -116,10 +150,19 @@ export default function(component){
         if(at!==count||at>=samples.length)return;
         const part=pcm.subarray(0,samples.length-at);samples.set(part,at);count+=part.length;
         let duration;
-        while(analysed+320<=count){duration=meter.frame(samples.subarray(analysed,analysed+320));analysed+=320}
+        while(analysed+320<=count){
+          duration=meter.frame(samples.subarray(analysed,analysed+320));analysed+=320;
+          if(mode.value==="cal" && duration===0 && previousRun>0){
+            meter.calibrate(previousRun);
+            if(meter.acousticBeat())pace.textContent=meter.acousticBeat()+" ms / beat · choose Use calibrated vowels";
+          }
+          previousRun=duration;
+        }
         if(duration!==undefined){
-          const beat=meter.beat();bar.max=Number(target.value);
+          const beat=mode.value==="tap"?meter.beat():meter.acousticBeat();bar.max=Number(target.value);
           bar.value=beat?Math.min(bar.max,duration/beat):0;
+          guard.textContent=beat && target.value==="1" && duration>1.4*beat
+            ?"This periodic sound exceeds 1.4 tapped beats. Repeat the isolated vowel and compare.":"";
           elapsed.textContent=beat?(duration/beat).toFixed(1)+" beats":Math.round(duration)+" ms";
         }
       });
@@ -129,11 +172,11 @@ export default function(component){
       status.textContent="Recording · tap Stop to keep the session.";
     }catch{session?.dispose();session=null;prepared?.release();prepared=null;
       if(!dead)status.textContent="Recorder unavailable. Check microphone access and the model download, then retry."}
-    finally{opening=false;start.disabled=dead||!!mic||closing;}
+    finally{opening=false;start.disabled=dead||!!mic||closing;if(dead && !closing)await engine?.dispose();}
   };
   return ()=>{
     dead=true;abort.abort();clearTimeout(interval);clearRecording();prepared?.release();
-    if(mic)void finish().finally(()=>engine?.dispose());
-    else if(!opening){session?.dispose();void engine?.dispose()}
+    if(mic)void finish();
+    else if(!opening && !closing){session?.dispose();void engine?.dispose()}
   };
 }
