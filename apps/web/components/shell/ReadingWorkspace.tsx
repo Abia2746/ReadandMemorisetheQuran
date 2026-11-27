@@ -13,7 +13,7 @@ import { GuidedRecitationCoach } from "@/components/audio/GuidedRecitationCoach"
 import { AYAHS_PER_SURAH, type ReciterId } from "@/lib/quranMetadata";
 import { fetchJSON, fetchVerse, postJSON, apiPath, type QuranVerse, type QuranWord, type WordStatus, type DifficultWord } from "@/lib/verseApi";
 import { useStudyAuth, accessToken } from "@/lib/auth";
-import { alignObservation, statusMapAfter } from "@/lib/arabicAlignment";
+import { alignObservation, previewPosition, statusMapAfter } from "@/lib/arabicAlignment";
 import { flagDifficultWord, loadDifficultWords, removeDifficultWord,
   reviewDifficultWord } from "@/lib/difficultWords";
 
@@ -42,6 +42,7 @@ function Workspace(){
   const [streak,setStreak]=useState(0);
   const auth=useStudyAuth();
   const [micEngine,setMicEngine]=useState<"browser"|"whisper">("browser");
+  const [preview,setPreview]=useState<number|null>(null);
   const lastConfirmed=useRef(-1);
   const recitation=useRecitation();
   const {stop,stopMicrophone}=recitation;
@@ -100,7 +101,7 @@ function Workspace(){
     const ctrl=new AbortController();
     setLoading(true);setError("");setVerse(null);setTimings(null);
     setStatuses({});setRevealed(new Set());setSelection(null);
-    lastConfirmed.current=-1;
+    setPreview(null);lastConfirmed.current=-1;
     stop();stopMicrophone();
     fetchVerse(surah,ayah,reciter,lang,ctrl.signal)
       .then(value=>{if(!ctrl.signal.aborted)setVerse(value)})
@@ -177,8 +178,13 @@ function Workspace(){
     if(!verse)return;
     if(recitation.state.listening){recitation.stopMicrophone();return}
     setRecitationMessage("");
+    setPreview(null);
+    let provisionalStart=lastConfirmed.current+1;
     try{
       await recitation.startMicrophone(observation=>{
+        const index=previewPosition(verse.words,observation.transcript,provisionalStart);
+        setPreview(index);
+        if(observation.final && index!==null)provisionalStart=index+1;
         const update=alignObservation(verse.words,observation.transcript,
           lastConfirmed.current,observation.final,observation.confidence);
         if(update.matched.length===0 && update.reviewCandidates.length===0)return;
@@ -238,7 +244,7 @@ function Workspace(){
             <div className="mb-3 flex justify-between text-xs text-[#C8A96E]">
               <span>MEMORISE WITH MEANING</span><span>{surah}:{ayah}</span>
             </div>
-            <MeaningTileGrid words={verse.words} statuses={statuses} revealed={revealed} onSelect={onSelect}/>
+            <MeaningTileGrid preview={recitation.state.listening?preview:null} words={verse.words} statuses={statuses} revealed={revealed} onSelect={onSelect}/>
             <details className="mt-4 border-t border-[#4A3828] pt-3">
               <summary className="cursor-pointer text-xs text-[#E6D5B8]">Read complete Arabic ayah and English meaning</summary>
               <div dir="rtl" lang="ar" className="py-4 font-quran text-3xl leading-[2.2]">{verse.arabic_uthmani}</div>

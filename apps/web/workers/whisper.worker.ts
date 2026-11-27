@@ -28,7 +28,11 @@ self.onmessage=async (event:MessageEvent<Message>)=>{
     }
     return;
   }
-  if(event.data.type!=="transcribe"||transcribing)return;
+  if(event.data.type!=="transcribe")return;
+  if(transcribing){
+    self.postMessage({type:"busy",session:event.data.session});
+    return;
+  }
   transcribing=true;
   try{
     const model=await loadModel();

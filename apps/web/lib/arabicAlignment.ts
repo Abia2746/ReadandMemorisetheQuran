@@ -7,6 +7,14 @@ export function normalizeArabic(value:string):string {
     .replace(/ئ/g,"ي").replace(/ة/g,"ه")
     .replace(/[^\u0621-\u064A]+/g," ").trim();
 }
+// A reversible position cue for complete transcript words, independent of grades.
+export function previewPosition(expected:QuranWord[], transcript:string, start:number):number|null {
+  const tokens=normalizeArabic(transcript).split(/\s+/).filter(Boolean);
+  if(!tokens.length || start<0 || start+tokens.length>expected.length)return null;
+  if(!tokens.every((token,i)=>token===normalizeArabic(expected[start+i].arabic)))return null;
+  return start+tokens.length-1;
+}
+
 export type AlignmentUpdate = {
   matched:number[];
   reviewCandidates:number[];

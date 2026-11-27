@@ -193,10 +193,11 @@ export function RecitationProvider({children}:{children:ReactNode}) {
         }
         const worker=workerRef.current;
         const blocks:Float32Array[]=[];
-        let samples=0;let ready=false;
+        let samples=0;let ready=false;let decoding=false;
         worker.onmessage=(event:MessageEvent<{type:string;session:number;text?:string;message?:string}>)=>{
           if(event.data.session!==session || generation.current!==session)return;
           if(event.data.type==="ready"){ready=true;setState(state=>({...state,note:"Whisper is ready. Your Arabic speech stays on this device."}));}
+          if(event.data.type==="transcript"||event.data.type==="busy")decoding=false;
           if(event.data.type==="transcript" && event.data.text){
             onObservation.current?.({transcript:event.data.text,final:true,confidence:null,recognizer:"whisper"});
           }
@@ -211,7 +212,10 @@ export function RecitationProvider({children}:{children:ReactNode}) {
           if(!(chunk instanceof Float32Array))return;
           blocks.push(chunk);samples+=chunk.length;
           const rate=event.data.sourceRate||audioCtx.sampleRate;
-          if(samples<rate*5)return;
+          while(samples>rate*5 && blocks.length>1)samples-=blocks.shift()!.length;
+          // Send the first complete one-second input as soon as the worker can accept it.
+          if(samples<rate || decoding)return;
+          decoding=true;
           const joined=new Float32Array(samples);let offset=0;
           for(const block of blocks){joined.set(block,offset);offset+=block.length;}
           blocks.length=0;samples=0;

@@ -677,7 +677,9 @@ export default function(component) {
   function selectTab(tab){
     if(live && (tab==="journey"||tab==="listen"||tab==="room"))void stopLive();
     if(tab==="room" && !audio.paused)audio.pause();
-    currentTab=tab;showHints=false;detail.hidden=true;
+    currentTab=tab;
+    if(tab==="cover"&&engineSelect.value==="local")warmMemorisationModel();
+    showHints=false;detail.hidden=true;
     Object.entries(tabBtns).forEach(([id,b])=>b.setAttribute("aria-selected",String(id===tab)));
     const journey=tab==="journey",room=tab==="room";
     prayerRoom.setVisible(room);
@@ -1411,7 +1413,7 @@ export default function(component) {
           const fraction=Number.isFinite(p.fraction)?Math.round(p.fraction*100):0;
           if(purpose==="live"){
             setStatus("Loading on-device Quran "+stage+" · "+fraction+"%","active");
-          }else if(!live){
+          }else if(purpose==="reciter"&&!live){
             repeatHelp.textContent="Preparing audio-aware reciter following · "+
               stage+" "+fraction+"% (playback remains available)";
           }
@@ -1429,11 +1431,17 @@ export default function(component) {
     });
     return sharedQuranEnginePromise;
   }
+  function warmMemorisationModel(){
+    // Reuse the same promise on Start. Warming never opens the microphone.
+    if(navigator.connection?.saveData)return;
+    void ensureQuranEngine("memorise").catch(()=>{});
+  }
   function onDevice(){return engineSelect.value==="local"||engineSelect.value==="vowels"}
   function prepareSelectedListener(){
     if(!onDevice())return;
     micText.textContent="Loading the on-device listener…";
     loadSdk().then(()=>{
+      if(currentTab==="cover"&&engineSelect.value==="local")warmMemorisationModel();
       if(!live&&onDevice())micText.textContent="On-device listener ready. Tap Start listening.";
     }).catch(()=>{
       if(!live&&onDevice())micText.textContent="On-device listener unavailable. Tap Start to retry.";
