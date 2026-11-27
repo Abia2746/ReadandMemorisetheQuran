@@ -98,10 +98,54 @@ export default function(component){
   status.setAttribute("role","status");
   const player=add("audio","");player.controls=true;player.hidden=true;
   const save=add("a","Download session WAV");save.download="recitation.wav";save.hidden=true;
+  const blindLabel=add("label","Blind Hifz test ");
+  const blind=add("input","",blindLabel);blind.type="checkbox";
+  let selection=component.data;
+  const historyPanel=add("details","");add("summary","Device practice history",historyPanel);
+  const summary=add("p","",historyPanel),drill=add("button","Drill my weakest verses",historyPanel);
+  const exportBtn=add("button","Export history",historyPanel);
+  const importLabel=add("label","Import history ",historyPanel),file=add("input","",importLabel);
+  file.type="file";file.accept=".json,application/json";
+  let history,queue=[],drillIndex=0,exportUrl;
+  function refresh(){
+    try{
+      queue=history.queue();
+      summary.textContent=history.read().length+" saved sessions on this browser. "+queue.slice(0,3).map(v=>
+        v.s+":"+v.a+" · "+v.unresolved+" recall reviews · "+v.timing+" timing reviews "+
+        Object.entries(v.flags).map(([label,n])=>label+" ×"+n).join(", ")).join(" | ");
+      drill.disabled=!queue.length||!!mic||opening||closing;
+    }catch{summary.textContent="Practice history unavailable in this browser.";drill.disabled=true}
+  }
+  drill.onclick=()=>{
+    if(!queue.length||mic||opening||closing)return;
+    clearRecording();
+    const v=queue[drillIndex++%queue.length];
+    selection={...component.data,surah:v.s,first:v.a,end:v.a};blind.checked=true;
+    status.textContent="Blind drill · "+v.s+":"+v.a+". Start when ready.";
+  };
+  exportBtn.onclick=()=>{
+    try{
+      const text=JSON.stringify({version:1,sessions:history.read()});
+      if(exportUrl)URL.revokeObjectURL(exportUrl);
+      exportUrl=URL.createObjectURL(new Blob([text],{type:"application/json"}));
+      const a=document.createElement("a");a.href=exportUrl;a.download="al-muallim-practice.json";a.click();
+    }catch{summary.textContent="Export unavailable."}
+  };
+  file.onchange=async()=>{
+    try{
+      const f=file.files[0];if(!f)return;
+      if(f.size>1000000)throw Error();
+      history.merge(await f.text());refresh();
+    }catch{summary.textContent="Import failed. Choose an Al-Mu’allim practice history file."}
+    file.value="";
+  };
   const report=add("section","");
   let reference,clearAudit,tracker,autoState;
   let sdk,engine,session,mic,prepared,interval,url,dead=false,opening=false,closing=false;
   const abort=new AbortController();
+  try{history=practiceHistory(localStorage,component.data.profile,component.data.countsCsv.split(",").map(Number))}catch{}
+  refresh();
+  let wake,raw,rawCount,interrupted=false;
   let samples,count=0,analysed=0,previousRun=0;
   function clearRecording(){
     clearAudit?.();clearAudit=null;report.replaceChildren();
@@ -116,17 +160,34 @@ export default function(component){
       await current.stop();
       if(dead||!count)return;
       autoState=tracker.ingest(session.evidence(),samples.subarray(0,count));
-      url=URL.createObjectURL(pcmWave(samples.subarray(0,count)));
+      url=URL.createObjectURL(pcmWave(raw.subarray(0,Math.min(rawCount,count))));
       player.src=save.href=url;player.hidden=save.hidden=false;
-      status.textContent="Recording ready for playback.";
+      status.textContent=interrupted?"Recording interrupted. The captured portion is ready for playback.":"Recording ready for playback.";
       const inspect=add("button","Inspect word timing and compare reciters",report);
       const evidence=session.evidence();
+      const result=passageAudit(reference,selection,evidence,samples.subarray(0,count));
+      const sessionId=crypto.randomUUID();
+      if(!interrupted && result.matched){
+        const verses=new Map();
+        for(const w of result.words){
+          const v=verses.get(w.ayah)||{s:selection.surah,a:w.ayah,supported:0,unresolved:0,timing:0,flags:[]};
+          if(w.interval)v.supported++;else v.unresolved++;
+          verses.set(w.ayah,v);
+        }
+        for(const n of autoState.notes.values()){
+          const v=verses.get(Number(n.ref.split(":")[1]));if(v)v.timing++;
+        }
+        try{history.merge(JSON.stringify({version:1,sessions:[{id:sessionId,time:Date.now(),verses:[...verses.values()]}]}));refresh()}catch{summary.textContent="Session could not be saved on this device."}
+      }
+      const saveFlag=(!interrupted&&result.matched&&history)?(w,skill)=>{
+        history.flag(sessionId,selection.surah,w.ayah,w.index+1,skill);refresh();
+      }:null;
+      const wasBlind=blind.checked;
       inspect.onclick=()=>{
-        const result=passageAudit(reference,component.data,evidence);
-        clearAudit=renderAudit(report,result,samples.subarray(0,count),component.data,add,abort.signal,autoState);
+        clearAudit=renderAudit(report,result,samples.subarray(0,count),selection,add,abort.signal,autoState,wasBlind,saveFlag,raw.subarray(0,rawCount));
       };
     }catch{if(!dead)status.textContent="Recording interrupted. Please try again."}
-    finally{session?.dispose();session=null;prepared?.release();prepared=null;closing=false;start.disabled=dead;if(dead)await engine?.dispose();}
+    finally{await wake?.release().catch(()=>{});wake=null;blind.disabled=false;session?.dispose();session=null;prepared?.release();prepared=null;closing=false;start.disabled=dead;refresh();if(dead)await engine?.dispose();}
   }
   stop.onclick=()=>void finish();
   start.onclick=async()=>{
@@ -142,9 +203,14 @@ export default function(component){
         if(dead)return;
         start.textContent="Start recording";status.textContent="Ready. Tap Start recording when you want to begin.";return;
       }
-      tracker=continuousTracker(reference,component.data);autoState=null;
+      tracker=continuousTracker(reference,selection);autoState=null;
       prepared=sdk.prepareMicrophone();
-      clearRecording();samples=new Float32Array(16000*90);count=analysed=0;
+      interrupted=false;blind.disabled=true;drill.disabled=true;
+      const capture=prepared;
+      void navigator.wakeLock?.request("screen").then(lock=>{
+        if(dead||closing||prepared!==capture)void lock.release();else wake=lock;
+      }).catch(()=>{});
+      clearRecording();samples=new Float32Array(16000*90);count=analysed=rawCount=0;raw=new Float32Array(samples.length);
       meter.frame(new Float32Array(640));previousRun=0;
       session=engine.startFreeRecitation();
       session.onAudio((pcm,ms)=>{
@@ -171,11 +237,11 @@ export default function(component){
           bar.value=fresh && beat?Math.min(bar.max,(now-active.start)/beat):0;
           const range=fresh?active.site.label==="Pause-dependent madd"?"2, 4 or 6":
             [...new Set(active.site.range)].join("–"):"";
-          elapsed.textContent=fresh?active.site.ref+" · "+active.site.arabic+" · "+active.site.label+
+          elapsed.textContent=fresh?active.site.ref+" · "+(blind.checked?"":active.site.arabic+" · ")+active.site.label+
             " · target "+range+(beat?" · about "+((now-active.start)/beat).toFixed(1)+" beats":""):
             "Waiting for a supported madd";
           const note=autoState.latest;
-          guard.textContent=note && now-note.end<1800?note.arabic+" · "+timingAdvice(note):"";
+          guard.textContent=note && now-note.end<1800?(blind.checked?"":note.arabic+" · ")+timingAdvice(note):"";
           return;
         }
         if(duration!==undefined){
@@ -186,15 +252,34 @@ export default function(component){
           elapsed.textContent=beat?(duration/beat).toFixed(1)+" beats":Math.round(duration)+" ms";
         }
       });
-      mic=await engine.listen(session,{prepared,vad:false,onError:()=>{if(mic)void finish()}});
+      const condition=microphoneConditioner();
+      const input={
+        get state(){return session.state},
+        end:()=>session.end(),
+        pushAudio:(pcm,rate)=>{
+          const n=Math.min(pcm.length,raw.length-rawCount);
+          if(n<=0)return Promise.resolve([]);
+          const chunk=pcm.subarray(0,n);
+          raw.set(chunk,rawCount);rawCount+=n;
+          return session.pushAudio(condition(chunk),rate);
+        }
+      };
+      mic=await engine.listen(input,{prepared,vad:false,onError:()=>{interrupted=true;if(mic)void finish()}});
+      const stream=await prepared.stream;
+      const lost=()=>{interrupted=true;if(mic)void finish()};
+      stream.getAudioTracks().forEach(track=>track.addEventListener("ended",lost,{once:true}));
       if(dead){await finish();return}
       interval=setTimeout(()=>void finish(),90000);stop.disabled=false;
       status.textContent="Recording · tap Stop to keep the session.";
-    }catch{session?.dispose();session=null;prepared?.release();prepared=null;
+    }catch{blind.disabled=false;await wake?.release().catch(()=>{});wake=null;session?.dispose();session=null;prepared?.release();prepared=null;
       if(!dead)status.textContent="Recorder unavailable. Check microphone access and the model download, then retry."}
     finally{opening=false;start.disabled=dead||!!mic||closing;if(dead && !closing)await engine?.dispose();}
   };
+  const hidden=()=>{if(document.hidden && mic){interrupted=true;void finish()}};
+  document.addEventListener("visibilitychange",hidden);
   return ()=>{
+    document.removeEventListener("visibilitychange",hidden);
+    if(exportUrl)URL.revokeObjectURL(exportUrl);
     dead=true;abort.abort();clearTimeout(interval);clearRecording();prepared?.release();
     if(mic)void finish();
     else if(!opening && !closing){session?.dispose();void engine?.dispose()}
