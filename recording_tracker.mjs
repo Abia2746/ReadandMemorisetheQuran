@@ -150,7 +150,8 @@ export function continuousTracker(reference,selection){
         if(!latest||latest.end<=item.note.end)latest=item.note;
       }
     }
-    return {beat:durations.length>=4?medianValue(durations):null,active,notes,latest};
+    const last=recent.at(-1),pos=positions.get(cursor);
+    return {position:pos && last?{...pos,end:last.end}:null,beat:durations.length>=4?medianValue(durations):null,active,notes,latest};
   }
   return {ingest};
 }

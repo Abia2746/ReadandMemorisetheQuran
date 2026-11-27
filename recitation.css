@@ -1,0 +1,17 @@
+.timing-lab {padding:clamp(.85rem,3vw,2rem);border-radius:1.3rem;background:#faf8ef;color:#28261f}
+.timing-lab [hidden]{display:none!important}
+.timing-lab button,.timing-lab summary,.timing-lab label{min-height:44px;cursor:pointer;font:inherit}
+.timing-lab button{padding:.65rem 1rem;border:1px solid #9f9168;border-radius:2rem;color:#211e18;background:#fffaf0}
+.timing-lab button:disabled{opacity:.55;cursor:default}
+.recite-controls,.recite-summary{display:flex;align-items:center;flex-wrap:wrap;gap:.65rem;margin-block:1rem}
+.recite-controls label{display:inline-flex;align-items:center;gap:.5rem}
+.recite-controls button{background:#d4af37;font-weight:700}
+.recite-canvas{line-height:2.25;font:clamp(1.7rem,5vw,2.6rem)/2.25 Amiri,"Scheherazade New",serif}
+.recite-word{display:inline-block;padding:0 .18em;border-radius:.3em}
+.recite-word.current{background:#ead89f}
+.recite-word.review{border-bottom:2px dotted #af632d}
+.recite-canvas.memory .recite-word:not(.current){filter:blur(7px);user-select:none}
+.recite-summary span{background:#ebe7d7;border-radius:2rem;padding:.45rem .8rem}
+.recite-card{padding:1rem;border:1px solid #a69871;border-radius:1rem}
+.timing-lab details,.timing-lab audio{margin-top:.8rem;max-width:100%}
+.timing-lab :focus-visible{outline:3px solid #94721b;outline-offset:2px}

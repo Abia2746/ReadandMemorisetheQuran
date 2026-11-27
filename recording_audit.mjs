@@ -258,14 +258,18 @@ function speakerReferences(words,pcm){
   return groups;
 }
 
-function renderAudit(panel,result,pcm,selection,add,signal,timing,blind=false,saveFlag=null,original=pcm){
+function renderAudit(panel,result,pcm,selection,add,signal,timing,blind=false,saveFlag=null,original=pcm,technical=panel){
   let baseline;
   panel.replaceChildren();
-  add("h4","Recording evidence",panel);
-  add("p","Hifz · "+result.matched+" of "+result.words.length+" word sequences supported by the free phoneme decoder and forced path. Madd, ghunnah and articulation grades require independent calibration.",panel);
-  const source=add("a","Reference · Tanzil Uthmani text",panel);
+  add("h3","Recitation summary",panel);
+  const strip=add("div","",panel);strip.className="recite-summary";
+  add("span","Words matched · "+result.matched+"/"+result.words.length,strip);
+  add("span",timing?.beat?"Reading pace · "+Math.round(timing.beat)+" ms/count":"Reading pace · still learning",strip);
+  const card=add("section","",panel);card.className="recite-card";card.hidden=true;
+  const cards=new Map();
+  add("p",result.matched?"Tap a word to listen and practise.":"The recording was unclear. Try one ayah in a quieter spot.",panel);
+  const source=add("a","Reference · Tanzil Uthmani text",technical);
   source.href="https://tanzil.net";source.target="_blank";source.rel="noopener";
-  add("p","Hafs reference phones from quran-transcript via Tilawa ref-v2. Times indicate model frames. A weak match or a different permissible reading may leave a word unresolved.",panel);
   let clipUrl,active,context,sourceNode,generation=0;
   const chapter=fetch("https://api.quran.com/api/v4/chapter_recitations/6/"+selection.surah+"?segments=true",{signal})
     .then(r=>r.ok?r.json():null).catch(()=>null);
@@ -279,7 +283,7 @@ function renderAudit(panel,result,pcm,selection,add,signal,timing,blind=false,sa
   for(const [wi,w] of result.words.entries()){
     const timingCue=[...(timing?.notes.values()||[])].some(n=>n.ref===w.ref&&n.word===w.index+1);
     if(blind && (w.interval&&!timingCue || !result.aligned))continue;
-    const row=add("details","",panel);
+    const row=add("details","",technical);
     add("summary",w.ref+" · "+(w.index+1)+" · "+w.arabic,row);
     add("p","Connected phones: "+(w.connected??w.phones)+" · Isolated form: "+w.pause,row);
     if(w.pauseSupported)add("p","The final phone sequence supports the isolated form, followed by quiet audio.",row);
@@ -290,20 +294,27 @@ function renderAudit(panel,result,pcm,selection,add,signal,timing,blind=false,sa
       const flag=add("button","Save practice focus",row);
       flag.onclick=()=>{try{saveFlag(w,choose.value);flag.textContent="Saved practice focus"}catch{flag.textContent="Device storage unavailable"}};
     }
-    if(!w.interval){
-      add("p","Word or vowel identity (lahn jali review): Listen for the same letters and vowels in sequence. This recording did not resolve the word clearly enough to identify an error.",row);
-      continue;
+    const face=add("div","",card);face.hidden=true;cards.set(w,face);
+    add("h4",w.arabic,face);
+    const stretch=w.tags.find(t=>t.startsWith("Reference long-vowel units:"));
+    const tip=w.tags.some(t=>t.includes("qalqalah"))?"Give the still consonant a light bounce without adding a vowel.":
+      w.tags.some(t=>t.includes("ghunnah"))?"Let the nasal sound resonate for two counts.":
+      stretch?"Hold the long vowel for "+stretch.split(": ")[1]+" counts in this reference reading.":
+      "Listen once, then repeat the word at a comfortable pace.";
+    add("p",tip,face);
+    if(!w.interval)add("p","This word could not be matched clearly.",face);
+    if(timingCue)add("p","Listen again to the length of the short vowel.",face);
+    const yours=add("button","▶ Your Voice",face);yours.disabled=!w.interval;
+    const master=add("button","▶ Sheikh Al-Husary",face);master.disabled=true;
+    const note=add("p","",face);
+    let start,end;
+    if(w.interval){
+      const prev=result.words[wi-1]?.interval,next=result.words[wi+1]?.interval;
+      const left=prev?(prev.end+w.interval.start)/2:wi===0?0:w.interval.start;
+      const right=next?(next.start+w.interval.end)/2:wi===result.words.length-1?pcm.length/16:w.interval.end;
+      ({start,end}=playbackBounds(pcm,w.interval,left,right));
+      add("p","Estimated learner window "+start+"–"+end+" ms.",row);
     }
-    // Split the gap only between adjacent supported words. Do not take time
-    // from an unresolved neighbour. The last word can extend into its decay.
-    const prev=result.words[wi-1]?.interval,next=result.words[wi+1]?.interval;
-    const left=prev?(prev.end+w.interval.start)/2:wi===0?0:w.interval.start;
-    const right=next?(next.start+w.interval.end)/2:wi===result.words.length-1?pcm.length/16:w.interval.end;
-    const {start,end}=playbackBounds(pcm,w.interval,left,right);
-    add("p","Estimated learner window "+start+"–"+end+" ms.",row);
-    const yours=add("button","Hear my word",row);
-    const master=add("button","Hear Al-Husary",row);master.disabled=true;
-    const note=add("p","",row);
     function play(url){
       const audio=new Audio(url);active=audio;
       void audio.play().catch(()=>{if(!signal.aborted)note.textContent="Playback unavailable."});
@@ -315,7 +326,7 @@ function renderAudit(panel,result,pcm,selection,add,signal,timing,blind=false,sa
       if(signal.aborted)return;
       const ref=husaryClip(payload,w.ref,w.index,w.count);
       if(!ref){note.textContent="Source-matched Al-Husary timing unavailable.";return}
-      note.textContent="Al-Husary · source timing "+ref.start+"–"+ref.end+" ms in chapter audio.";
+      add("p","Al-Husary · "+ref.start+"–"+ref.end+" ms",row);
       master.disabled=false;
       master.onclick=async()=>{
         clear();const ticket=generation;
@@ -337,12 +348,12 @@ function renderAudit(panel,result,pcm,selection,add,signal,timing,blind=false,sa
         const audio=new Audio(ref.url);active=audio;
         audio.onloadedmetadata=()=>{if(active===audio)audio.currentTime=ref.start/1000};
         audio.ontimeupdate=()=>{if(audio.currentTime>=ref.end/1000)audio.pause()};
-        audio.onseeked=()=>{if(active===audio)void audio.play().catch(()=>{note.textContent="Tap the player to hear this segment.";audio.controls=true;row.appendChild(audio)})};
-        if(!ref.start){void audio.play().catch(()=>{audio.controls=true;row.appendChild(audio)})}
+        audio.onseeked=()=>{if(active===audio)void audio.play().catch(()=>{note.textContent="Tap the player to hear this segment.";audio.controls=true;face.appendChild(audio)})};
+        if(!ref.start){void audio.play().catch(()=>{audio.controls=true;face.appendChild(audio)})}
       };
     });
     row.ontoggle=()=>{
-      if(!row.open||!row.ontoggle)return;
+      if(!w.interval||!row.open||!row.ontoggle)return;
       row.ontoggle=null;
       // Calculate only on expansion, and only inside the aligned word.
       for(const note of timing?.notes.values()||[]){
@@ -381,5 +392,11 @@ function renderAudit(panel,result,pcm,selection,add,signal,timing,blind=false,sa
       }
     };
   }
-  return ()=>{signal.removeEventListener("abort",clear);clear();if(context)void context.close().catch(()=>{});panel.replaceChildren()};
+  const dispose=()=>{signal.removeEventListener("abort",clear);clear();if(context)void context.close().catch(()=>{});panel.replaceChildren()};
+  let shown;
+  dispose.show=w=>{
+    clear();if(shown)shown.hidden=true;shown=cards.get(w);
+    if(shown){card.hidden=false;shown.hidden=false;card.scrollIntoView({block:"nearest"})}
+  };
+  return dispose;
 }
