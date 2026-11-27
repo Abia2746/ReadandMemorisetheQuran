@@ -28,10 +28,62 @@ export function matchesMeaning(answer, meaning) {
   return positions.has(tokens.length);
 }
 
+// Track words that have actually caused difficulty. Stages advance only on a due day.
+const reviewIntervals = [1, 3, 7, 14, 30, 60];
+function calendarDay(date = new Date()) {
+  return Math.floor(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()) / 86400000);
+}
+
+export function updateWordReview(old, correct, day) {
+  if (correct && (!old || old.due > day)) return old;
+  const stage = correct ? Math.min(old.stage + 1, reviewIntervals.length - 1) : 0;
+  return {stage, due:day + reviewIntervals[stage], misses:(old?.misses || 0) + Number(!correct)};
+}
+
+function wordHistory(profile, language) {
+  const prefix = "am:quiz:word:1:"+encodeURIComponent(profile)+":"+encodeURIComponent(language)+":";
+  const saved = new Map();
+  let writable = true;
+  try {
+    for (let i=0; i<localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (!key?.startsWith(prefix)) continue;
+      try {
+        const item = JSON.parse(localStorage.getItem(key));
+        if (key===prefix+item.ref && typeof item.arabic==="string" && typeof item.meaning==="string"
+            && Number.isInteger(item.stage) && item.stage>=0 && item.stage<reviewIntervals.length
+            && Number.isInteger(item.due) && Number.isInteger(item.misses) && item.misses>0)
+          saved.set(item.ref,item);
+      } catch {}
+    }
+  } catch { writable=false; }
+  function record(card, correct) {
+    const old=saved.get(card.ref);
+    const next=updateWordReview(old,correct,calendarDay());
+    if (next && next!==old) {
+      const item={ref:card.ref,arabic:card.arabic,meaning:card.meaning,...next};
+      saved.set(card.ref,item);
+      try { localStorage.setItem(prefix+card.ref,JSON.stringify(item)); }
+      catch { writable=false; }
+    }
+    return saved.get(card.ref);
+  }
+  function due() {
+    return [...saved.values()].filter(item=>item.due<=calendarDay())
+      .sort((a,b)=>a.due-b.due || b.misses-a.misses || a.ref.localeCompare(b.ref));
+  }
+  return {saved,record,due,canSave:()=>writable};
+}
+
 /** @param {HTMLElement} host @param {{arabic:string,meaning:string,ref:string}[]} words */
-export function mountMeaningQuiz(host, words) {
-  const deck = words.filter(word => word.arabic.trim() && normalized(word.meaning));
-  const known = new Map();
+export function mountMeaningQuiz(host, words, profile = "guest", language = "en") {
+  const history = wordHistory(profile,language);
+  const available = words.filter(word => word.arabic.trim() && normalized(word.meaning));
+  const dueRank = new Map(history.due().map((item,index)=>[item.ref,index]));
+  const deck = available.sort((a,b)=>(dueRank.get(a.ref) ?? Infinity)-(dueRank.get(b.ref) ?? Infinity));
+  const known = new Map([...history.saved].map(([ref,item])=>[ref,item.stage>=2]));
+  let pool = deck;
+  let reviewing = false;
   let soundOn = true;
   try { soundOn = localStorage.getItem("am.quiz.sound") !== "off"; } catch {}
   let round = deck, index = 0, missed = [];
@@ -70,7 +122,7 @@ export function mountMeaningQuiz(host, words) {
   function boxes(finished, updated) {
     const group = node("div", "", "am-quiz-boxes");
     for (const [state,title] of [[false,"Must review"],[true,"Know"]]) {
-      const cards = deck.filter(card => known.get(card.ref) === state);
+      const cards = pool.filter(card => known.get(card.ref) === state);
       const box = node("button", title+" · "+cards.length, "am-quiz-box");
       box.type = "button";
       box.dataset.box = state ? "know" : "review";
@@ -84,7 +136,20 @@ export function mountMeaningQuiz(host, words) {
   function draw(focus) {
     host.replaceChildren();
     if (deck.length < words.length) host.append(node("p", (words.length-deck.length)+" words have no available meaning and are skipped."));
-    if (!deck.length) {
+    if (!reviewing && (index===0 || index===round.length)) {
+      const due = history.due();
+      if (due.length) {
+        const review = node("button","Review due words · "+Math.min(10,due.length)+" of "+due.length,"am-button am-small-action");
+        review.type="button";
+        review.onclick=()=>{
+          reviewing=true;
+          pool=history.due().slice(0,10).map(item=>deck.find(word=>word.ref===item.ref)||item);
+          startRound(pool);
+        };
+        host.append(review);
+      }
+    }
+    if (!round.length) {
       host.append(node("p", "Word meanings are unavailable for this passage."));
       return;
     }
@@ -99,9 +164,12 @@ export function mountMeaningQuiz(host, words) {
     host.append(mute);
     if (index === round.length) {
       const summary = node("p", "Round complete · "+(round.length-missed.length)+" of "+round.length+" meanings matched.");
-      const restart = node("button", missed.length ? "Retry missed words" : "Practise again", "am-button am-small-action");
+      const restart = node("button", missed.length ? "Retry missed words" : reviewing ? "Return to passage" : "Practise again", "am-button am-small-action");
       restart.type = "button";
-      restart.onclick = () => { round = missed.length ? missed : deck; missed = []; index = 0; draw(true); };
+      restart.onclick = () => {
+        if (missed.length) startRound(missed);
+        else {reviewing=false;pool=deck;startRound(deck);}
+      };
       host.append(summary, boxes(true), restart);
       if (focus) restart.focus();
       return;
@@ -128,14 +196,24 @@ export function mountMeaningQuiz(host, words) {
       if (graded) return;
       graded = true;
       if (!correct) missed.push(word);
-      known.set(word.ref,correct);
-      boxRow.replaceChildren(boxes(false,correct));
+      const saved = history.record(word,correct);
+      const established = saved ? saved.stage>=2 : correct;
+      known.set(word.ref,established);
+      boxRow.replaceChildren(boxes(false,established));
       const wash = node("div","","am-quiz-wash");
       wash.dataset.box = correct ? "know" : "review";
       wash.setAttribute("aria-hidden","true");
       host.append(wash);
       tone(correct);
       feedback.textContent = (correct ? "Matched. " : "For review. ")+"Passage meaning: "+word.meaning;
+      if (saved) {
+        const days=Math.max(0,saved.due-calendarDay());
+        const timing=days===1?"tomorrow":"in "+days+" days";
+        const message=history.canSave()
+          ? (established?"In Know. ":"In Must review. ")+"Review "+timing+"."
+          : "Practising this session only. Browser storage is unavailable.";
+        feedback.textContent+=" "+message;
+      }
       input.readOnly = true; reveal.hidden = true;
       check.textContent = index+1 === round.length ? "See results" : "Next word";
       check.focus();

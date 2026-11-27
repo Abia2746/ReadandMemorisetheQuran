@@ -416,9 +416,9 @@ if(process.env.QURAN_POSITION_REPLAY){
   assert.ok(find("Sound off"));
   nodes(quiz()).find(n=>n.tag==="input").value="and when";
   submit(); submit();
-  assert.ok(find("Must review · 0").disabled);
-  find("Know · 2").onclick();
-  assert.ok(find("Word 1 of 2 · 2:57:1"));
+  assert.ok(find("Must review · 1"));
+  find("Know · 1").onclick();
+  assert.ok(find("Word 1 of 1 · 2:57:1"));
   x.dispose();
 }
 
@@ -434,4 +434,34 @@ if(process.env.QURAN_POSITION_REPLAY){
   assert.ok(find("Published verse translation"));
   assert.ok(find("I learnt this ayah · review tomorrow"));
   x.dispose();
+}
+
+{
+  const values=new Map();
+  const device={
+    get length(){return values.size},
+    key:i=>[...values.keys()][i],getItem:k=>values.get(k)??null,setItem:(k,v)=>values.set(k,v)
+  };
+  async function open(profile,ayah) {
+    const view=await fixture("full",{reviewProfile:profile,meta:{s:2,a:ayah,end:ayah},
+      words:testWords.map(w=>({...w,ayah}))},false,{},device);
+    const find=text=>nodes(view.mount).find(el=>el.textContent===text);
+    find("◇ Word quiz").onclick();
+    return {view,find};
+  }
+  const first=await open("learner-a",60);
+  first.find("Show meaning").onclick();
+  first.view.dispose();
+  const key=[...values.keys()].find(k=>k.startsWith("am:quiz:word:"));
+  const card=JSON.parse(values.get(key));
+  assert.equal(card.ref,"2:60:1");
+  card.due-=1;
+  values.set(key,JSON.stringify(card));
+  const other=await open("learner-b",61);
+  assert.ok(!other.find("Review due words · 1 of 1"));other.view.dispose();
+  const returning=await open("learner-a",61);
+  returning.find("Review due words · 1 of 1").onclick();
+  assert.ok(returning.find("Word 1 of 1 · 2:60:1"));
+  assert.ok(!returning.find("Matched. Passage meaning: "+card.meaning));
+  returning.view.dispose();
 }

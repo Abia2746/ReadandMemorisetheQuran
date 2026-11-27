@@ -236,7 +236,7 @@ function Workspace(){
         <p className="mt-2 text-sm">{error}</p>
         <p className="mt-2 text-xs text-[#C0AB90]">No Arabic verse or translation will be invented. Check the backend Qur'an API credentials and connection.</p>
       </div>}
-      {verse && mode==="quiz" && <MeaningQuiz key={verse.surah+":"+verse.ayah} verse={verse} reciter={reciter} language={lang}/>}
+      {verse && mode==="quiz" && !auth.loading && <MeaningQuiz profile={auth.isSignedIn?"account:"+auth.user?.profile.sub:"guest"} key={verse.surah+":"+verse.ayah+":"+(auth.user?.profile.sub||"guest")} verse={verse} reciter={reciter} language={lang}/>}
       {verse && mode!=="quiz" && <section className="mt-1">
         {verse.text_source==="Tanzil" && <p className="px-4 py-2 text-xs text-[#E6D5B8]">
           Arabic text from the <a className="underline" href="https://tanzil.net">Tanzil Project</a>. Word details are temporarily unavailable.

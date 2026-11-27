@@ -763,7 +763,7 @@ export default function(component) {
       mountMeaningQuiz(quizBody,words.map(w=>{
         if(w.ayah!==lastAyah){lastAyah=w.ayah;position=0}
         return {arabic:w.ar||"",meaning:w.en||"",ref:meta.s+":"+w.ayah+":"+(++position)};
-      }));
+      }),D.reviewProfile,language);
       quizReady=true;
     }
     layout.hidden=journey||room||quiz||review;

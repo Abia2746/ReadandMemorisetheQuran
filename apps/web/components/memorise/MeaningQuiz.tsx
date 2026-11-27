@@ -4,7 +4,7 @@ import { mountMeaningQuiz } from "@/lib/meaningQuiz.mjs";
 import { fetchVerse, type QuranVerse } from "@/lib/verseApi";
 import { AYAHS_PER_SURAH, type ReciterId } from "@/lib/quranMetadata";
 
-export function MeaningQuiz({verse, reciter, language}: {verse:QuranVerse; reciter:ReciterId; language:string}) {
+export function MeaningQuiz({verse, reciter, language, profile}: {verse:QuranVerse; reciter:ReciterId; language:string; profile:string}) {
   const [end,setEnd]=useState(verse.ayah);
   const [attempt,setAttempt]=useState(0);
   const [message,setMessage]=useState("");
@@ -26,11 +26,11 @@ export function MeaningQuiz({verse, reciter, language}: {verse:QuranVerse; recit
         for(const word of data.words) cards.push({arabic:word.arabic,meaning:word.meaning||"",ref:word.id});
       }
       setMessage("");
-      mountMeaningQuiz(host!,cards);
+      mountMeaningQuiz(host!,cards,profile,language);
     }
     void load().catch(error=>{if(!controller.signal.aborted)setMessage(error instanceof Error?error.message:"Word meanings unavailable.")});
     return ()=>controller.abort();
-  },[attempt,end,verse,reciter,language]);
+  },[attempt,end,verse,reciter,language,profile]);
   return <section className="am-ayah-panel am-meaning-quiz p-5">
     <h2 className="font-editorial text-xl">Word meanings</h2>
     <label>From {verse.surah}:{verse.ayah} through ayah <select className="am-field" value={end}
