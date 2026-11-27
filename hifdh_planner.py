@@ -80,6 +80,10 @@ def _connection():
         completed_at TEXT NOT NULL,
         PRIMARY KEY(name,day,scope)
     )""")
+    con.execute("""CREATE TABLE IF NOT EXISTS hifdh_review(
+        name TEXT NOT NULL, surah INTEGER NOT NULL, ayah INTEGER NOT NULL,
+        stage INTEGER NOT NULL, due TEXT NOT NULL, PRIMARY KEY(name,surah,ayah)
+    )""")
     return con
 
 
@@ -91,6 +95,56 @@ def plus_months(date:dt.date,months:int)->dt.date:
     y=date.year+(date.month-1+months)//12
     m=(date.month-1+months)%12+1
     return dt.date(y,m,min(date.day,calendar.monthrange(y,m)[1]))
+
+
+REVIEW_DAYS = (1, 3, 7, 14, 30, 60)
+
+
+def _initial_due(stamp):
+    learned = dt.datetime.fromisoformat(stamp)
+    day = learned.astimezone(TZ).date() if learned.tzinfo else learned.date()
+    return (day + dt.timedelta(days=1)).isoformat()
+
+
+def verse_reviews(name):
+    with closing(_connection()) as con:
+        rows = con.execute("""SELECT c.surah,c.ayah,c.completed,r.due
+            FROM hifdh_completed c LEFT JOIN hifdh_review r USING(name,surah,ayah)
+            WHERE c.name=?""", (name,)).fetchall()
+    items = []
+    for surah, ayah, stamp, due in rows:
+        try:
+            items.append({"surah": surah, "ayah": ayah, "due": due or _initial_due(stamp)})
+        except (ValueError, TypeError, OverflowError):
+            continue
+    return sorted(items, key=lambda item: (item["due"], item["surah"], item["ayah"]))
+
+
+def record_verse_recall(name, surah, ayah, rating, *, day=None):
+    if type(surah) is not int or not 1 <= surah <= 114 or type(ayah) is not int or not 1 <= ayah <= AYAHS[surah]:
+        raise ValueError("Invalid verse.")
+    if rating not in ("learnt", "prompt", "meaning", "recalled"):
+        raise ValueError("Choose a recall result.")
+    day = day or today_local()
+    with closing(_connection()) as con, con:
+        con.execute("BEGIN IMMEDIATE")
+        ref = (name, surah, ayah)
+        if rating == "learnt":
+            result = con.execute("INSERT OR IGNORE INTO hifdh_completed VALUES(?,?,?,?)",
+                                 (*ref, day.isoformat()))
+            if not result.rowcount:
+                return {"ok": False, "message": "This ayah is already scheduled."}
+            stage = 0
+        else:
+            row = con.execute("""SELECT c.completed,r.stage,r.due FROM hifdh_completed c
+                LEFT JOIN hifdh_review r USING(name,surah,ayah)
+                WHERE c.name=? AND c.surah=? AND c.ayah=?""", ref).fetchone()
+            if not row or (row[2] or _initial_due(row[0])) > day.isoformat():
+                return {"ok": False, "message": "This ayah is not due for review yet."}
+            stage = min((row[1] or 0)+1, len(REVIEW_DAYS)-1) if rating == "recalled" else 0
+        due = (day + dt.timedelta(days=REVIEW_DAYS[stage])).isoformat()
+        con.execute("INSERT OR REPLACE INTO hifdh_review VALUES(?,?,?,?,?)", (*ref,stage,due))
+    return {"ok": True, "message": f"{surah}:{ayah} saved. Next review on {due}."}
 
 
 def _safe_config(data, previous=None, *, now=None):
@@ -391,10 +445,9 @@ def export_cloud_snapshot(name: str) -> dict:
         raise ValueError("Invalid learner profile")
     with closing(_connection()) as con:
         row = con.execute("SELECT plan_json FROM hifdh_plans WHERE name=?", (name,)).fetchone()
-        if not row:
-            return {"plan": {}, "completed": [], "sessions": []}
         completed = con.execute(
-            "SELECT surah,ayah,completed FROM hifdh_completed WHERE name=? ORDER BY surah,ayah",
+            """SELECT surah,ayah,completed,stage,due FROM hifdh_completed
+            LEFT JOIN hifdh_review USING(name,surah,ayah) WHERE name=? ORDER BY surah,ayah""",
             (name,),
         ).fetchall()
         sessions = con.execute(
@@ -403,10 +456,11 @@ def export_cloud_snapshot(name: str) -> dict:
             (name,),
         ).fetchall()
     return {
-        "plan": json.loads(row[0]),
+        "plan": json.loads(row[0]) if row else {},
         "completed": [
-            {"surah": s, "ayah": a, "completed": stamp}
-            for s, a, stamp in completed
+            {"surah": s, "ayah": a, "completed": stamp,
+             **({"stage": stage, "due": due} if due else {})}
+            for s, a, stamp, stage, due in completed
         ],
         "sessions": [
             {"day": day, "scope": scope, "surah": surah,
@@ -433,6 +487,7 @@ def import_cloud_snapshot(name: str, snapshot: dict) -> None:
     if len(completed) > 6236 or len(sessions) > 2000:
         raise ValueError("Cloud planner exceeds supported limits")
     config = _safe_config(raw_plan) if raw_plan else None
+    clean_reviews = []
     clean_completed = []
     for r in completed:
         if not isinstance(r, dict):
@@ -442,6 +497,12 @@ def import_cloud_snapshot(name: str, snapshot: dict) -> None:
             raise ValueError("Invalid verse coordinates")
         if not isinstance(stamp, str) or len(stamp) > 60:
             raise ValueError("Invalid completion timestamp")
+        if "stage" in r or "due" in r:
+            stage = r.get("stage")
+            if type(stage) is not int or not 0 <= stage < len(REVIEW_DAYS) or not isinstance(r.get("due"), str):
+                raise ValueError("Invalid review schedule")
+            due = dt.date.fromisoformat(r["due"])
+            clean_reviews.append((name,s,a,stage,due.isoformat()))
         clean_completed.append((name, s, a, stamp))
     clean_sessions = []
     for r in sessions:
@@ -461,13 +522,14 @@ def import_cloud_snapshot(name: str, snapshot: dict) -> None:
     with closing(_connection()) as con:
         con.execute("BEGIN IMMEDIATE")
         try:
-            for table in ("hifdh_plans", "hifdh_completed", "hifdh_sessions"):
+            for table in ("hifdh_plans", "hifdh_completed", "hifdh_sessions", "hifdh_review"):
                 con.execute(f"DELETE FROM {table} WHERE name=?", (name,))
             if config is not None:
                 con.execute(
                     "INSERT INTO hifdh_plans(name,plan_json,updated) VALUES(?,?,?)",
                     (name, json.dumps(config), dt.datetime.now(dt.timezone.utc).isoformat()),
                 )
+            con.executemany("INSERT INTO hifdh_review VALUES(?,?,?,?,?)", clean_reviews)
             con.executemany(
                 "INSERT INTO hifdh_completed(name,surah,ayah,completed) VALUES(?,?,?,?)",
                 clean_completed,

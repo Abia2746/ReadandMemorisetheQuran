@@ -31,6 +31,22 @@ function attachHifdhJourney(component,D,ui){
   noor.appendChild(CE("p","am-hifdh-noor-message",state.teacher_message||"Assalamu alaikum. Let's plan your next step."));
   noor.appendChild(CE("p","am-hifdh-note","This guidance is calculated from your goals and completed verses, not a certified Hifdh or Tajweed assessment. Some ayahs take much longer than others."));
   left.appendChild(noor);
+  const schedule=state.verseReview;
+  if(schedule){
+    const review=CE("section","am-hifdh-card");
+    review.appendChild(CE("h3","","Spaced verse review"));
+    const next=schedule.next[0];
+    if(next){
+      const start=btn("Review "+next.surah+":"+next.ayah,"am-button am-primary");
+      start.onclick=()=>send("open_review");
+      append(review,CE("p","",schedule.dueCount+" due · oldest first"),start);
+    }else{
+      const study=btn("Open verse review","am-button");
+      study.onclick=()=>navigate("review");
+      append(review,CE("p","",schedule.nextDue?"Next review on "+schedule.nextDue+".":"Add an ayah after recalling its words and meaning."),study);
+    }
+    left.appendChild(review);
+  }
   const editor=CE("div","am-hifdh-card");
   append(editor,CE("h3","","Build your personal plan"),
     CE("p","am-hifdh-note","Update your goal or routine at any time. Saved memorisation progress stays intact."));

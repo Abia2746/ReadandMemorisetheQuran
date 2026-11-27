@@ -40,6 +40,7 @@ export default function(component) {
     ["cover","◉",T("cover","Memorise")],
     ["listen","♫",T("listen","Listen")],
     ["quiz","◇","Word quiz"],
+    ["review","↻","Verse review"],
     ["journey","✦",T("journey","My journey")]
   ];
   const tabBtns={};
@@ -74,6 +75,63 @@ export default function(component) {
   append(quizPanel,CE("h2","","Word meanings"),quizBody);
   stage.appendChild(quizPanel);
   let quizReady=false;
+  const verseRecallPanel=CE("section","am-panel");
+  verseRecallPanel.hidden=true;
+  stage.appendChild(verseRecallPanel);
+  const schedule=D.hifdhPlan?.verseReview;
+  function sendReview(action,values={}){
+    component.setTriggerValue("plan_action",{id:Date.now()+"-"+Math.random(),action,...values});
+  }
+  function showReview(){
+    verseRecallPanel.replaceChildren();
+    append(verseRecallPanel,CE("h2","","Verse review"));
+    if(D.planMessage)verseRecallPanel.appendChild(CE("p","am-note",D.planMessage));
+    if(!schedule){
+      verseRecallPanel.appendChild(CE("p","","Your review schedule could not be loaded."));
+      return;
+    }
+    if(schedule.guest)verseRecallPanel.appendChild(CE("p","am-note","Guest reviews belong to this session. Sign in before adding ayahs to keep a review schedule for later visits."));
+    const next=schedule.next[0];
+    if(next){
+      const open=btn("Review "+next.surah+":"+next.ayah+" · "+schedule.dueCount+" due");
+      open.onclick=()=>sendReview("open_review");
+      if(next.surah!==meta.s || next.ayah!==meta.a || meta.a!==meta.end)verseRecallPanel.appendChild(open);
+    }else if(schedule.nextDue){
+      verseRecallPanel.appendChild(CE("p","","Next review on "+schedule.nextDue+"."));
+    }
+    for(let ayah=meta.a;ayah<=meta.end;ayah++){
+      const row=schedule.passage.find(item=>item.ayah===ayah);
+      const card=CE("section","am-panel");
+      append(card,CE("h3","","Ayah "+meta.s+":"+ayah));
+      verseRecallPanel.appendChild(card);
+      if(row && row.due>schedule.today){
+        card.appendChild(CE("p","","Scheduled for "+row.due+"."));
+        continue;
+      }
+      card.appendChild(CE("p","","Recite the ayah from memory. Then explain its meaning in your own words."));
+      const reveal=btn("Compare with the ayah");
+      card.appendChild(reveal);
+      reveal.onclick=()=>{
+        reveal.hidden=true;
+        const arabic=CE("p","am-ar-title",words.filter(w=>Number(w.ayah)===ayah).map(w=>w.ar).join(" "));
+        arabic.dir="rtl";arabic.lang="ar";
+        const meaning=verseTranslations[ayah];
+        append(card,arabic,CE("p","",meaning || "A verse translation is unavailable for this passage."));
+        const actions=CE("div","am-control-row");
+        card.appendChild(actions);
+        const choices=row?[["prompt","Needed a recitation prompt"],["meaning","Revisit the meaning"],["recalled","Recalled words and meaning"]]:
+          [["learnt","I learnt this ayah · review tomorrow"]];
+        for(const [rating,label] of choices){
+          const button=btn(label);
+          button.onclick=()=>sendReview("recall",{ayah,rating});
+          actions.appendChild(button);
+        }
+        const study=btn("Study this passage again");
+        study.onclick=()=>selectTab("read");
+        actions.appendChild(study);
+      };
+    }
+  }
   const readerPanel=CE("section","am-panel");
   main.appendChild(readerPanel);
   const sectionTop=CE("div","am-section-top");
@@ -111,6 +169,9 @@ export default function(component) {
   const resetBtn=btn("↺ "+T("reset","Start over"));
   const recordHint=btn("🎙 Start live word tracking","am-button am-primary");
   append(controls,toggleHint,toggleColour,resetBtn,recordHint);
+  const recallButton=btn("Test this passage from memory");
+  recallButton.onclick=()=>selectTab("review");
+  controls.appendChild(recallButton);
   readerPanel.appendChild(controls);
   const status=CE("div","am-status");
   status.dataset.state="idle";
@@ -265,7 +326,7 @@ export default function(component) {
   footer.appendChild(document.createTextNode(" · Recitation tracking is practice guidance, not a certified Tajweed assessment."));
   app.appendChild(footer);
 
-  let currentTab=["read","cover","room","listen","journey"].includes(D.resumeTab)
+  let currentTab=["read","cover","room","listen","journey","review"].includes(D.resumeTab)
     ?D.resumeTab:(D.mode==="blind"?"cover":"read");
   let showHints=false,showTajweed=false;
   let acousticCursor=-1;
@@ -682,8 +743,8 @@ export default function(component) {
     el.appendChild(block);
   }
   function selectTab(tab){
-    if(live && (tab==="journey"||tab==="listen"||tab==="room"||tab==="quiz"))void stopLive();
-    if((tab==="room"||tab==="quiz") && !audio.paused)audio.pause();
+    if(live && (tab==="journey"||tab==="listen"||tab==="room"||tab==="quiz"||tab==="review"))void stopLive();
+    if((tab==="room"||tab==="quiz"||tab==="review") && !audio.paused)audio.pause();
     currentTab=tab;
     if(tab==="cover"&&engineSelect.value==="local")warmMemorisationModel();
     showHints=false;detail.hidden=true;
@@ -692,6 +753,9 @@ export default function(component) {
     prayerRoom.setVisible(room);
     prayerRoom.setPracticeMode(tab);
     journeyPlanner.setVisible(journey);
+    const review=tab==="review";
+    verseRecallPanel.hidden=!review;
+    if(review)showReview();
     const quiz=tab==="quiz";
     quizPanel.hidden=!quiz;
     if(quiz&&!quizReady){
@@ -702,16 +766,17 @@ export default function(component) {
       }));
       quizReady=true;
     }
-    layout.hidden=journey||room||quiz;
+    layout.hidden=journey||room||quiz||review;
     journeyPanel.hidden=!journey;
     hero.hidden=journey||room;
-    if(journey||room||quiz){return}
+    if(journey||room||quiz||review){return}
     // Switching between Read, Memorise and Listen resets stale playback
     // highlights. Only an actively playing reciter or mic can mark a word.
     lastPlaybackUiKey="";
     if(!live)currentWord=-1;
     sectionHeading.textContent=tab==="cover"?"Memorise with meaning":tab==="listen"?"Listen and follow":"The Noble Qur'an";
     micPanel.hidden=tab==="listen";
+    recallButton.hidden=tab!=="cover";
     toggleHint.hidden=tab==="listen";
     toggleColour.hidden=tab==="cover";
     resetBtn.hidden=tab==="listen";

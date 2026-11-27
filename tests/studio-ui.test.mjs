@@ -421,3 +421,17 @@ if(process.env.QURAN_POSITION_REPLAY){
   assert.ok(find("Word 1 of 2 · 2:57:1"));
   x.dispose();
 }
+
+{
+  const x=await fixture("full",{resumeTab:"review",verseTranslations:{60:"Published verse translation"},
+    hifdhPlan:{verseReview:{today:"2026-11-27",next:[],passage:[],dueCount:0}}},false);
+  const panel=nodes(x.mount).find(n=>n.tag==="section" && n.children.some(c=>c.textContent==="Verse review"));
+  assert.equal(panel.hidden,false);
+  const find=text=>nodes(panel).find(n=>n.textContent===text);
+  assert.ok(!find("Published verse translation"));
+  assert.ok(!find("I learnt this ayah · review tomorrow"));
+  find("Compare with the ayah").onclick();
+  assert.ok(find("Published verse translation"));
+  assert.ok(find("I learnt this ayah · review tomorrow"));
+  x.dispose();
+}

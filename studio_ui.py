@@ -17,6 +17,8 @@ from prayer_room import get_room_state, earn, buy, equip, unequip
 from prayer_clock import room_prayer_times, CITIES
 from hifdh_planner import get_state as hifdh_state, save_plan as hifdh_save, finish_today as hifdh_finish, build_calendar as hifdh_calendar
 
+from hifdh_planner import record_verse_recall, verse_reviews, today_local
+
 _ROOT = Path(__file__).resolve().parent
 _STUDIO_CSS = (
     (_ROOT / "studio.css").read_text(encoding="utf-8")
@@ -101,6 +103,14 @@ def render_studio(
     prayer_clock = room_prayer_times(preferred_city)
     try:
         plan_data = hifdh_state(plan_profile)
+        scheduled = verse_reviews(plan_profile)
+        today = today_local().isoformat()
+        due = [row for row in scheduled if row["due"] <= today]
+        plan_data["verseReview"] = {
+            "guest": not bool(account), "today": today, "dueCount": len(due), "nextDue": scheduled[0]["due"] if scheduled else None,
+            "next": due[:1], "passage": [r for r in scheduled if r["surah"] == meta["s"]
+                                        and meta["a"] <= r["ayah"] <= meta["end"]],
+        }
         calendar_data = hifdh_calendar(plan_profile) if plan_data["configured"] else ""
     except (ValueError, TypeError, sqlite3.Error, OSError) as exc:
         _LOG.exception("Noor's Hifdh plan could not be loaded")
@@ -184,6 +194,20 @@ def render_studio(
                     if not isinstance(settings, dict):
                         raise ValueError("Invalid study plan.")
                     response = hifdh_save(plan_profile, settings)
+                elif action == "open_review":
+                    pending = verse_reviews(plan_profile)
+                    if pending and pending[0]["due"] <= today_local().isoformat():
+                        target = pending[0]
+                        st.session_state["_am_review_target"] = (target["surah"], target["ayah"])
+                        st.session_state["_am_studio_active_tab"] = "review"
+                        st.rerun()
+                    response = {"ok": False, "message": "Your review queue is up to date."}
+                elif action == "recall":
+                    ayah = plan_action.get("ayah")
+                    if type(ayah) is not int or not meta["a"] <= ayah <= meta["end"]:
+                        raise ValueError("Select an ayah in this passage.")
+                    response = record_verse_recall(plan_profile, meta["s"], ayah, plan_action.get("rating"))
+                    st.session_state["_am_studio_active_tab"] = "review"
                 elif action == "done":
                     response = hifdh_finish(plan_profile)
                 else:

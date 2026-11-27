@@ -978,6 +978,10 @@ def _on_surah_change():
     st.session_state.quran_nav_start = 1
     st.session_state.quran_nav_end = 1
 
+review_target = st.session_state.pop("_am_review_target", None)
+if review_target:
+    st.session_state.quran_nav_surah, st.session_state.quran_nav_start = review_target
+    st.session_state.quran_nav_end = review_target[1]
 st.session_state.setdefault("quran_nav_surah", int(st.session_state.surah))
 st.session_state.setdefault("quran_nav_start", int(st.session_state.ayah))
 st.session_state.setdefault("quran_nav_end", int(st.session_state.end_ayah))
