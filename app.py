@@ -974,9 +974,11 @@ with st.sidebar:
 destinations = {
     "practice": "Qur’an practice",
     "study": "Tafsir & Arabic",
-    "recording": "Recording review",
+    "recording": "Recording studio",
     "teacher": "Ask the teacher",
 }
+if st.query_params.get("area") == "recording":
+    st.session_state.setdefault("am_study_destination", "recording")
 destination = st.radio(
     _ui("Study area"), list(destinations), horizontal=True,
     format_func=lambda area: _ui(destinations[area]), key="am_study_destination",
@@ -1065,8 +1067,8 @@ if destination == "teacher":
     st.stop()
 
 if destination == "recording":
-    recording_tool = st.radio("Recording tool", ["Recorded review", "Timing practice"], horizontal=True)
-    if recording_tool == "Timing practice":
+    recording_tool = st.radio("Recording tool", ["Live timing & blind Hifz", "Recorded review"], horizontal=True)
+    if recording_tool == "Live timing & blind Hifz":
         from recording_lab import recording_lab
         recording_lab(surah, ayah, end_ayah)
         st.stop()
