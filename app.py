@@ -154,7 +154,7 @@ def award_xp(name, xp=10):
 
 # ----------------------------- Qur'an API & Exact Timings -----------------------------
 
-@st.cache_data(ttl=3600, show_spinner=False)
+@st.cache_data(ttl=3600, max_entries=256, show_spinner=False)
 def fetch_verse_material(surah, ayah, language="en", translation_id=None):
     params={"words":"true","word_fields":"text_uthmani","language":language}
     if translation_id:
@@ -219,7 +219,7 @@ def harakah_labels(grapheme):
     return [HARAKAH_NAMES[c] for c in grapheme if c in HARAKAH_NAMES]
 
 
-@st.cache_data(ttl=3600, show_spinner=False)
+@st.cache_data(ttl=3600, max_entries=32, show_spinner=False)
 def fetch_passage(surah, start_ayah, end_ayah, reciter_folder, language="en", translation_id=None):
     """Load the selected words with word timings from the SAME EveryAyah audio.
 
@@ -1064,6 +1064,13 @@ if destination == "teacher":
             st.write(reply)
     st.stop()
 
+if destination == "recording":
+    recording_tool = st.radio("Recording tool", ["Recorded review", "Timing practice"], horizontal=True)
+    if recording_tool == "Timing practice":
+        from recording_lab import recording_lab
+        recording_lab(surah, ayah, end_ayah)
+        st.stop()
+
 passage_key = f"{surah}:{ayah}-{end_ayah}"
 result_key = f"{passage_key}|recitation"
 
@@ -1155,12 +1162,6 @@ st.markdown(
     "</div>",
     unsafe_allow_html=True,
 )
-
-from recording_lab import recording_lab
-recording_tool = st.radio("Recording tool", ["Recorded review", "Timing practice"], horizontal=True)
-if recording_tool == "Timing practice":
-    recording_lab(surah, ayah, end_ayah)
-    st.stop()
 
 left, right = st.columns([3, 2], gap="large")
 @st.fragment

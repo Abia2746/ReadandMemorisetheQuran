@@ -74,7 +74,7 @@ export function acousticWindow(samples){
     before=prev;prev=v;
   }
   // DFT band energy uses un-pre-emphasized samples and the same window.
-  let band=0,total=0;
+  let band=0,total=0,lowerBand=0,upperBand=0;
   for(let k=1;k<=240;k++){
     let re=0,im=0;
     for(let i=0;i<480;i++){
@@ -82,9 +82,13 @@ export function acousticWindow(samples){
       re+=v*Math.cos(w);im+=v*Math.sin(w);
     }
     const power=re*re+im*im;total+=power;
+    const hz=k*16000/480;
+    if(hz>=500 && hz<1500)lowerBand+=power;
+    if(hz>=1500 && hz<2500)upperBand+=power;
     if(k*16000/480>=250&&k*16000/480<=300)band+=power;
   }
   return {peaks:peaks.slice(0,2),nasalBandFraction:total?band/total:0,
+    bandBalanceDb:10*Math.log10((upperBand+1e-12)/(lowerBand+1e-12)),
     releaseChangeDb:10*Math.log10((high+1e-12)/(low+1e-12))};
 }
 
@@ -159,7 +163,7 @@ async function verifiedReference(signal){
   return JSON.parse(new TextDecoder().decode(data));
 }
 
-function renderAudit(panel,result,pcm,selection,add,signal){
+function renderAudit(panel,result,pcm,selection,add,signal,timing){
   panel.replaceChildren();
   add("h4","Recording evidence",panel);
   add("p","Hifz · "+result.matched+" of "+result.words.length+" word sequences supported by the free phoneme decoder and forced path. Madd, ghunnah and articulation grades require independent calibration.",panel);
@@ -174,13 +178,21 @@ function renderAudit(panel,result,pcm,selection,add,signal){
     if(clipUrl){URL.revokeObjectURL(clipUrl);clipUrl=null}
   }
   signal.addEventListener("abort",clear,{once:true});
-  for(const w of result.words){
+  for(const [wi,w] of result.words.entries()){
     const row=add("details","",panel);
     add("summary",w.ref+" · "+(w.index+1)+" · "+w.arabic,row);
     add("p","Connected phones: "+w.phones+" · Isolated form: "+w.pause,row);
     if(w.tags.length)add("p",w.tags.join(" · "),row);
-    if(!w.interval){add("p","Word timing unresolved.",row);continue}
-    const {start,end}=w.interval;
+    if(!w.interval){
+      add("p","Word or vowel identity (lahn jali review): Listen for the same letters and vowels in sequence. This recording did not resolve the word clearly enough to identify an error.",row);
+      continue;
+    }
+    // Split the gap only between adjacent supported words. Do not take time
+    // from an unresolved neighbour. The last word can extend into its decay.
+    const prev=result.words[wi-1]?.interval,next=result.words[wi+1]?.interval;
+    const left=prev?(prev.end+w.interval.start)/2:wi===0?0:w.interval.start;
+    const right=next?(next.start+w.interval.end)/2:wi===result.words.length-1?pcm.length/16:w.interval.end;
+    const {start,end}=playbackBounds(pcm,w.interval,left,right);
     add("p","Estimated learner window "+start+"–"+end+" ms.",row);
     const yours=add("button","Hear my word",row);
     const master=add("button","Hear Al-Husary",row);master.disabled=true;
@@ -204,6 +216,15 @@ function renderAudit(panel,result,pcm,selection,add,signal){
       if(!row.open||!row.ontoggle)return;
       row.ontoggle=null;
       // Calculate only on expansion, and only inside the aligned word.
+      for(const note of timing?.notes.values()||[]){
+        if(note.ref===w.ref && note.word===w.index+1)add("p","Timing practice (lahn khafi review): "+timingAdvice(note),row);
+      }
+      if(w.tags.some(t=>t.includes("ghunnah")||t.includes("ikhfā")||t.includes("iqlāb")))
+        add("p","Ghunnah practice: listen to the nasal resonance in the reference, then repeat at your own pace. Low-band energy alone cannot identify ghunnah.",row);
+      if(w.tags.some(t=>t.includes("qalqalah")))
+        add("p","Qalqalah practice: compare the consonant release, listening for an extra vowel after it. A burst can also come from microphone noise.",row);
+      if(w.tags.some(t=>t.includes("istiʿlāʾ")))
+        add("p","Heavy-letter practice: compare the letter and its following vowel with Al-Husary. The displayed vowel resonance peaks depend on your voice and neighbouring sounds.",row);
       for(const [i,phone] of [...w.phones].entries()){
         const s=w.phoneSpans[i],mid=Math.round((s.start+s.end)*8);
         if(mid-240<0||mid+240>pcm.length)continue;
@@ -211,6 +232,11 @@ function renderAudit(panel,result,pcm,selection,add,signal){
         if(!feature)continue;
         const numbers=[];
         if("َُِاۥۦ".includes(phone)&&feature.peaks.length===2)numbers.push("LPC peaks "+feature.peaks.join(" / ")+" Hz");
+        const preceding=w.phones[i-1];
+        if(preceding && "صسطتقكضد".includes(preceding) && "َُِ".includes(phone) && feature.peaks.length===2){
+          numbers.push("upper/lower vowel-band balance "+feature.bandBalanceDb.toFixed(1)+" dB");
+          add("p","Listen to "+preceding+" and the vowel immediately after it in both recordings. Keep the same vowel while comparing its resonance.",row);
+        }
         if("نمں۾".includes(phone))numbers.push("250–300 Hz energy "+(100*feature.nasalBandFraction).toFixed(1)+"%");
         if("قطبجد".includes(phone))numbers.push("high-frequency energy change "+feature.releaseChangeDb.toFixed(1)+" dB");
         if(numbers.length)add("p",phone+" · "+s.start+" ms · "+numbers.join(" · "),row);

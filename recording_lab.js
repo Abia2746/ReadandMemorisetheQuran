@@ -70,24 +70,25 @@ export default function(component){
     const el=document.createElement(tag);el.textContent=text;parent.appendChild(el);return el;
   };
   add("h3","Madd timing practice");
-  add("p","Tap four steady beats at your recitation pace. Practise one vowel at a time. For a short-vowel exercise, choose 1 beat. The meter follows periodic sound, including humming. Choose the exercise length yourself.");
+  add("p","Recite the selected ayahs. Automatic pace uses short-vowel estimates and displays a madd target when the listener finds its place.");
   const tap=add("button","Tap one beat");
-  const pace=add("span","Waiting for taps");
+  const pace=add("span","Waiting for recitation");
   const meter=paceMeter();
   tap.onclick=()=>{meter.tap(performance.now());const beat=meter.beat();pace.textContent=beat?Math.round(beat)+" ms / beat":"Keep tapping"};
   const modeLabel=add("label","Pace source ");
   const mode=add("select","",modeLabel);
-  for(const [id,title] of [["tap","Tapped beat"],["cal","Calibrate with isolated short vowels"],["voice","Use calibrated vowels"]]){
+  for(const [id,title] of [["auto","Continuous recitation"],["tap","Tapped beat"],["cal","Calibrate with isolated short vowels"],["voice","Use calibrated vowels"]]){
     const option=add("option",title,mode);option.value=id;
   }
   mode.onchange=()=>{
-    pace.textContent=mode.value==="cal"?"While recording, say four separate short vowels at your pace, with silence between them.":
+    tap.hidden=mode.value!=="tap";label.hidden=mode.value==="auto";
+    pace.textContent=mode.value==="auto"?"Listening for short vowels":mode.value==="cal"?"While recording, say four separate short vowels at your pace, with silence between them.":
       mode.value==="voice"?(meter.acousticBeat()?meter.acousticBeat()+" ms / beat":"Calibrate four vowels first"):"Tap four steady beats";
   };
   const label=add("label","Target ");
   const target=add("select","",label);
   for(const n of [1,2,4,6]){const opt=add("option",n+" beats",target);opt.value=String(n)}
-  target.value="2";
+  target.value="2";mode.onchange();
   const guard=add("p","");
   const bar=add("progress","");bar.max=2;bar.value=0;bar.setAttribute("aria-label","Elapsed beats");
   const elapsed=add("output","0.0 beats");elapsed.setAttribute("aria-live","off");
@@ -98,7 +99,7 @@ export default function(component){
   const player=add("audio","");player.controls=true;player.hidden=true;
   const save=add("a","Download session WAV");save.download="recitation.wav";save.hidden=true;
   const report=add("section","");
-  let reference,clearAudit;
+  let reference,clearAudit,tracker,autoState;
   let sdk,engine,session,mic,prepared,interval,url,dead=false,opening=false,closing=false;
   const abort=new AbortController();
   let samples,count=0,analysed=0,previousRun=0;
@@ -114,6 +115,7 @@ export default function(component){
     try{
       await current.stop();
       if(dead||!count)return;
+      autoState=tracker.ingest(session.evidence(),samples.subarray(0,count));
       url=URL.createObjectURL(pcmWave(samples.subarray(0,count)));
       player.src=save.href=url;player.hidden=save.hidden=false;
       status.textContent="Recording ready for playback.";
@@ -121,7 +123,7 @@ export default function(component){
       const evidence=session.evidence();
       inspect.onclick=()=>{
         const result=passageAudit(reference,component.data,evidence);
-        clearAudit=renderAudit(report,result,samples.subarray(0,count),component.data,add,abort.signal);
+        clearAudit=renderAudit(report,result,samples.subarray(0,count),component.data,add,abort.signal,autoState);
       };
     }catch{if(!dead)status.textContent="Recording interrupted. Please try again."}
     finally{session?.dispose();session=null;prepared?.release();prepared=null;closing=false;start.disabled=dead;if(dead)await engine?.dispose();}
@@ -140,6 +142,7 @@ export default function(component){
         if(dead)return;
         start.textContent="Start recording";status.textContent="Ready. Tap Start recording when you want to begin.";return;
       }
+      tracker=continuousTracker(reference,component.data);autoState=null;
       prepared=sdk.prepareMicrophone();
       clearRecording();samples=new Float32Array(16000*90);count=analysed=0;
       meter.frame(new Float32Array(640));previousRun=0;
@@ -157,6 +160,23 @@ export default function(component){
             if(meter.acousticBeat())pace.textContent=meter.acousticBeat()+" ms / beat · choose Use calibrated vowels";
           }
           previousRun=duration;
+        }
+        if(mode.value==="auto"){
+          const now=count/16;
+          autoState=tracker.ingest(session.evidence(),samples.subarray(0,count));
+          const {beat,active}=autoState;
+          pace.textContent=beat?" Estimated beat: "+Math.round(beat)+" ms":" Learning your pace…";
+          const fresh=active && now-active.last<=Math.max(240,(beat||100)*2) && duration>0;
+          bar.max=fresh?active.site.range[1]:1;
+          bar.value=fresh && beat?Math.min(bar.max,(now-active.start)/beat):0;
+          const range=fresh?active.site.label==="Pause-dependent madd"?"2, 4 or 6":
+            [...new Set(active.site.range)].join("–"):"";
+          elapsed.textContent=fresh?active.site.ref+" · "+active.site.arabic+" · "+active.site.label+
+            " · target "+range+(beat?" · about "+((now-active.start)/beat).toFixed(1)+" beats":""):
+            "Waiting for a supported madd";
+          const note=autoState.latest;
+          guard.textContent=note && now-note.end<1800?note.arabic+" · "+timingAdvice(note):"";
+          return;
         }
         if(duration!==undefined){
           const beat=mode.value==="tap"?meter.beat():meter.acousticBeat();bar.max=Number(target.value);

@@ -18,7 +18,7 @@ TOTAL_LIMIT_BYTES = 3_000_000
 MAX_CLIPS = 10
 
 
-@st.cache_data(ttl=86400, max_entries=500, show_spinner=False)
+@st.cache_data(ttl=86400, max_entries=48, show_spinner=False)
 def inline_everyayah_clip(surah: int, ayah: int, folder: str) -> str | None:
     if not (1 <= surah <= 114 and 1 <= ayah <= 286):
         return None
