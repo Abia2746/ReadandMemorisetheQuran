@@ -1,6 +1,6 @@
 export default function(component) {
   "use strict";
-  const D=component.data || {};
+  const D=typeof component.data?.payload==="string"?JSON.parse(component.data.payload):component.data||{};
   const words=Array.isArray(D.words)?D.words:[];
   const meta=D.meta || {};
   const language=String(D.language||"en");

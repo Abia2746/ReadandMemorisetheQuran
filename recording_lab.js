@@ -68,6 +68,9 @@ export function mountRecitation(root,data){
   const add=(tag,text,parent=root)=>{
     const el=document.createElement(tag);el.textContent=text;parent.appendChild(el);return el;
   };
+  const filters=add("div","");filters.className="recite-filters";filters.setAttribute("aria-label","Highlight Tajwid rules");
+  const progress=add("progress","");progress.className="recite-position";progress.hidden=true;
+  progress.setAttribute("aria-label","Current word in the passage");
   const canvas=add("div","");canvas.className="recite-canvas";canvas.dir="rtl";canvas.lang="ar";
   const controls=add("div","");controls.className="recite-controls";
   const blindLabel=add("label","Recite from memory ",controls);
@@ -95,11 +98,11 @@ export function mountRecitation(root,data){
       summary.textContent=history.read().length+" saved sessions on this browser. "+queue.slice(0,3).map(v=>
         v.s+":"+v.a+" · "+v.unresolved+" recall reviews · "+v.timing+" timing reviews "+
         Object.entries(v.flags).map(([label,n])=>label+" ×"+n).join(", ")).join(" | ");
-      drill.hidden=!queue.length;drill.disabled=!queue.length||!!mic||opening||closing;
+      drill.hidden=!queue.length;drill.disabled=!reference||!queue.length||!!mic||opening||closing;
     }catch{summary.textContent="Practice history unavailable in this browser.";drill.disabled=true}
   }
   drill.onclick=()=>{
-    if(!queue.length||mic||opening||closing)return;
+    if(!reference||!queue.length||mic||opening||closing)return;
     clearRecording();
     const v=queue[drillIndex++%queue.length];
     selection={...data,surah:v.s,first:v.a,end:v.a};blind.checked=true;drawPassage();
@@ -121,33 +124,70 @@ export function mountRecitation(root,data){
     }catch{summary.textContent="Import failed. Choose an Al-Mu’allim practice history file."}
     file.value="";
   };
-  const report=add("section","");root.append(drill,report,historyPanel,tech);tech.append(save);
+  const report=add("section","");root.append(report,drill,historyPanel,tech);tech.append(save);
   const metrics=add("section","",tech);
   let reference,clearAudit,tracker,autoState;
   let sdk,engine,session,mic,prepared,interval,url,dead=false,opening=false,closing=false;
   const abort=new AbortController();
   try{history=practiceHistory(localStorage,data.profile,data.countsCsv.split(",").map(Number))}catch{}
-  let wordNodes=new Map(),lit=null;
+  let wordNodes=new Map(),lit=null,filter="all";
+  const hintsByWord=new Map();
+  function applyFilter(){
+    for(const button of filters.children)button.setAttribute("aria-pressed",String(button.dataset.kind===filter));
+    for(const [key,node] of wordNodes){
+      node.classList.toggle("filtered",filter!=="all"&&hintsByWord.get(key).some(h=>h.kind===filter));
+    }
+    for(const item of canvas.querySelectorAll("[data-rule]")){
+      const selected=filter==="all"||item.dataset.rule===filter;
+      if(item.tagName==="SMALL")item.hidden=!selected;
+      else item.classList.toggle("ink",selected);
+    }
+  }
   function drawPassage(){
     canvas.replaceChildren();wordNodes.clear();lit=null;
     const verses=reference?.ayahs.filter(a=>a.s===selection.surah&&a.a>=selection.first&&a.a<=selection.end);
     const rows=verses||[{s:data.surah,a:data.first,w:data.preview||[]}];
+    hintsByWord.clear();
+    let ordinal=0;
+    const counts=Object.fromEntries(Object.keys(ruleNames).map(k=>[k,0]));
     for(const row of rows){
-      const line=add("div","",canvas);
+      const line=add("div","",canvas);line.className="recite-line";
+      const sites=row.p?[...new Map([...maddSites(row).values()].map(site=>[site.onset,site])).values()]:[];
       row.w.forEach((word,i)=>{
-        const node=add("span",word,line);node.className="recite-word";
-        wordNodes.set(row.s+":"+row.a+":"+(i+1),node);
+        const node=add("span","",line);node.className="recite-word";node.dataset.ordinal=++ordinal;
+        const key=row.s+":"+row.a+":"+(i+1);wordNodes.set(key,node);
+        const tags=row.p?referenceTags(word,row.p.slice(row.o[i],row.o[i+1]),row.w[i+1],row.w[i-1],row.iso[i]):[];
+        const hints=wordRuleHints(word,tags,sites.filter(site=>site.word===i+1));
+        hintsByWord.set(key,hints);
+        const script=add("span","",node);
+        for(const part of word.matchAll(/.\p{M}*/gu)){
+          const hint=hints.find(h=>h.index===part.index);
+          if(hint)add("span",part[0],script).dataset.rule=hint.kind;
+          else script.append(document.createTextNode(part[0]));
+        }
+        const labels=add("span","",node);labels.className="recite-labels";labels.dir="ltr";labels.lang="en";
+        for(const h of hints){counts[h.kind]++;counts.all++}
+        for(const h of new Map(hints.map(item=>[item.label,item])).values())add("small",h.label,labels).dataset.rule=h.kind;
       });
+      if(verses){const marker=add("span",String(row.a),line);marker.className="recite-ayah";marker.setAttribute("aria-label","Ayah "+row.a)}
     }
+    filters.replaceChildren();filters.hidden=!verses;
+    for(const [kind,title] of Object.entries(ruleNames)){
+      const button=add("button",title+" · "+counts[kind],filters);button.dataset.kind=kind;
+      button.onclick=()=>{filter=kind;applyFilter()};
+    }
+    applyFilter();progress.max=Math.max(1,ordinal);progress.value=0;
   }
   function spotlight(position){
     const next=position&&wordNodes.get(position.ref+":"+position.word);
     if(lit===next)return;
-    lit?.classList.remove("current");lit=next;lit?.classList.add("current");
+    if(lit && canvas.classList.contains("memory"))lit.setAttribute("aria-hidden","true");
+    lit?.classList.remove("current");lit?.removeAttribute("aria-current");lit=next;
+    if(lit){lit.removeAttribute("aria-hidden");lit.classList.add("current");lit.setAttribute("aria-current","location");progress.value=Number(lit.dataset.ordinal)}
   }
   drawPassage();
   const loadReference=()=>verifiedReference(abort.signal).then(value=>{
-    if(!dead){reference=value;drawPassage()}return value;
+    if(!dead){reference=value;drawPassage();refresh()}return value;
   });
   let referenceTask=loadReference().catch(()=>null);
   function prepare(){
@@ -162,17 +202,19 @@ export function mountRecitation(root,data){
   let samples,count=0;
   function clearRecording(){
     clearAudit?.();clearAudit=null;report.replaceChildren();metrics.replaceChildren();spotlight(null);
-    canvas.classList.remove("memory");for(const n of wordNodes.values()){n.classList.remove("review");n.onclick=null;n.removeAttribute("role");n.removeAttribute("tabindex");n.onkeydown=null}
+    canvas.classList.remove("memory","blind-review");progress.value=0;for(const n of wordNodes.values()){n.classList.remove("review");n.onclick=null;n.removeAttribute("role");n.removeAttribute("tabindex");n.onkeydown=null}
     if(url){player.pause();player.removeAttribute("src");player.load();URL.revokeObjectURL(url);url=null}
     save.hidden=player.hidden=true;
   }
   async function finish(){
     if(!mic||closing)return;
     closing=true;stop.disabled=true;clearTimeout(interval);
+    canvas.classList.remove("memory");for(const node of wordNodes.values())node.removeAttribute("aria-hidden");
     const current=mic;mic=null;
     try{
       await current.stop();
-      if(dead||!count)return;
+      if(dead)return;
+      if(!count){status.textContent="No audio was captured. Try again when you are ready.";return}
       autoState=tracker.ingest(session.evidence(),samples.subarray(0,count));
       url=URL.createObjectURL(pcmWave(raw.subarray(0,Math.min(rawCount,count))));
       player.src=save.href=url;player.hidden=save.hidden=false;
@@ -196,21 +238,23 @@ export function mountRecitation(root,data){
       const saveFlag=(!interrupted&&result.matched&&history)?(w,skill)=>{
         history.flag(sessionId,selection.surah,w.ayah,w.index+1,skill);refresh();
       }:null;
-      const drawWord=renderAudit(report,result,samples.subarray(0,count),selection,add,abort.signal,autoState,false,saveFlag,raw.subarray(0,rawCount),metrics);
+      const drawWord=renderAudit(report,result,samples.subarray(0,count),selection,add,abort.signal,autoState,false,saveFlag,raw.subarray(0,rawCount),metrics,hintsByWord);
       clearAudit=drawWord;
+      if(result.matched>0 && result.matched<result.words.length && !interrupted)status.textContent="Underlined words are worth another listen.";
       spotlight(null);
       for(const w of result.words){
         const node=wordNodes.get(w.ref+":"+(w.index+1));
         if(!node)continue;
-        if(result.aligned && (!w.interval||[...autoState.notes.values()].some(n=>n.ref===w.ref&&n.word===w.index+1)))node.classList.add("review");
+        if(result.aligned && result.matched>0 && (!w.interval||[...autoState.notes.values()].some(n=>n.ref===w.ref&&n.word===w.index+1)))node.classList.add("review");
         node.setAttribute("role","button");node.tabIndex=0;
         node.onclick=()=>drawWord.show(w);
         node.onkeydown=e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();node.click()}};
       }
-      canvas.classList.remove("memory");
+      canvas.classList.toggle("blind-review",blind.checked && result.matched>0);
     }catch{if(!dead)status.textContent="Recording interrupted. Please try again."}
-    finally{await wake?.release().catch(()=>{});wake=null;blind.disabled=false;session?.dispose();session=null;prepared?.release();prepared=null;closing=false;stop.hidden=true;start.hidden=false;bar.hidden=true;elapsed.textContent="";canvas.classList.remove("memory");start.disabled=dead;refresh();if(dead)await engine?.dispose();}
+    finally{await wake?.release().catch(()=>{});wake=null;blind.disabled=false;session?.dispose();session=null;prepared?.release();prepared=null;closing=false;stop.hidden=true;start.hidden=false;progress.hidden=true;bar.hidden=true;elapsed.textContent="";canvas.classList.remove("memory");start.disabled=dead;refresh();if(dead)await engine?.dispose();}
   }
+  blind.onchange=()=>{if(!blind.checked)canvas.classList.remove("blind-review")};
   stop.onclick=()=>void finish();
   start.onclick=async()=>{
     if(opening||closing||dead)return;
@@ -220,8 +264,10 @@ export function mountRecitation(root,data){
       prepared=sdk.prepareMicrophone();
       prepared.stream.catch(()=>{});
       status.textContent="Getting ready. Start reciting when the Stop button appears.";
-      if(!reference && !(await referenceTask))referenceTask=loadReference();
-      await referenceTask;
+      if(!reference && !(await referenceTask)){
+        referenceTask=loadReference().catch(()=>null);
+        if(!(await referenceTask))throw Error("Passage unavailable");
+      }
       if(dead)return;
       if(!engine)engine=await sdk.createTilawa({reference,tier:"lite",threads:1,providers:["wasm"],recordEvidence:true,signal:abort.signal});
       if(dead)return;
@@ -266,7 +312,9 @@ export function mountRecitation(root,data){
       stream.getAudioTracks().forEach(track=>track.addEventListener("ended",lost,{once:true}));
       if(dead){await finish();return}
       interval=setTimeout(()=>void finish(),90000);stop.disabled=false;
-      start.hidden=true;stop.hidden=false;canvas.classList.toggle("memory",blind.checked);status.textContent="Recording…";
+      start.hidden=true;stop.hidden=false;progress.hidden=false;canvas.classList.toggle("memory",blind.checked);
+      if(blind.checked)for(const node of wordNodes.values())node.setAttribute("aria-hidden","true");
+      status.textContent="Recording…";
     }catch{blind.disabled=false;await wake?.release().catch(()=>{});wake=null;session?.dispose();session=null;prepared?.release();prepared=null;
       if(!dead)status.textContent="Recorder unavailable. Check microphone access and the model download, then retry."}
     finally{opening=false;start.disabled=dead||!!mic||closing;if(dead && !closing)await engine?.dispose();}

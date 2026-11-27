@@ -10,6 +10,7 @@ Do not interpolate fake word positions when a recording has no usable timing.
 from functools import lru_cache
 from pathlib import Path
 import json
+import re
 
 _ROOT = Path(__file__).resolve().parent
 _RECITER_TIMINGS = {
@@ -19,14 +20,14 @@ _RECITER_TIMINGS = {
 
 
 @lru_cache(maxsize=8)
-def _timing_group(source: str, group: int) -> dict:
+def _timing_group(source: str, group: int) -> str:
     path = _ROOT / "timings" / f"quranlife_{source}_group{group}.json"
     if not path.exists():
-        return {}
+        return ""
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        return path.read_text(encoding="utf-8")
     except (OSError, ValueError):
-        return {}
+        return ""
 
 
 def matched_word_segments(
@@ -45,7 +46,17 @@ def matched_word_segments(
     if not source or expected_word_count < 1:
         return []
     group = (int(surah) + 19) // 20
-    rows = _timing_group(source, group).get(f"{int(surah)}:{int(ayah)}")
+    # The shipped maps have numeric verse keys and arrays of integer pairs.
+    # Decode only this ayah; expanding an entire group keeps thousands of
+    # unused lists resident on every Community Cloud worker.
+    packed = _timing_group(source, group)
+    field = re.search(rf'"{int(surah)}:{int(ayah)}"\s*:\s*', packed)
+    if field is None:
+        return []
+    try:
+        rows, _ = json.JSONDecoder().raw_decode(packed, field.end())
+    except ValueError:
+        return []
     if not isinstance(rows, list) or len(rows) != expected_word_count:
         return []
     result = []
