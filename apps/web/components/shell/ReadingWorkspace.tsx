@@ -5,6 +5,7 @@ import { BookOpen, BookText, Brain, CloudRain, Mic, MicOff, Pause, Play,
   RotateCcw, Volume2, CheckCircle2 } from "lucide-react";
 import { StickyReaderBar } from "@/components/shell/StickyReaderBar";
 import { MushafReader } from "@/components/mushaf/MushafReader";
+import { MeaningQuiz } from "@/components/memorise/MeaningQuiz";
 import { MeaningTileGrid } from "@/components/memorise/MeaningTileGrid";
 import { WordActionPopover } from "@/components/mushaf/WordActionPopover";
 import { RecitationProvider, useRecitation } from "@/components/audio/RecitationProvider";
@@ -19,7 +20,7 @@ import { flagDifficultWord, loadDifficultWords, removeDifficultWord,
 
 type TimingPayload={available:boolean;segments:{index:number;start_ms:number;end_ms:number}[];
   source:string;caution:string};
-type Mode="read"|"memorise"|"live";
+type Mode="read"|"memorise"|"live"|"quiz";
 type Selection={word:QuranWord;rect:DOMRect};
 
 function Workspace(){
@@ -213,10 +214,10 @@ function Workspace(){
       onReciter={setReciter} onLanguage={setLang}/>
     <main className="am-page mx-auto">
       <nav className="flex min-h-12 flex-wrap items-center justify-between gap-2 border-b border-[#4A3828]/60 py-1" aria-label="Learning modes">
-        <div className="flex gap-1" role="tablist" aria-label="Qur'an practice">
-          {([["read","Read"],["memorise","Memorise"],["live","Live recitation"]] as const).map(([id,label])=>
+        <div className="flex flex-wrap gap-1" role="tablist" aria-label="Qur'an practice">
+          {([["read","Read"],["memorise","Memorise"],["live","Live recitation"],["quiz","Word quiz"]] as const).map(([id,label])=>
             <button key={id} type="button" role="tab" aria-selected={mode===id}
-              onClick={()=>setMode(id)} className="am-mode-tab"
+              onClick={()=>{if(id==="quiz"){stopMicrophone();stop();quit()}setMode(id)}} className="am-mode-tab"
               data-current={mode===id}>{label}</button>)}
         </div>
         <div className="flex gap-2 text-xs">
@@ -235,7 +236,8 @@ function Workspace(){
         <p className="mt-2 text-sm">{error}</p>
         <p className="mt-2 text-xs text-[#C0AB90]">No Arabic verse or translation will be invented. Check the backend Qur'an API credentials and connection.</p>
       </div>}
-      {verse && <section className="mt-1">
+      {verse && mode==="quiz" && <MeaningQuiz key={verse.surah+":"+verse.ayah} verse={verse} reciter={reciter} language={lang}/>}
+      {verse && mode!=="quiz" && <section className="mt-1">
         {verse.text_source==="Tanzil" && <p className="px-4 py-2 text-xs text-[#E6D5B8]">
           Arabic text from the <a className="underline" href="https://tanzil.net">Tanzil Project</a>. Word details are temporarily unavailable.
         </p>}

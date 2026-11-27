@@ -28,6 +28,8 @@ class Element{
     this.style={};this.dataset={};this.attributes={};this.hidden=false;
     this.disabled=false;this.paused=true;this.value="";
   }
+  append(...nodes){nodes.forEach(node=>this.appendChild(node))}
+  focus(){}
   appendChild(node){this.children.push(node);return node}
   insertBefore(node,reference){
     const at=this.children.indexOf(reference);
@@ -94,7 +96,8 @@ async function fixture(mode,overrides={},startListening=true,browserWindow={},de
       };
     }
   };
-  const combined = roomUiSource+"\n"+hifdhUiSource+"\n"+
+  const quizSource=readFileSync(resolve(root,"apps/web/lib/meaningQuiz.mjs"),"utf8").replaceAll("export function","function");
+  const combined = quizSource+"\n"+roomUiSource+"\n"+hifdhUiSource+"\n"+
     source.replace(/^export default function\(component\)/,"function Studio(component)")+
     "\nreturn Studio;";
   const factory=new Function("mockSdk","document","window","navigator","sessionStorage",
@@ -384,4 +387,29 @@ if(process.env.QURAN_POSITION_REPLAY){
   assert.deepEqual([...positions],JSON.parse(process.env.QURAN_EXPECT_POSITIONS));
   console.log("Positions followed from real engine events:",[...positions]);
   f.dispose();
+}
+
+{
+  const x=await fixture("full",{meta:{s:2,a:57,end:58},words:[
+    {ayah:57,ar:"ٱلْمَنَّ",en:"[the] manna"},
+    {ayah:58,ar:"وَإِذْ",en:"And when"}
+  ]},false);
+  const find=text=>nodes(x.mount).find(n=>n.textContent===text);
+  const quiz=()=>nodes(x.mount).find(n=>n.className.includes("am-meaning-quiz"));
+  find("◇ Word quiz").onclick();
+  assert.equal(quiz().hidden,false);
+  assert.ok(find("Word 1 of 2 · 2:57:1"));
+  assert.ok(!find("[the] manna"));
+  const submit=()=>nodes(quiz()).find(n=>n.tag==="form").onsubmit({preventDefault(){}});
+  nodes(quiz()).find(n=>n.tag==="input").value="manna";
+  submit();
+  assert.ok(find("Matched. Passage meaning: [the] manna"));
+  submit();
+  assert.ok(find("Word 2 of 2 · 2:58:1"));
+  find("Show meaning").onclick();
+  submit();
+  assert.ok(find("Round complete · 1 of 2 meanings matched."));
+  find("Retry missed words").onclick();
+  assert.ok(find("Word 1 of 1 · 2:58:1"));
+  x.dispose();
 }

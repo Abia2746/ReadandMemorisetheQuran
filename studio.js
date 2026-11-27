@@ -39,6 +39,7 @@ export default function(component) {
     ["read","☷",T("read","Read")],
     ["cover","◉",T("cover","Memorise")],
     ["listen","♫",T("listen","Listen")],
+    ["quiz","◇","Word quiz"],
     ["journey","✦",T("journey","My journey")]
   ];
   const tabBtns={};
@@ -67,6 +68,12 @@ export default function(component) {
   const main=CE("div","am-main");
   const side=CE("div","am-side");
   append(layout,main,side);stage.appendChild(layout);
+  const quizPanel=CE("section","am-panel am-meaning-quiz");
+  quizPanel.hidden=true;
+  const quizBody=CE("div");
+  append(quizPanel,CE("h2","","Word meanings"),quizBody);
+  stage.appendChild(quizPanel);
+  let quizReady=false;
   const readerPanel=CE("section","am-panel");
   main.appendChild(readerPanel);
   const sectionTop=CE("div","am-section-top");
@@ -675,8 +682,8 @@ export default function(component) {
     el.appendChild(block);
   }
   function selectTab(tab){
-    if(live && (tab==="journey"||tab==="listen"||tab==="room"))void stopLive();
-    if(tab==="room" && !audio.paused)audio.pause();
+    if(live && (tab==="journey"||tab==="listen"||tab==="room"||tab==="quiz"))void stopLive();
+    if((tab==="room"||tab==="quiz") && !audio.paused)audio.pause();
     currentTab=tab;
     if(tab==="cover"&&engineSelect.value==="local")warmMemorisationModel();
     showHints=false;detail.hidden=true;
@@ -685,10 +692,20 @@ export default function(component) {
     prayerRoom.setVisible(room);
     prayerRoom.setPracticeMode(tab);
     journeyPlanner.setVisible(journey);
-    layout.hidden=journey||room;
+    const quiz=tab==="quiz";
+    quizPanel.hidden=!quiz;
+    if(quiz&&!quizReady){
+      let lastAyah=null,position=0;
+      mountMeaningQuiz(quizBody,words.map(w=>{
+        if(w.ayah!==lastAyah){lastAyah=w.ayah;position=0}
+        return {arabic:w.ar||"",meaning:w.en||"",ref:meta.s+":"+w.ayah+":"+(++position)};
+      }));
+      quizReady=true;
+    }
+    layout.hidden=journey||room||quiz;
     journeyPanel.hidden=!journey;
     hero.hidden=journey||room;
-    if(journey||room){return}
+    if(journey||room||quiz){return}
     // Switching between Read, Memorise and Listen resets stale playback
     // highlights. Only an actively playing reciter or mic can mark a word.
     lastPlaybackUiKey="";
