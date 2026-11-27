@@ -63,6 +63,26 @@ export function pcmWave(samples){
   return new Blob([buffer],{type:"audio/wav"});
 }
 
+// Release resources that arrive after the browser has timed out or the
+// learner has left the tab. Timers and abort listeners belong to one wait.
+export function awaitRecorderStep(task,ms,signal,message,releaseLate){
+  return new Promise((resolve,reject)=>{
+    let done=false;
+    function settle(callback,value){
+      if(done)return false;
+      done=true;clearTimeout(timer);signal.removeEventListener("abort",cancel);
+      callback(value);return true;
+    }
+    const cancel=()=>settle(reject,new DOMException("Recording closed","AbortError"));
+    const timer=setTimeout(()=>settle(reject,new Error(message)),ms);
+    signal.addEventListener("abort",cancel,{once:true});
+    if(signal.aborted)cancel();
+    Promise.resolve(task).then(value=>{
+      if(!settle(resolve,value) && releaseLate)Promise.resolve(releaseLate(value)).catch(()=>{});
+    },error=>settle(reject,error));
+  });
+}
+
 export function mountRecitation(root,data){
   root.replaceChildren();
   const add=(tag,text,parent=root)=>{
@@ -82,6 +102,11 @@ export function mountRecitation(root,data){
   stop.disabled=true;
   const status=add("p","Audio stays in this browser. Maximum session length is 90 seconds.");
   status.setAttribute("role","status");
+  const busy=add("progress","");busy.hidden=true;busy.setAttribute("aria-label","Preparing recorder");
+  const micHelp="Open this app directly in Safari, allow Microphone in Website Settings, then tap to retry.";
+  const modelHelp="The speech model did not load. Check your connection and tap to retry.";
+  function loading(message){status.textContent=message;busy.hidden=false}
+
   const player=add("audio","");player.controls=true;player.hidden=true;
   const save=add("a","Download session WAV");save.download="recitation.wav";save.hidden=true;
   let selection=data;
@@ -186,15 +211,27 @@ export function mountRecitation(root,data){
     if(lit){lit.removeAttribute("aria-hidden");lit.classList.add("current");lit.setAttribute("aria-current","location");progress.value=Number(lit.dataset.ordinal)}
   }
   drawPassage();
-  const loadReference=()=>verifiedReference(abort.signal).then(value=>{
+  const loadReference=()=>awaitRecorderStep(verifiedReference(abort.signal),60000,abort.signal,modelHelp).then(value=>{
     if(!dead){reference=value;drawPassage();refresh()}return value;
   });
-  let referenceTask=loadReference().catch(()=>null);
+  const ruleNotice=add("p","Loading rule labels…");root.insertBefore(ruleNotice,filters);
+  function fetchRules(){
+    ruleNotice.hidden=false;
+    return loadReference().then(value=>{ruleNotice.hidden=true;return value}).catch(()=>{
+      if(!dead)ruleNotice.textContent="Rule labels could not load. Check your connection and retry recording.";
+      return null;
+    });
+  }
+  let referenceTask=fetchRules();
   function prepare(){
     start.disabled=true;
-    return import("https://esm.sh/@tilawa/core@1.0.0-rc.0/web?bundle&deps=onnxruntime-web@1.30.0").then(module=>{
-      if(dead)return;sdk=module;start.disabled=false;
-    }).catch(()=>{if(!dead){start.disabled=false;status.textContent="The listener could not load. Tap to retry."}});
+    loading("Preparing the recorder…");
+    const moduleTask=import("https://esm.sh/@tilawa/core@1.0.0-rc.0/web?bundle&deps=onnxruntime-web@1.30.0");
+    return awaitRecorderStep(moduleTask,45000,abort.signal,modelHelp).then(module=>{
+      if(dead)return;sdk=module;status.textContent="Ready to recite. Audio stays on this device.";
+    }).catch(()=>{if(!dead)status.textContent="The recorder could not load. Check your connection and tap to retry."})
+      .finally(()=>{if(!dead){busy.hidden=true;start.disabled=false}});
+
   }
   void prepare();
   refresh();
@@ -261,15 +298,23 @@ export function mountRecitation(root,data){
     opening=true;start.disabled=true;
     try{
       if(!sdk){await prepare();return}
+      // iPad requires AudioContext.resume and getUserMedia in the tap itself.
+      loading("1 of 2 · Requesting microphone. Allow access when prompted.");
+      const policy=document.permissionsPolicy||document.featurePolicy;
+      if(policy?.allowsFeature && !policy.allowsFeature("microphone"))throw Error(micHelp);
+      if(!navigator.mediaDevices?.getUserMedia)throw Error(micHelp);
       prepared=sdk.prepareMicrophone();
-      prepared.stream.catch(()=>{});
-      status.textContent="Getting ready. Start reciting when the Stop button appears.";
+      await awaitRecorderStep(prepared.stream,15000,abort.signal,"Microphone did not respond within 15 seconds. "+micHelp);
+      loading("2 of 2 · Loading the speech model. The first download can take a minute.");
       if(!reference && !(await referenceTask)){
-        referenceTask=loadReference().catch(()=>null);
-        if(!(await referenceTask))throw Error("Passage unavailable");
+        referenceTask=fetchRules();
+        if(!(await referenceTask))throw Error(modelHelp);
       }
       if(dead)return;
-      if(!engine)engine=await sdk.createTilawa({reference,tier:"lite",threads:1,providers:["wasm"],recordEvidence:true,signal:abort.signal});
+      if(!engine){
+        engine=await awaitRecorderStep(sdk.createTilawa({reference,tier:"lite",threads:1,providers:["wasm"],recordEvidence:true,signal:abort.signal}),
+          90000,abort.signal,modelHelp,lateEngine=>lateEngine.dispose());
+      }
       if(dead)return;
       tracker=continuousTracker(reference,selection);autoState=null;
       interrupted=false;blind.disabled=true;drill.disabled=true;
@@ -279,9 +324,10 @@ export function mountRecitation(root,data){
       }).catch(()=>{});
       clearRecording();samples=new Float32Array(16000*90);count=rawCount=0;raw=new Float32Array(samples.length);
 
-      session=engine.startFreeRecitation();
-      session.onAudio((pcm,ms)=>{
-        if(dead)return;
+      const take=engine.startFreeRecitation();
+      session=take;
+      take.onAudio((pcm,ms)=>{
+        if(dead||session!==take)return;
         const at=Math.round(ms*16);
         if(at!==count||at>=samples.length)return;
         const part=pcm.subarray(0,samples.length-at);samples.set(part,at);count+=part.length;
@@ -296,17 +342,21 @@ export function mountRecitation(root,data){
       });
       const condition=microphoneConditioner();
       const input={
-        get state(){return session.state},
-        end:()=>session.end(),
+        get state(){return take.state},
+        end:()=>take.end(),
         pushAudio:(pcm,rate)=>{
+          if(dead||session!==take)return Promise.resolve([]);
           const n=Math.min(pcm.length,raw.length-rawCount);
           if(n<=0)return Promise.resolve([]);
           const chunk=pcm.subarray(0,n);
           raw.set(chunk,rawCount);rawCount+=n;
-          return session.pushAudio(condition(chunk),rate);
+          return take.pushAudio(condition(chunk),rate);
         }
       };
-      mic=await engine.listen(input,{prepared,vad:false,onError:()=>{interrupted=true;if(mic)void finish()}});
+      loading("Starting audio capture…");
+      mic=await awaitRecorderStep(engine.listen(input,{prepared,vad:false,onError:()=>{
+        if(session===take){interrupted=true;if(mic)void finish()}
+      }}),15000,abort.signal,"Audio capture did not start. "+micHelp,lateMic=>lateMic.stop());
       const stream=await prepared.stream;
       const lost=()=>{interrupted=true;if(mic)void finish()};
       stream.getAudioTracks().forEach(track=>track.addEventListener("ended",lost,{once:true}));
@@ -315,9 +365,14 @@ export function mountRecitation(root,data){
       start.hidden=true;stop.hidden=false;progress.hidden=false;canvas.classList.toggle("memory",blind.checked);
       if(blind.checked)for(const node of wordNodes.values())node.setAttribute("aria-hidden","true");
       status.textContent="Recording…";
-    }catch{blind.disabled=false;await wake?.release().catch(()=>{});wake=null;session?.dispose();session=null;prepared?.release();prepared=null;
-      if(!dead)status.textContent="Recorder unavailable. Check microphone access and the model download, then retry."}
-    finally{opening=false;start.disabled=dead||!!mic||closing;if(dead && !closing)await engine?.dispose();}
+    }catch(error){blind.disabled=false;await wake?.release().catch(()=>{});wake=null;session?.dispose();session=null;prepared?.release();prepared=null;
+      if(!dead){
+        if(["NotAllowedError","SecurityError"].includes(error?.name))status.textContent="Microphone access was blocked. "+micHelp;
+        else if(error?.name==="NotFoundError")status.textContent="No microphone is available. Connect one and try again.";
+        else if(error?.message===modelHelp||error?.message?.endsWith(micHelp))status.textContent=error.message;
+        else status.textContent="Recording could not start. Check microphone access and your connection, then retry.";
+      }}
+    finally{busy.hidden=true;opening=false;start.disabled=dead||!!mic||closing;if(dead && !closing)await engine?.dispose();}
   };
   const hidden=()=>{if(document.hidden && mic){interrupted=true;void finish()}};
   document.addEventListener("visibilitychange",hidden);

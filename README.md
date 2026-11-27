@@ -101,6 +101,17 @@ The 3D room is rendered using [Babylon.js](https://www.babylonjs.com/), an open-
 
 The component is **not sandboxed inside an iframe**. User text arrives via \`component.data\`, and the frontend uses \`textContent\` rather than inserting user-supplied HTML.
 
+When embedding the whole Streamlit app on another site, set permissions on the host page's iframe:
+
+```html
+<iframe title="Al-Mu’allim Memorise"
+        src="https://readandmemorisethequran-9uvtv8lpn9ozytdqtk6ceh.streamlit.app/?area=recording"
+        allow="microphone; autoplay"></iframe>
+```
+
+Community Cloud manages its own outer frame. The recording component cannot grant permissions withheld by its host.
+
+
 ## Running locally
 
 1. Install Python 3.11+.
