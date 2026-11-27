@@ -914,7 +914,7 @@ st.session_state.setdefault("quran_language", "en")
 language_options = sorted(language_labels, key=lambda code: (code != "en", language_labels[code].casefold()))
 if st.session_state.get("quran_language") not in language_options:
     st.session_state["quran_language"] = "en"
-language = st.selectbox(
+language = st.sidebar.selectbox(
     "🌐 Language / اللغة / Langue",
     options=language_options,
     format_func=lambda code: f"{language_labels[code]} ({code})",
@@ -971,6 +971,17 @@ with st.sidebar:
         st.session_state.name = ""
         st.rerun()
 
+destinations = {
+    "practice": "Qur’an practice",
+    "study": "Tafsir & Arabic",
+    "recording": "Recording review",
+    "teacher": "Ask the teacher",
+}
+destination = st.radio(
+    _ui("Study area"), list(destinations), horizontal=True,
+    format_func=lambda area: _ui(destinations[area]), key="am_study_destination",
+)
+
 # Prominent Qur'an navigation shared by Read, Memorise and Listen.
 # These widgets are intentionally on the main page, not in the collapsed sidebar.
 st.caption(ui_labels.get("passage_help", "Choose your passage and reciter."))
@@ -1026,6 +1037,33 @@ if (st.session_state.get("am_auth")
     if st.session_state.get("am_cloud_preferences_save_error"):
         st.caption("☁ Study settings couldn't sync. They remain available for this session.")
 
+if destination == "study":
+    from tafsir_study_ui import show_verse_tafsir
+    show_verse_tafsir(surah, ayah, end_ayah, language, fetch_words, ask_teacher_scholar)
+    st.stop()
+
+if destination == "teacher":
+    st.markdown("### " + _ui("Ask your AI teacher"))
+    st.caption(_ui("Ask about the selected verses, Qur'anic vocabulary or Tajweed terminology. AI responses can contain mistakes; verify religious rulings and precise recitation with reliable scholars."))
+    with st.form("teacher_question", clear_on_submit=True):
+        question = st.text_input(
+            _ui("Your question"),
+            placeholder=_ui("What is the difference between Fathah and Kasrah?"),
+        )
+        send = st.form_submit_button(_ui("Ask the teacher"))
+    if send and question.strip():
+        try:
+            with st.spinner(_ui("Preparing your answer...")):
+                answer = ask_teacher_scholar(question.strip(), surah, ayah, end_ayah, language)
+            st.session_state.scholar_chat.append((question.strip(), answer))
+        except Exception as exc:
+            st.warning(_ui("The AI teacher is temporarily unavailable."))
+            st.caption(str(exc))
+    for user_q, reply in reversed(st.session_state.scholar_chat[-4:]):
+        with st.expander(user_q):
+            st.write(reply)
+    st.stop()
+
 passage_key = f"{surah}:{ayah}-{end_ayah}"
 result_key = f"{passage_key}|recitation"
 
@@ -1055,56 +1093,59 @@ if st.session_state.get("am_auth"):
 else:
     st.session_state.setdefault("am_guest_storage_id", secrets.token_hex(16))
     storage_profile = "guest:" + st.session_state["am_guest_storage_id"]
-xp, streak, _ = get_user(storage_profile)
-meta = {"s": surah, "a": ayah, "end": end_ayah, "xp": xp, "streak": streak}
-surah_arabic, surah_english = SURAH_TITLES.get(surah, ("القرآن الكريم", f"Surah {surah}"))
-teacher_name = "Ustadha Noor" if st.session_state.teacher_gender == "Female" else "Ustadh Omar"
-avatar = NOOR_B64 if st.session_state.teacher_gender == "Female" else OMAR_B64
 saved = st.session_state.results.get(result_key)
+if destination == "practice":
+    xp, streak, _ = get_user(storage_profile)
+    meta = {"s": surah, "a": ayah, "end": end_ayah, "xp": xp, "streak": streak}
+    surah_arabic, surah_english = SURAH_TITLES.get(surah, ("القرآن الكريم", f"Surah {surah}"))
+    teacher_name = "Ustadha Noor" if st.session_state.teacher_gender == "Female" else "Ustadh Omar"
+    avatar = NOOR_B64 if st.session_state.teacher_gender == "Female" else OMAR_B64
 
-# Small MP3 clips can be inspected by the on-device Quran model; if a clip is
-# too long or the source is unreachable, ordinary source-matched timings remain.
-audio_inline = (inline_passage_clips(surah, ayah, end_ayah, RECITERS[reciter]["folder"])
-                if analyse_reciter_repeats else [])
+    # Small MP3 clips can be inspected by the on-device Quran model; if a clip is
+    # too long or the source is unreachable, ordinary source-matched timings remain.
+    audio_inline = (inline_passage_clips(surah, ayah, end_ayah, RECITERS[reciter]["folder"])
+                    if analyse_reciter_repeats else [])
 
 
-# The full study environment is provided through a modern non-iframe Streamlit component.
-try:
-    render_studio(
-        words=words,
-        meta=meta,
-        profile=storage_profile,
-        tracks=tracks,
-        inline_audio=audio_inline,
-        reciter=reciter,
-        language=language,
-        ui_strings={**ui_labels, **ui_catalogue},
-        verse_translations=verse_translations,
-        segments=segments,
-        word_counts=track_word_counts,
-        mode="blind" if st.session_state.recite_from_memory else "full",
-        teacher_name=teacher_name,
-        avatar=avatar,
-        surah_arabic=surah_arabic,
-        surah_english=surah_english,
-        review=saved,
-    )
-except (TypeError, ValueError, sqlite3.Error, RuntimeError) as studio_exc:
-    logging.getLogger(__name__).exception(
-        "Reader component failed; showing safe basic Quran reader"
-    )
-    st.warning(
-        "The interactive reader is unavailable because a component encountered "
-        "a startup error. The basic Qur'an text and reciter remain below."
-    )
-    with st.expander("Technical details for debugging"):
-        st.code(type(studio_exc).__name__ + ": " + str(studio_exc)[:350])
-    st.markdown("### " + str(surah_english) + " · " + str(ayah) + "–" + str(end_ayah))
-    st.markdown(
-        " ".join(str(word.get("ar", "")) for word in words)
-    )
-    if tracks:
-        st.audio(tracks[0])
+    # The full study environment is provided through a modern non-iframe Streamlit component.
+    try:
+        render_studio(
+            words=words,
+            meta=meta,
+            profile=storage_profile,
+            tracks=tracks,
+            inline_audio=audio_inline,
+            reciter=reciter,
+            language=language,
+            ui_strings={**ui_labels, **ui_catalogue},
+            verse_translations=verse_translations,
+            segments=segments,
+            word_counts=track_word_counts,
+            mode="blind" if st.session_state.recite_from_memory else "full",
+            teacher_name=teacher_name,
+            avatar=avatar,
+            surah_arabic=surah_arabic,
+            surah_english=surah_english,
+            review=saved,
+        )
+    except (TypeError, ValueError, sqlite3.Error, RuntimeError) as studio_exc:
+        logging.getLogger(__name__).exception(
+            "Reader component failed; showing safe basic Quran reader"
+        )
+        st.warning(
+            "The interactive reader is unavailable because a component encountered "
+            "a startup error. The basic Qur'an text and reciter remain below."
+        )
+        with st.expander("Technical details for debugging"):
+            st.code(type(studio_exc).__name__ + ": " + str(studio_exc)[:350])
+        st.markdown("### " + str(surah_english) + " · " + str(ayah) + "–" + str(end_ayah))
+        st.markdown(
+            " ".join(str(word.get("ar", "")) for word in words)
+        )
+        if tracks:
+            st.audio(tracks[0])
+    st.caption("Al-Mu'allim · QuranLife word timings (CC BY 4.0) · Audio: EveryAyah. Recitation feedback supports practice; it is not certified Tajweed assessment.")
+    st.stop()
 
 st.markdown(
     "<div class='am-python-section'>"
@@ -1276,7 +1317,7 @@ if saved:
     st.markdown("### " + _ui("Your last practice review"))
     st.caption(_ui("Recording: ") + saved.get("recording_scope", _ui("Selected passage")))
     st.info(saved.get("feedback") or _ui("The AI returned no general feedback."))
-    with st.expander("Guided lesson · when a Tajweed teacher isn't available", expanded=True):
+    with st.expander("Guided recitation lesson"):
         st.markdown(
             "**1. Listen** to your selected Hafs reciter without speaking. "
             "**2. Repeat** the same short phrase carefully. "
@@ -1317,6 +1358,7 @@ if saved:
     # recording only when its digest matches this review. Cross-device review
     # never pretends that private audio was backed up to Supabase.
     active_recording_audio = None
+    recording = st.session_state.get(f"academy_rec_{passage_key}_{st.session_state.tries}")
     if (recording is not None and isinstance(saved, dict) and
             saved.get("audio_sha256")):
         try:
@@ -1479,28 +1521,3 @@ if saved:
     if st.button(_ui("Start a fresh recording"), use_container_width=True):
         st.session_state.tries += 1
         st.rerun()
-
-from tafsir_study_ui import show_verse_tafsir
-show_verse_tafsir(surah, ayah, end_ayah, language, fetch_words, ask_teacher_scholar)
-
-st.markdown("### " + _ui("Ask your AI teacher"))
-st.caption(_ui("Ask about the selected verses, Qur'anic vocabulary or Tajweed terminology. AI responses can contain mistakes; verify religious rulings and precise recitation with reliable scholars."))
-with st.form("teacher_question", clear_on_submit=True):
-    question = st.text_input(
-        _ui("Your question"),
-        placeholder=_ui("What is the difference between Fathah and Kasrah?"),
-    )
-    send = st.form_submit_button(_ui("Ask the teacher"))
-if send and question.strip():
-    try:
-        with st.spinner(_ui("Preparing your answer...")):
-            answer = ask_teacher_scholar(question.strip(), surah, ayah, end_ayah, language)
-        st.session_state.scholar_chat.append((question.strip(), answer))
-    except Exception as exc:
-        st.warning(_ui("The AI teacher is temporarily unavailable."))
-        st.caption(str(exc))
-for user_q, reply in reversed(st.session_state.scholar_chat[-4:]):
-    with st.expander(user_q):
-        st.write(reply)
-
-st.caption("Al-Mu'allim · QuranLife word timings (CC BY 4.0) · Audio: EveryAyah. Recitation feedback supports practice; it is not certified Tajweed assessment.")

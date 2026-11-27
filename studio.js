@@ -273,20 +273,6 @@ export default function(component) {
   append(matchedRow,liveCountLabel,liveCount);
   stats.appendChild(matchedRow);
   side.appendChild(stats);
-  const reviewPanel=CE("section","am-panel am-mini");
-  reviewPanel.appendChild(CE("h3","am-smallhead","How practice works"));
-  [
-    ["01","Listen","Hear the ayah from your selected reciter"],
-    ["02","Recall","Use English clues in Memorise mode"],
-    ["03","Recite","Follow the live speech indicator when supported"],
-    ["04","Review","Record a passage below for AI-assisted feedback"]
-  ].forEach(([n,title,desc])=>{
-    const line=CE("div","am-mini-row");
-    const left=CE("div","");
-    append(left,CE("b","",n+" · "+title),CE("div","am-note",desc));
-    line.appendChild(left);reviewPanel.appendChild(line);
-  });
-  side.appendChild(reviewPanel);
   const journeyPanel=CE("section","am-subpage");
   journeyPanel.hidden=true;
   stage.appendChild(journeyPanel);
