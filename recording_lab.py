@@ -13,7 +13,8 @@ _lab = st.components.v2.component(
     .timing-lab progress,.timing-lab audio {display:block;width:min(100%,32rem);margin:.7rem 0}
     .timing-lab [hidden] {display:none}
     """,
-    js=(_ROOT / "recording_lab.js").read_text(encoding="utf-8"),
+    js=(_ROOT / "recording_audit.mjs").read_text(encoding="utf-8")
+    + "\n" + (_ROOT / "recording_lab.js").read_text(encoding="utf-8"),
 )
 
 
