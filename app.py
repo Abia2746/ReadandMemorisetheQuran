@@ -1156,6 +1156,12 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+from recording_lab import recording_lab
+recording_tool = st.radio("Recording tool", ["Recorded review", "Timing practice"], horizontal=True)
+if recording_tool == "Timing practice":
+    recording_lab(surah, ayah, end_ayah)
+    st.stop()
+
 left, right = st.columns([3, 2], gap="large")
 @st.fragment
 def recording_review():
