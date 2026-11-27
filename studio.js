@@ -728,11 +728,24 @@ export default function(component) {
     if(!block.childNodes.length)block.appendChild(CE("span","am-marks","No pronunciation hints available"));
     el.appendChild(block);
   }
+  const recitation=CE("section","timing-lab");
+  stage.appendChild(recitation);recitation.hidden=true;
+  let disposeRecitation;
   function selectTab(tab){
+    const integrated=typeof mountRecitation==="function";
+    const memorising=integrated && tab==="cover";
+    recitation.hidden=!memorising;
+    if(!memorising && disposeRecitation){disposeRecitation();disposeRecitation=null;recitation.replaceChildren()}
+    if(memorising && !disposeRecitation){
+      if(live)void stopLive();
+      audio.pause();
+      disposeRecitation=mountRecitation(recitation,{surah:meta.s,first:meta.a,end:meta.end,profile:D.recordingProfile,
+        countsCsv:D.countsCsv,blind:D.mode==="blind",preview:words.map(w=>w.ar)});
+    }
     if(live && (tab==="journey"||tab==="listen"||tab==="room"||tab==="quiz"||tab==="review"))void stopLive();
     if((tab==="room"||tab==="quiz"||tab==="review") && !audio.paused)audio.pause();
     currentTab=tab;
-    if(tab==="cover"&&engineSelect.value==="local")warmMemorisationModel();
+    if(!integrated && tab==="cover"&&engineSelect.value==="local")warmMemorisationModel();
     showHints=false;detail.hidden=true;
     Object.entries(tabBtns).forEach(([id,b])=>b.setAttribute("aria-selected",String(id===tab)));
     const journey=tab==="journey",room=tab==="room";
@@ -752,10 +765,10 @@ export default function(component) {
       }),D.reviewProfile,language);
       quizReady=true;
     }
-    layout.hidden=journey||room||quiz||review;
+    layout.hidden=journey||room||quiz||review||memorising;
     journeyPanel.hidden=!journey;
     hero.hidden=journey||room;
-    if(journey||room||quiz||review){return}
+    if(journey||room||quiz||review||memorising){return}
     // Switching between Read, Memorise and Listen resets stale playback
     // highlights. Only an actively playing reciter or mic can mark a word.
     lastPlaybackUiKey="";
@@ -1509,7 +1522,7 @@ export default function(component) {
     if(!onDevice())return;
     micText.textContent="Loading the on-device listener…";
     loadSdk().then(()=>{
-      if(currentTab==="cover"&&engineSelect.value==="local")warmMemorisationModel();
+      if(typeof mountRecitation!=="function"&&currentTab==="cover"&&engineSelect.value==="local")warmMemorisationModel();
       if(!live&&onDevice())micText.textContent="On-device listener ready. Tap Start listening.";
     }).catch(()=>{
       if(!live&&onDevice())micText.textContent="On-device listener unavailable. Tap Start to retry.";
@@ -1851,6 +1864,7 @@ export default function(component) {
     Promise.resolve().then(()=>{if(!live&&!starting)void micButton.onclick()});
   }
   return ()=>{
+    disposeRecitation?.();
     clearTimeout(revealTimer);
     prayerRoom.dispose();
     journeyPlanner.dispose();

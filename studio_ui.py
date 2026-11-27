@@ -17,10 +17,11 @@ from prayer_room import get_room_state, earn, buy, equip, unequip
 from prayer_clock import room_prayer_times, CITIES
 from hifdh_planner import get_state as hifdh_state, save_plan as hifdh_save, finish_today as hifdh_finish, build_calendar as hifdh_calendar
 
-from hifdh_planner import record_verse_recall, verse_reviews, today_local
+from recording_bundle import RECORDING_CSS, RECORDING_JS
+from hifdh_planner import AYAHS, record_verse_recall, verse_reviews, today_local
 
 _ROOT = Path(__file__).resolve().parent
-_STUDIO_CSS = (
+_STUDIO_CSS = RECORDING_CSS + (
     (_ROOT / "studio.css").read_text(encoding="utf-8")
     + "\n" + (_ROOT / "apps/web/app/quiz.css").read_text(encoding="utf-8")
     + "\n" + (_ROOT / "prayer_room.css").read_text(encoding="utf-8")
@@ -28,7 +29,7 @@ _STUDIO_CSS = (
 )
 # The helper/source files are composed into a single JavaScript module.
 # Prayer-room scene assets load only when the user selects that tab.
-_STUDIO_JS = (
+_STUDIO_JS = RECORDING_JS + "\n" + (
     (_ROOT / "prayer_room_lounge_scene.js").read_text(encoding="utf-8")
     + "\n" + (_ROOT / "prayer_room_ui.js").read_text(encoding="utf-8")
     + "\n" + (_ROOT / "hifdh_planner_ui.js").read_text(encoding="utf-8")
@@ -126,6 +127,8 @@ def render_studio(
         cloud_session = None
         st.session_state.pop("_am_live_cloud_session", None)
     data = {
+        "recordingProfile": hashlib.sha256(str(account["user_id"]).encode()).hexdigest() if account else "browser-guest",
+        "countsCsv": ",".join(map(str, AYAHS[1:])),
         "reviewProfile": hashlib.sha256(plan_profile.encode("utf-8")).hexdigest(),
         "buildVersion": "2026-11-24-phrase-following",
         "hifdhPlan": plan_data,
